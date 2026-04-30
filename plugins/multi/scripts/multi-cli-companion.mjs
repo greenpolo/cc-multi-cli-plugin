@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -382,7 +383,7 @@ async function resolveLatestTrackedTaskThread(cwd, options = {}) {
   const visibleJobs = filterJobsForCurrentClaudeSession(jobs);
   const activeTask = visibleJobs.find((job) => job.jobClass === "task" && (job.status === "queued" || job.status === "running"));
   if (activeTask) {
-    throw new Error(`Task ${activeTask.id} is still running. Use /codex:status before continuing it.`);
+    throw new Error(`Task ${activeTask.id} is still running. Use /multi:status before continuing it.`);
   }
 
   const trackedTask = findLatestResumableTaskJob(visibleJobs);
@@ -901,11 +902,62 @@ function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex" }) {
   };
 }
 
-function renderQueuedTaskLaunch(payload, cli) {
-  if (cli === "codex") {
-    return `${payload.title} started in the background as ${payload.jobId}. Check /codex:status ${payload.jobId} for progress (requires the openai-codex plugin).\n`;
+function renderQueuedTaskLaunch(payload) {
+  if (payload.deduplicated) {
+    return `${payload.title} is already running as ${payload.jobId} (deduplicated; an identical task was launched within the last ${Math.round((payload.dedupWindowMs ?? 0) / 1000)}s in this session). Check /multi:status ${payload.jobId} for progress.\n`;
   }
-  return `${payload.title} started in the background as ${payload.jobId}. Ask Claude to check on job ${payload.jobId} when you want an update.\n`;
+  return `${payload.title} started in the background as ${payload.jobId}. Check /multi:status ${payload.jobId} for progress.\n`;
+}
+
+const DEFAULT_TASK_DEDUP_WINDOW_MS = 60_000;
+
+function getTaskDedupWindowMs() {
+  const raw = process.env.MULTI_CLI_TASK_DEDUP_MS;
+  if (raw === undefined || raw === "") {
+    return DEFAULT_TASK_DEDUP_WINDOW_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_TASK_DEDUP_WINDOW_MS;
+}
+
+function computeTaskFingerprint(request) {
+  const hash = createHash("sha256");
+  const components = [
+    String(request.cli ?? "codex"),
+    String(request.role ?? ""),
+    request.write ? "write" : "read",
+    request.resumeLast ? "resume" : "fresh",
+    String(request.model ?? ""),
+    String(request.effort ?? ""),
+    String(request.prompt ?? "").trim()
+  ];
+  for (const component of components) {
+    hash.update(component);
+    hash.update("\x00");
+  }
+  return hash.digest("hex").slice(0, 32);
+}
+
+function findActiveDuplicateBackgroundTask({ workspaceRoot, fingerprint, sessionId, windowMs }) {
+  if (!fingerprint || windowMs <= 0) {
+    return null;
+  }
+  const now = Date.now();
+  const candidates = listJobs(workspaceRoot).filter((job) => {
+    if (job.fingerprint !== fingerprint) return false;
+    if (job.status !== "queued" && job.status !== "running") return false;
+    if (sessionId && job.sessionId && job.sessionId !== sessionId) return false;
+    const createdMs = Date.parse(job.createdAt ?? "");
+    if (!Number.isFinite(createdMs)) return false;
+    return now - createdMs <= windowMs;
+  });
+  if (candidates.length === 0) {
+    return null;
+  }
+  candidates.sort(
+    (left, right) => Date.parse(right.createdAt ?? "") - Date.parse(left.createdAt ?? "")
+  );
+  return candidates[0];
 }
 
 function getJobKindLabel(kind, jobClass) {
@@ -1010,7 +1062,7 @@ function spawnDetachedTaskWorker(cwd, jobId) {
   return child;
 }
 
-function enqueueBackgroundTask(cwd, job, request) {
+function enqueueBackgroundTask(cwd, job, request, options = {}) {
   const { logFile } = createTrackedProgress(job);
   appendLogLine(logFile, "Queued for background execution.");
 
@@ -1021,7 +1073,8 @@ function enqueueBackgroundTask(cwd, job, request) {
     phase: "queued",
     pid: child.pid ?? null,
     logFile,
-    request
+    request,
+    ...(options.fingerprint ? { fingerprint: options.fingerprint } : {})
   };
   writeJobFile(job.workspaceRoot, job.id, queuedRecord);
   upsertJob(job.workspaceRoot, queuedRecord);
@@ -1130,20 +1183,44 @@ async function handleTask(argv, context = {}) {
     }
     requireTaskRequest(prompt, resumeLast);
 
-    const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
-    const request = buildTaskRequest({
+    const probeRequest = buildTaskRequest({
       cwd,
       model,
       effort,
       prompt,
       write,
       resumeLast,
-      jobId: job.id,
+      jobId: null,
       cli,
       role: options.role ?? null
     });
-    const { payload } = enqueueBackgroundTask(cwd, job, request);
-    outputCommandResult(payload, renderQueuedTaskLaunch(payload, cli), options.json);
+    const fingerprint = computeTaskFingerprint(probeRequest);
+    const dedupWindowMs = getTaskDedupWindowMs();
+    const sessionId = process.env[SESSION_ID_ENV] ?? null;
+    const duplicate = findActiveDuplicateBackgroundTask({
+      workspaceRoot,
+      fingerprint,
+      sessionId,
+      windowMs: dedupWindowMs
+    });
+    if (duplicate) {
+      const dedupPayload = {
+        jobId: duplicate.id,
+        status: duplicate.status,
+        title: duplicate.title,
+        summary: duplicate.summary,
+        logFile: duplicate.logFile ?? null,
+        deduplicated: true,
+        dedupWindowMs
+      };
+      outputCommandResult(dedupPayload, renderQueuedTaskLaunch(dedupPayload), options.json);
+      return;
+    }
+
+    const job = buildTaskJob(workspaceRoot, taskMetadata, write, cli);
+    const request = { ...probeRequest, jobId: job.id };
+    const { payload } = enqueueBackgroundTask(cwd, job, request, { fingerprint });
+    outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
     return;
   }
 
@@ -1364,8 +1441,12 @@ async function main() {
   // Validate early so users get a clear error.
   const _adapter = getAdapter(cliName); // eslint-disable-line no-unused-vars
 
-  // Remove --cli <name> from argv before extracting subcommand.
-  const filteredArgv = rawArgv.filter((_, i) => i !== cliArgIndex && i !== cliArgIndex + 1);
+  // Remove --cli <name> from argv before extracting subcommand. Guard
+  // cliArgIndex so we don't drop argv[0] when --cli is absent (cliArgIndex=-1
+  // would make cliArgIndex+1 === 0 and silently consume the subcommand).
+  const filteredArgv = cliArgIndex >= 0
+    ? rawArgv.filter((_, i) => i !== cliArgIndex && i !== cliArgIndex + 1)
+    : rawArgv;
   const [subcommand, ...argv] = filteredArgv;
   if (!subcommand || subcommand === "help" || subcommand === "--help") {
     printUsage();

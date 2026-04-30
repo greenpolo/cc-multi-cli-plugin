@@ -27,7 +27,7 @@ import {
 } from "./lib/acp-diagnostics.mjs";
 import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
 import { listenOnRestrictedUnixSocket } from "./lib/socket-permissions.mjs";
-import { spawn } from "node:child_process";
+import { spawnCommand } from "./lib/process.mjs";
 import readline from "node:readline";
 
 const SHUTDOWN_GRACE_MS = 500;
@@ -82,14 +82,10 @@ const pendingRequests = new Map();
 let activeClient = null;
 
 function spawnAcpProcess(cwd) {
-  // On Windows, `gemini` is a `.cmd` shim that needs shell expansion to launch.
-  // Always use cmd.exe (shell: true) — never honor process.env.SHELL, since
-  // Git Bash mangles Windows-style switches via MSYS path translation.
-  const child = spawn("gemini", ["--acp"], {
+  const child = spawnCommand("gemini", ["--acp"], {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: process.env,
-    shell: process.platform === "win32",
     windowsHide: true
   });
 

@@ -1,21 +1,28 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import process from "node:process";
 
+const WINDOWS_BATCH_EXTENSIONS = new Set([".bat", ".cmd"]);
+const WINDOWS_DIRECT_EXTENSIONS = new Set([".com", ".exe"]);
+const windowsCommandCache = new Map();
+
 export function runCommand(command, args = [], options = {}) {
-  // On Windows, always use cmd.exe (shell: true) — never honor process.env.SHELL.
-  // Git Bash sets SHELL to bash.exe, and bash's MSYS path translation mangles
-  // Windows-style switches like /PID into "C:/Program Files/Git/PID", which
-  // breaks taskkill, where, and other native Windows binaries.
-  const result = spawnSync(command, args, {
+  const resolved = resolveSpawnCommand(command, options.env);
+  const spawnOptions = {
     cwd: options.cwd,
     env: options.env,
     encoding: "utf8",
     input: options.input,
     maxBuffer: options.maxBuffer,
     stdio: options.stdio ?? "pipe",
-    shell: process.platform === "win32",
     windowsHide: true
-  });
+  };
+
+  const result = resolved.shellCommand
+    ? spawnSync(buildWindowsShellCommand(resolved.command, args), {
+        ...spawnOptions,
+        shell: true
+      })
+    : spawnSync(resolved.command, args, spawnOptions);
 
   return {
     command,
@@ -26,6 +33,16 @@ export function runCommand(command, args = [], options = {}) {
     stderr: result.stderr ?? "",
     error: result.error ?? null
   };
+}
+
+export function spawnCommand(command, args = [], options = {}) {
+  const resolved = resolveSpawnCommand(command, options.env);
+  return resolved.shellCommand
+    ? spawn(buildWindowsShellCommand(resolved.command, args), {
+        ...options,
+        shell: true
+      })
+    : spawn(resolved.command, args, options);
 }
 
 export function runCommandChecked(command, args = [], options = {}) {
@@ -136,4 +153,63 @@ export function formatCommandFailure(result) {
     parts.push(stdout);
   }
   return parts.join(": ");
+}
+
+function resolveSpawnCommand(command, env = process.env) {
+  if (process.platform !== "win32") {
+    return { command, shellCommand: false };
+  }
+
+  const directResolution = resolveWindowsCommand(command, env);
+  return {
+    command: directResolution.command,
+    shellCommand: WINDOWS_BATCH_EXTENSIONS.has(directResolution.extension)
+  };
+}
+
+function resolveWindowsCommand(command, env = process.env) {
+  const normalized = String(command);
+  const explicitExtension = getWindowsExtension(normalized);
+  if (normalized.includes("/") || normalized.includes("\\")) {
+    return { command: normalized.replace(/\\/g, "/"), extension: explicitExtension };
+  }
+
+  const cacheKey = `${env?.PATH ?? process.env.PATH ?? ""}\0${normalized.toLowerCase()}`;
+  const cached = windowsCommandCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const found = spawnSync("where.exe", [normalized], {
+    encoding: "utf8",
+    env,
+    stdio: ["ignore", "pipe", "ignore"],
+    windowsHide: true
+  });
+  const matches = found.status === 0
+    ? found.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    : [];
+  const direct = matches.find((match) => WINDOWS_DIRECT_EXTENSIONS.has(getWindowsExtension(match)));
+  const batch = matches.find((match) => WINDOWS_BATCH_EXTENSIONS.has(getWindowsExtension(match)));
+  const resolved = direct ?? batch ?? normalized;
+  const result = { command: resolved.replace(/\\/g, "/"), extension: getWindowsExtension(resolved) };
+  windowsCommandCache.set(cacheKey, result);
+  return result;
+}
+
+function getWindowsExtension(command) {
+  const match = String(command).match(/\.([^.\\/]+)$/);
+  return match ? `.${match[1].toLowerCase()}` : "";
+}
+
+function buildWindowsShellCommand(command, args) {
+  return [command, ...args].map(quoteWindowsShellArg).join(" ");
+}
+
+function quoteWindowsShellArg(value) {
+  const text = String(value);
+  if (/[\r\n]/.test(text)) {
+    throw new Error("Cannot safely pass newline-containing arguments through cmd.exe.");
+  }
+  return `"${text.replace(/"/g, '\\"')}"`;
 }

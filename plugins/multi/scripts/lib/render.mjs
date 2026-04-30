@@ -111,9 +111,9 @@ function appendActiveJobsTable(lines, jobs) {
   lines.push("| Job | Kind | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const job of jobs) {
-    const actions = [`/codex:status ${job.id}`];
+    const actions = [`/multi:status ${job.id}`];
     if (job.status === "queued" || job.status === "running") {
-      actions.push(`/codex:cancel ${job.id}`);
+      actions.push(`/multi:cancel ${job.id}`);
     }
     lines.push(
       `| ${escapeMarkdownCell(job.id)} | ${escapeMarkdownCell(job.kindLabel)} | ${escapeMarkdownCell(job.status)} | ${escapeMarkdownCell(job.phase ?? "")} | ${escapeMarkdownCell(job.elapsed ?? "")} | ${escapeMarkdownCell(job.threadId ?? "")} | ${escapeMarkdownCell(job.summary ?? "")} | ${actions.map((action) => `\`${action}\``).join("<br>")} |`
@@ -146,10 +146,10 @@ function pushJobDetails(lines, job, options = {}) {
     lines.push(`  Log: ${job.logFile}`);
   }
   if ((job.status === "queued" || job.status === "running") && options.showCancelHint) {
-    lines.push(`  Cancel: /codex:cancel ${job.id}`);
+    lines.push(`  Cancel: /multi:cancel ${job.id}`);
   }
   if (job.status !== "queued" && job.status !== "running" && options.showResultHint) {
-    lines.push(`  Result: /codex:result ${job.id}`);
+    lines.push(`  Result: /multi:result ${job.id}`);
   }
   if (job.status !== "queued" && job.status !== "running" && job.jobClass === "task" && job.write && options.showReviewHint) {
     lines.push("  Review changes: /codex:review --wait");
@@ -459,7 +459,7 @@ export function renderCancelReport(job) {
   if (job.summary) {
     lines.push(`- Summary: ${job.summary}`);
   }
-  lines.push("- Check `/codex:status` for the updated queue.");
+  lines.push("- Check `/multi:status` for the updated queue.");
 
   return `${lines.join("\n").trimEnd()}\n`;
 }

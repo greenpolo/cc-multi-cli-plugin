@@ -148,7 +148,7 @@ function main() {
   const jobs = sortJobsNewestFirst(filterJobsForCurrentSession(listJobs(workspaceRoot), input));
   const runningJob = jobs.find((job) => job.status === "queued" || job.status === "running");
   const runningTaskNote = runningJob
-    ? `Codex task ${runningJob.id} is still running. Check /codex:status and use /codex:cancel ${runningJob.id} if you want to stop it before ending the session.`
+    ? `Codex task ${runningJob.id} is still running. Check /multi:status and use /multi:cancel ${runningJob.id} if you want to stop it before ending the session.`
     : null;
 
   if (!config.stopReviewGate) {

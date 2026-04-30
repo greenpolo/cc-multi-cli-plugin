@@ -111,10 +111,11 @@ class TerminalEntry {
     /** @type {Array<(status: any) => void>} */
     this.exitWaiters = [];
 
-    // Use shell:true so the agent can pass `npm test` etc. as a single command
-    // string. Cursor sometimes sends `command` with no `args`, sometimes with
-    // separate args; spawn handles both.
-    this.child = spawn(command, args, {
+    // The ACP terminal is intentionally shell-backed so agents can run commands
+    // like `npm test`; when args are supplied, quote them into one command line
+    // instead of combining shell:true with a spawn args array.
+    const commandLine = buildShellCommand(command, args);
+    this.child = spawn(commandLine, {
       cwd,
       env,
       shell: true,
@@ -182,4 +183,28 @@ class TerminalEntry {
       }
     }
   }
+}
+
+function buildShellCommand(command, args) {
+  if (args.length === 0) {
+    return command;
+  }
+  const quote = process.platform === "win32" ? quoteWindowsShellArg : quotePosixShellArg;
+  return `${command} ${args.map(quote).join(" ")}`;
+}
+
+function quotePosixShellArg(value) {
+  const text = String(value);
+  if (text === "") {
+    return "''";
+  }
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+function quoteWindowsShellArg(value) {
+  const text = String(value);
+  if (/[\r\n]/.test(text)) {
+    throw new Error("Cannot safely pass newline-containing arguments through cmd.exe.");
+  }
+  return `"${text.replace(/"/g, '\\"')}"`;
 }

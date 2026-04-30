@@ -10,11 +10,10 @@
 import fs from "node:fs";
 import net from "node:net";
 import process from "node:process";
-import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { parseBrokerEndpoint } from "./broker-endpoint.mjs";
 import { ensureBrokerSession, loadBrokerSession } from "./broker-lifecycle.mjs";
-import { terminateProcessTree } from "./process.mjs";
+import { spawnCommand, terminateProcessTree } from "./process.mjs";
 
 const PLUGIN_MANIFEST_URL = new URL("../../.claude-plugin/plugin.json", import.meta.url);
 const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, "utf8"));
@@ -186,14 +185,10 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
   }
 
   async initialize() {
-    this.proc = spawn("codex", ["app-server"], {
+    this.proc = spawnCommand("codex", ["app-server"], {
       cwd: this.cwd,
       env: this.options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
-      // On Windows, always use cmd.exe (shell: true) — never honor
-      // process.env.SHELL. Git Bash mangles Windows-style switches via MSYS
-      // path translation, breaking native Windows binaries.
-      shell: process.platform === "win32",
       windowsHide: true
     });
 
@@ -244,9 +239,6 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
       this.proc.stdin.end();
       setTimeout(() => {
         if (this.proc && !this.proc.killed && this.proc.exitCode === null) {
-          // On Windows with shell: true, the direct child is cmd.exe.
-          // Use terminateProcessTree to kill the entire tree including
-          // the grandchild node process.
           if (process.platform === "win32") {
             try {
               terminateProcessTree(this.proc.pid);
