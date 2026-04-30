@@ -6,7 +6,9 @@ allowed-tools: Bash(node:*), AskUserQuestion, Agent
 
 Invoke the `multi:cursor-execute` subagent via the `Agent` tool, forwarding the user's request as the prompt.
 
-The subagent runs Cursor in Agent mode on Auto model — give it a concrete, well-defined plan step and Cursor implements it with full tool access. Cursor is the fast lane: pick it over `/codex:execute` when the spec is clear, the work is mostly mechanical (long file writes, pattern application across many files, 200+ lines of code), and you want throughput over deep reasoning.
+The subagent runs Cursor in Agent mode on Auto model — give it a concrete, well-defined plan step and Cursor writes the files. **Scope: file operations only** (Read, Write, Edit, Apply Patch). Cursor's shell exec is unreliable in agent acp mode on Windows due to an upstream bug, so the subagent intentionally does not run verification commands. After it returns, run any listed verification yourself.
+
+Cursor is the fast lane: pick it over `/codex:execute` when the spec is clear, the work is mostly mechanical (long file writes, pattern application across many files, 200+ lines of code), and you want throughput over deep reasoning.
 
 Raw user request:
 $ARGUMENTS
@@ -18,4 +20,6 @@ Execution:
 - If the user passes `--resume`, the subagent will continue the latest Cursor execute thread for this repo.
 - If the request includes no prompt text, ask what Cursor should implement before proceeding.
 
-Return Cursor's output verbatim.
+After the subagent returns, read its `## Verification` section and run those commands via your own Bash tool. Then surface the report and the verification results to the user.
+
+Return Cursor's output verbatim, followed by your verification results.

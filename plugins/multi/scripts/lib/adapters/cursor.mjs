@@ -81,18 +81,37 @@ function buildPrompt(role, userTask) {
 
 // ─── Known-bad version warning ────────────────────────────────────────────────
 //
-// Cursor 2026.04.17-787b533 has a documented regression: MCP tool calls and
-// the Terminal (execute) tool both silently break in agent acp mode. We can't
-// fix it from the client; we just want users to know about it instead of
-// spending hours debugging mysterious hangs.
+// Cursor's `agent acp` mode has two distinct upstream bugs we have to live
+// with. Both are confirmed by Cursor staff with no published fix or ETA:
 //
-// Forum threads:
-//   https://forum.cursor.com/t/cursor-agent-cli-mcp-tool-calls-silently-stopped-working-in-2026-04-17/158988
-//   https://forum.cursor.com/t/acp-permission-rejection-not-reported-to-client/153825
+// Bug 1 — MCP tool-call regression starting in 2026.04.17.
+//   Tool descriptors are visible to the model but mcpToolCall events silently
+//   never fire. CLI/headless only; the IDE is fine.
+//   Forum:
+//     https://forum.cursor.com/t/cursor-agent-cli-mcp-tool-calls-silently-stopped-working-in-2026-04-17/158988
+//   Last known working version per Cursor staff: 2026.04.14-ee4b43a.
+//   Workaround: pin via CURSOR_AGENT_PATH if you have an older binary cached.
 //
-// Auto-quiet on any other version. Warning fires once per process.
+// Bug 2 — Windows shell auto-detection picks WSL bash (C:\Windows\System32\
+//   bash.exe) instead of PowerShell, so command output capture fails silently
+//   and Terminal/execute tool calls hang at tool_call_update[in_progress]
+//   forever. Confirmed Windows-only; Cursor IDE handles this differently.
+//   Forum:
+//     https://forum.cursor.com/t/shell-commands-in-agent-mode-are-not-returning-output/155544
+//     https://forum.cursor.com/t/acp-permission-rejection-not-reported-to-client/153825
+//   Tested workarounds that don't help: Legacy Terminal Tool, removing WSL
+//   from PATH, disabling MCP. No working software fix as of 2026-04-30.
+//
+// Our response: cursor-execute.md instructs Cursor to NOT use Terminal in agent
+// acp mode and defers shell verification to the parent Claude thread. File ops
+// (Read/Write/Edit/Apply Patch) work fine and that's what cursor-execute is
+// scoped to do. Warning below fires once per process if a known-affected
+// version is detected.
 
-const KNOWN_BROKEN_CURSOR_VERSIONS = new Set(["2026.04.17-787b533"]);
+const KNOWN_BROKEN_CURSOR_VERSIONS = new Set([
+  "2026.04.17-787b533",
+  "2026.04.29-c83a488"
+]);
 let warnedAboutCursorVersion = false;
 
 function maybeWarnAboutCursorVersion(versionString) {
@@ -102,11 +121,12 @@ function maybeWarnAboutCursorVersion(versionString) {
   if (!KNOWN_BROKEN_CURSOR_VERSIONS.has(v)) return;
   warnedAboutCursorVersion = true;
   process.stderr.write(
-    `[cursor] Note: agent ${v} has known ACP regressions — ` +
-    `Terminal/execute tool calls and MCP tools may stall in agent acp mode. ` +
-    `cli-config.json allowlist (auto-injected) keeps simple shell exec working; ` +
-    `complex multi-tool runs may still hang upstream. Pin an older build via ` +
-    `CURSOR_AGENT_PATH if needed; otherwise wait for the next Cursor release.\n`
+    `[cursor] Note: agent ${v} has known upstream ACP regressions — ` +
+    `Terminal/execute tool calls hang on Windows (WSL shell auto-detection) and ` +
+    `MCP tool calls silently fail (regression starting in 2026.04.17). ` +
+    `cursor-execute is scoped to file ops only and defers shell verification ` +
+    `to the parent thread. Pin 2026.04.14-ee4b43a via CURSOR_AGENT_PATH if ` +
+    `you need MCP tools through Cursor; otherwise wait for the next Cursor release.\n`
   );
 }
 
