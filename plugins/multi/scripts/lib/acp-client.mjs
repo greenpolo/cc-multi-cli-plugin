@@ -12,6 +12,8 @@
 
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 import { spawn, execSync } from "node:child_process";
 import readline from "node:readline";
@@ -419,6 +421,43 @@ function resolveCliBinary(command) {
   }
 }
 
+// ─── Windows env backfill ─────────────────────────────────────────────────────
+//
+// Some host environments (notably Claude Code subagents on Windows) spawn the
+// companion with a stripped env that's missing the Windows variables `agent.cmd`
+// + `cursor-agent.ps1` rely on (USERPROFILE, APPDATA, LOCALAPPDATA, USERNAME,
+// HOME, SystemRoot, ComSpec). When those are absent the .cmd wrapper launches
+// but the inner node process silently fails to start, so the ACP `initialize`
+// reply never arrives and the spawned client hangs forever.
+//
+// buildSpawnEnvironment() returns a new env object with sensible defaults
+// backfilled for any missing critical var. Idempotent — vars that are already
+// set pass through unchanged.
+
+function buildSpawnEnvironment(baseEnv) {
+  if (process.platform !== "win32") {
+    return baseEnv ?? process.env;
+  }
+  const env = { ...(baseEnv ?? process.env) };
+  const home = env.USERPROFILE || env.HOME || os.homedir();
+  if (home) {
+    if (!env.USERPROFILE) env.USERPROFILE = home;
+    if (!env.HOME) env.HOME = home;
+    if (!env.APPDATA) env.APPDATA = path.join(home, "AppData", "Roaming");
+    if (!env.LOCALAPPDATA) env.LOCALAPPDATA = path.join(home, "AppData", "Local");
+  }
+  if (!env.USERNAME) {
+    try {
+      env.USERNAME = os.userInfo().username;
+    } catch {
+      // best-effort
+    }
+  }
+  if (!env.SystemRoot) env.SystemRoot = "C:\\WINDOWS";
+  if (!env.ComSpec) env.ComSpec = path.join(env.SystemRoot, "system32", "cmd.exe");
+  return env;
+}
+
 // ─── Direct (Spawned) Client ──────────────────────────────────────────────────
 
 export class SpawnedAcpClient extends AcpClientBase {
@@ -436,7 +475,7 @@ export class SpawnedAcpClient extends AcpClientBase {
     const cmdStr = `"${command}" ${args.join(" ")}`;
     this.proc = spawn(cmdStr, {
       cwd: this.cwd,
-      env: this.options.env ?? process.env,
+      env: buildSpawnEnvironment(this.options.env ?? process.env),
       stdio: ["pipe", "pipe", "pipe"],
       shell: true
     });
