@@ -1022,12 +1022,19 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId
 }
 
 function readTaskPrompt(cwd, options, positionals) {
+  let prompt = "";
   if (options["prompt-file"]) {
-    return fs.readFileSync(path.resolve(cwd, options["prompt-file"]), "utf8");
+    prompt = fs.readFileSync(path.resolve(cwd, options["prompt-file"]), "utf8");
   }
 
-  const positionalPrompt = positionals.join(" ");
-  return positionalPrompt || readStdinIfPiped();
+  const positionalPrompt = positionals.join(" ").trim();
+  if (positionalPrompt) {
+    prompt = prompt
+      ? `${prompt.trimEnd()}\n\n${positionalPrompt}`
+      : positionalPrompt;
+  }
+
+  return prompt || readStdinIfPiped();
 }
 
 function requireTaskRequest(prompt, resumeLast) {

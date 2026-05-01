@@ -30,6 +30,11 @@ Treat these as runtime controls — strip them from the task text before forward
 - `--resume` — translate to `--resume-last`.
 - `--fresh` — do not add `--resume-last`, even if the user's text sounds like a follow-up.
 - `--write` — default to `--write` for execute/writer/debugger/reviewer roles (these need to edit files); omit for planner/researcher/explorer/ask (read-only by intent). Honor explicit user override either way.
+- `--plan <path>` and `--prompt-file <path>` — both load the prompt body from a file. `--plan` is the user-facing alias; the companion's actual flag is `--prompt-file`. Translate `--plan` to `--prompt-file` on the Bash call. When either flag is present:
+  1. The file's bytes ARE the prompt — do NOT paste a framing block in front of them. Skip the role-specific preamble entirely.
+  2. Any positional task text the user provided is treated as an *addendum* and gets appended after the file content as a separate paragraph (the companion handles this via positional args after `--prompt-file`).
+  3. The path resolves relative to the companion's `--cwd` if set, else CWD. Absolute paths always work.
+  See `multi-plan-handoff` skill for when Claude (the parent thread) should auto-add `--plan` based on conversation context.
 
 ## Capturing diagnostics
 

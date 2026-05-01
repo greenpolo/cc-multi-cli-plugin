@@ -1,6 +1,6 @@
 ---
 description: Delegate execution of a specific plan or plan step to Cursor (Agent mode, Auto model)
-argument-hint: "[--background|--wait] [--resume|--fresh] [--model <model>] <plan step to execute>"
+argument-hint: "[--plan <path>] [--background|--wait] [--resume|--fresh] [--model <model>] <plan step or addendum>"
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
@@ -15,10 +15,11 @@ $ARGUMENTS
 
 Execution:
 
+- **Plan-by-reference (preferred when applicable):** if a plan file is in conversation context (Plan mode `Plan File Info` block, a path like `~/.claude/plans/*.md`, or a plan you authored this session), pass `--plan <path>` instead of paraphrasing. The subagent translates `--plan` to `--prompt-file` and Cursor reads the file's bytes directly. See the `multi-plan-handoff` skill for full detection rules. Trigger phrases like "execute via cursor", "delegate to cursor", "send this plan to cursor" all qualify.
 - Default to foreground for small steps; pass `--background` for multi-file work expected to take more than ~3 minutes.
 - The subagent uses Cursor's Auto model by default. If the user passes `--model`, that wins.
 - If the user passes `--resume`, the subagent will continue the latest Cursor execute thread for this repo.
-- If the request includes no prompt text, ask what Cursor should implement before proceeding.
+- If the request includes no prompt text AND no plan file in context, ask what Cursor should implement before proceeding.
 
 After the subagent returns, read its `## Verification` section and run those commands via your own Bash tool. Then surface the report and the verification results to the user.
 
