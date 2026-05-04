@@ -7,7 +7,7 @@
  * fork, optimized for Qwen3-Coder, and speaks the standard JSON-RPC
  * Agent Client Protocol over stdio (using @agentclientprotocol/sdk).
  *
- * The `--acp` flag graduated from `--experimental-acp` in Qwen Code v0.x
+ * The `--acp` flag graduated from `--experimental-acp` in Qwen Code v0.15.6
  * (PR #1355). The deprecated alias is still accepted but emits a warning,
  * so we always pass the stable flag.
  *
