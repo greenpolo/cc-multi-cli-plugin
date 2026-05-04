@@ -94,6 +94,42 @@ const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "hi
 const MODEL_ALIASES = new Map([["spark", "gpt-5.3-codex-spark"]]);
 const STOP_REVIEW_TASK_MARKER = "Run a stop-gate review of the previous Claude turn.";
 
+// ─── Autonomous mode (--until-done) ───────────────────────────────────────────
+// When --until-done is set on a Codex task, the companion loops thread/resume
+// turns until the model emits PLAN_COMPLETE_SENTINEL on its own line, hits an
+// error, runs out of turns, or makes no progress on a follow-up turn.
+const PLAN_COMPLETE_SENTINEL = "PLAN COMPLETE";
+const PLAN_COMPLETE_PATTERN = /^\s*PLAN\s+COMPLETE\s*$/im;
+const DEFAULT_MAX_TURNS = 30;
+
+const AUTONOMOUS_PROTOCOL_HEADER = [
+  "AUTONOMOUS MODE: This task runs across multiple Codex turns on the same thread.",
+  `When (and only when) the entire plan is complete and verified, emit a line containing exactly: ${PLAN_COMPLETE_SENTINEL}`,
+  "Until then, end turns naturally — you will be dispatched again to continue from where you stopped.",
+  "Do not summarize prior turns; the thread already has them.",
+  ""
+].join("\n");
+
+const AUTONOMOUS_CONTINUATION_PROMPT = [
+  "Continue executing the plan from the previous turn on this thread.",
+  `If — and only if — the entire plan is complete and verified, emit a line containing exactly: ${PLAN_COMPLETE_SENTINEL}`,
+  "Otherwise, pick the next plan item and execute it. Do not summarize prior work; do not ask for confirmation."
+].join("\n");
+
+function buildAutonomousInitialPrompt(prompt) {
+  const trimmed = String(prompt ?? "").trim();
+  return trimmed ? `${AUTONOMOUS_PROTOCOL_HEADER}${trimmed}` : AUTONOMOUS_PROTOCOL_HEADER.trimEnd();
+}
+
+function normalizeMaxTurns(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) {
+    throw new Error(`--max-turns must be a positive integer, got "${value}".`);
+  }
+  return Math.floor(n);
+}
+
 function printUsage() {
   console.log(
     [
@@ -103,7 +139,7 @@ function printUsage() {
       "  node scripts/multi-cli-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/multi-cli-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/multi-cli-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/multi-cli-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/multi-cli-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--until-done [--max-turns N]] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/multi-cli-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/multi-cli-companion.mjs result [job-id] [--json]",
       "  node scripts/multi-cli-companion.mjs cancel [job-id] [--json]"
@@ -823,28 +859,117 @@ async function executeTaskRun(request) {
     throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
   }
 
-  const result = await runAppServerTurn(workspaceRoot, {
-    resumeThreadId,
-    prompt: request.prompt,
-    defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
-    model: request.model,
-    effort: request.effort,
-    // Max permissions for write tasks: danger-full-access also grants network
-    // access (needed for MCP/web tools). Read-only retains the read-only sandbox
-    // so accidental writes are still blocked even though approvals are skipped.
-    sandbox: request.write ? "danger-full-access" : "read-only",
-    onProgress: request.onProgress,
-    persistThread: true,
-    threadName: resumeThreadId ? null : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
-  });
+  const untilDone = Boolean(request.untilDone);
+  const maxTurns = untilDone ? Math.max(1, request.maxTurns ?? DEFAULT_MAX_TURNS) : 1;
 
-  const rawOutput = typeof result.finalMessage === "string" ? result.finalMessage : "";
-  const failureMessage = result.error?.message ?? result.stderr ?? "";
+  // First-turn prompt; in autonomous mode prepend the protocol header so the
+  // model knows the rules even when the prompt came from a --prompt-file plan.
+  const initialPrompt = untilDone && request.prompt
+    ? buildAutonomousInitialPrompt(request.prompt)
+    : request.prompt;
+
+  const sandbox = request.write ? "danger-full-access" : "read-only";
+  const persistentThreadName = resumeThreadId
+    ? null
+    : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT);
+
+  /** @type {Awaited<ReturnType<typeof runAppServerTurn>> | null} */
+  let lastResult = null;
+  let threadId = resumeThreadId;
+  const aggregatedTurnMessages = [];
+  const aggregatedTouchedFiles = new Set();
+  const aggregatedReasoning = [];
+  let stopReason = null;
+  let turnCount = 0;
+
+  while (turnCount < maxTurns) {
+    const isFirstTurn = turnCount === 0;
+    const turnPrompt = isFirstTurn ? initialPrompt : AUTONOMOUS_CONTINUATION_PROMPT;
+    const turnResumeId = isFirstTurn ? resumeThreadId : threadId;
+
+    if (untilDone && !isFirstTurn && request.onProgress) {
+      request.onProgress({
+        message: `Autonomous turn ${turnCount + 1} of ${maxTurns}: resuming thread ${threadId}.`,
+        phase: "starting"
+      });
+    }
+
+    const turnResult = await runAppServerTurn(workspaceRoot, {
+      resumeThreadId: turnResumeId,
+      prompt: turnPrompt,
+      defaultPrompt: turnResumeId ? DEFAULT_CONTINUE_PROMPT : "",
+      model: request.model,
+      effort: request.effort,
+      // Max permissions for write tasks: danger-full-access also grants network
+      // access (needed for MCP/web tools). Read-only retains the read-only sandbox
+      // so accidental writes are still blocked even though approvals are skipped.
+      sandbox,
+      onProgress: request.onProgress,
+      persistThread: true,
+      // Only set a thread name on the very first call when starting a fresh
+      // thread; resumes (turn 2+ or --resume-last) keep their existing name.
+      threadName: isFirstTurn && !turnResumeId ? persistentThreadName : null
+    });
+
+    turnCount += 1;
+    lastResult = turnResult;
+    threadId = turnResult.threadId ?? threadId;
+
+    for (const f of turnResult.touchedFiles ?? []) aggregatedTouchedFiles.add(f);
+    if (Array.isArray(turnResult.reasoningSummary)) {
+      aggregatedReasoning.push(...turnResult.reasoningSummary);
+    }
+    const finalMessage = typeof turnResult.finalMessage === "string" ? turnResult.finalMessage : "";
+    aggregatedTurnMessages.push({ turn: turnCount, message: finalMessage, status: turnResult.status });
+
+    if (!untilDone) {
+      stopReason = "single-turn";
+      break;
+    }
+    if (turnResult.status !== 0) {
+      stopReason = "error";
+      break;
+    }
+    if (PLAN_COMPLETE_PATTERN.test(finalMessage)) {
+      stopReason = "plan-complete";
+      break;
+    }
+    if (turnCount >= maxTurns) {
+      stopReason = "max-turns";
+      break;
+    }
+    // No-progress detector: from turn 2 onward, if a turn produced no file
+    // edits AND no command executions, the model is likely idling rather than
+    // working. Stop instead of looping forever.
+    if (turnCount > 1) {
+      const fileChangeCount = turnResult.fileChanges?.length ?? 0;
+      const commandCount = turnResult.commandExecutions?.length ?? 0;
+      if (fileChangeCount === 0 && commandCount === 0) {
+        stopReason = "no-progress";
+        break;
+      }
+    }
+  }
+
+  const result = lastResult;
+  const rawOutput = untilDone
+    ? buildAutonomousRawOutput(aggregatedTurnMessages, { stopReason, turnCount, maxTurns })
+    : (typeof result?.finalMessage === "string" ? result.finalMessage : "");
+  const failureMessage = result?.error?.message ?? result?.stderr ?? "";
+  const reasoningSummary = untilDone ? aggregatedReasoning : (result?.reasoningSummary ?? []);
+  const touchedFiles = untilDone ? [...aggregatedTouchedFiles] : (result?.touchedFiles ?? []);
+  // In autonomous mode we only flag exit failure on hard error from Codex;
+  // hitting max-turns or no-progress without PLAN_COMPLETE returns the
+  // partial work with exit 0 so the dispatcher doesn't discard it.
+  const exitStatus = untilDone
+    ? (stopReason === "error" ? (result?.status ?? 1) : 0)
+    : (result?.status ?? 1);
+
   const rendered = renderTaskResult(
     {
       rawOutput,
       failureMessage,
-      reasoningSummary: result.reasoningSummary
+      reasoningSummary
     },
     {
       title: taskMetadata.title,
@@ -853,17 +978,18 @@ async function executeTaskRun(request) {
     }
   );
   const payload = {
-    status: result.status,
-    threadId: result.threadId,
+    status: exitStatus,
+    threadId: result?.threadId ?? null,
     rawOutput,
-    touchedFiles: result.touchedFiles,
-    reasoningSummary: result.reasoningSummary
+    touchedFiles,
+    reasoningSummary,
+    ...(untilDone ? { autonomous: { turns: turnCount, stopReason, maxTurns } } : {})
   };
 
   return {
-    exitStatus: result.status,
-    threadId: result.threadId,
-    turnId: result.turnId,
+    exitStatus,
+    threadId: result?.threadId ?? null,
+    turnId: result?.turnId ?? null,
     payload,
     rendered,
     summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
@@ -871,6 +997,31 @@ async function executeTaskRun(request) {
     jobClass: "task",
     write: Boolean(request.write)
   };
+}
+
+function buildAutonomousRawOutput(turnMessages, { stopReason, turnCount, maxTurns }) {
+  const sections = [];
+  for (const { turn, message } of turnMessages) {
+    const body = String(message ?? "").trim() || "_(no final message from this turn)_";
+    sections.push(`### Turn ${turn}\n\n${body}`);
+  }
+
+  const footer = (() => {
+    switch (stopReason) {
+      case "plan-complete":
+        return `\n\n---\nAutonomous run finished after ${turnCount} turn(s): model emitted ${PLAN_COMPLETE_SENTINEL}.`;
+      case "error":
+        return `\n\n---\nAutonomous run stopped after ${turnCount} turn(s): Codex returned an error. See last turn for details.`;
+      case "max-turns":
+        return `\n\n---\nAutonomous run stopped after ${turnCount} turn(s): hit --max-turns ceiling (${maxTurns}). Re-dispatch with --resume-last --until-done to continue.`;
+      case "no-progress":
+        return `\n\n---\nAutonomous run stopped after ${turnCount} turn(s): the last turn made no file edits and ran no commands. The model has likely finished or is stuck. Re-dispatch with --resume-last --until-done to continue if there is more to do.`;
+      default:
+        return "";
+    }
+  })();
+
+  return `${sections.join("\n\n")}${footer}`.trim() + "\n";
 }
 
 function buildReviewJobMetadata(reviewName, target) {
@@ -1007,7 +1158,7 @@ function buildTaskJob(workspaceRoot, taskMetadata, write, cli = "codex") {
   return job;
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId, cli, role }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId, cli, role, untilDone, maxTurns }) {
   return {
     cwd,
     model,
@@ -1017,7 +1168,9 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId
     resumeLast,
     jobId,
     cli: cli ?? "codex",
-    role: role ?? null
+    role: role ?? null,
+    untilDone: Boolean(untilDone),
+    maxTurns: maxTurns ?? null
   };
 }
 
@@ -1150,8 +1303,8 @@ async function handleReview(argv) {
 
 async function handleTask(argv, context = {}) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file", "role"],
-    booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background", "read-only"],
+    valueOptions: ["model", "effort", "cwd", "prompt-file", "role", "max-turns"],
+    booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background", "read-only", "until-done"],
     aliasMap: {
       m: "model"
     }
@@ -1168,6 +1321,14 @@ async function handleTask(argv, context = {}) {
   const fresh = Boolean(options.fresh);
   if (resumeLast && fresh) {
     throw new Error("Choose either --resume/--resume-last or --fresh.");
+  }
+  const untilDone = Boolean(options["until-done"]);
+  const maxTurns = normalizeMaxTurns(options["max-turns"]);
+  if (untilDone && cli !== "codex") {
+    throw new Error(`--until-done is currently only supported for the codex CLI (got --cli ${cli}).`);
+  }
+  if (maxTurns != null && !untilDone) {
+    throw new Error("--max-turns requires --until-done.");
   }
   // --read-only (from gemini-researcher / gemini-explorer subagents) maps to write: false
   const write = Boolean(options.write) && !Boolean(options["read-only"]);
@@ -1199,7 +1360,9 @@ async function handleTask(argv, context = {}) {
       resumeLast,
       jobId: null,
       cli,
-      role: options.role ?? null
+      role: options.role ?? null,
+      untilDone,
+      maxTurns
     });
     const fingerprint = computeTaskFingerprint(probeRequest);
     const dedupWindowMs = getTaskDedupWindowMs();
@@ -1245,7 +1408,9 @@ async function handleTask(argv, context = {}) {
         jobId: job.id,
         onProgress: progress,
         cli,
-        role: options.role ?? null
+        role: options.role ?? null,
+        untilDone,
+        maxTurns
       }),
     { json: options.json }
   );

@@ -30,6 +30,8 @@ Treat these as runtime controls — strip them from the task text before forward
 - `--resume` — translate to `--resume-last`.
 - `--fresh` — do not add `--resume-last`, even if the user's text sounds like a follow-up.
 - `--write` — default to `--write` for execute/writer/debugger/reviewer roles (these need to edit files); omit for planner/researcher/explorer/ask (read-only by intent). Honor explicit user override either way.
+- `--until-done` — Codex only. Tells the companion to loop `thread/resume` turns on the same Codex thread until the model emits `PLAN COMPLETE`, hits a hard error, runs out of turns, or stops making progress. Pass through verbatim when the user opts in. The companion prepends a small protocol header to the first turn automatically; do not add your own. Default off — only set when the user explicitly asked for autonomous run-until-done behavior. Other CLIs reject this flag.
+- `--max-turns <N>` — Codex only. Sets the autonomous-mode turn ceiling (default 30). Requires `--until-done`. Pass through verbatim if present.
 - `--plan <path>` and `--prompt-file <path>` — both load the prompt body from a file. `--plan` is the user-facing alias; the companion's actual flag is `--prompt-file`. Translate `--plan` to `--prompt-file` on the Bash call. When either flag is present:
   1. The file's bytes ARE the prompt — do NOT paste a framing block in front of them. Skip the role-specific preamble entirely.
   2. Any positional task text the user provided is treated as an *addendum* and gets appended after the file content as a separate paragraph (the companion handles this via positional args after `--prompt-file`).

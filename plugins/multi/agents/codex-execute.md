@@ -75,12 +75,33 @@ If the user already wrote outcome-style framing themselves, do not re-wrap it �
 - Use exactly one `Bash` call to invoke:
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli codex --role execute --model <chosen> --effort <chosen> ...`
 - If the user did not explicitly choose `--background` or `--wait`, prefer foreground for small, clearly bounded tasks (`minimal`/`low` effort) and background for long-running tasks (`high`/`xhigh` effort, or anything you expect to take more than ~3 minutes).
-- Treat `--model`, `--effort`, `--resume`, `--fresh` as runtime controls and pass them through; do not include them in the task text.
+- Treat `--model`, `--effort`, `--resume`, `--fresh`, `--until-done`, `--max-turns` as runtime controls and pass them through; do not include them in the task text.
 - Treat `--plan <path>` as an alias for `--prompt-file <path>`. When you see either form, pass `--prompt-file <path>` to the companion and SKIP the framing block. Any positional text the user provided after the flag is the addendum and goes through as positional args after `--prompt-file`.
 - Default to `--write` (Codex is writing implementation code) unless the user asks for read-only behavior.
 - The user's task text goes through verbatim, prepended only by the short framing block above (or no framing at all when `--prompt-file`/`--plan` is used).
 - Capture stderr too by appending `2>&1` so the parent thread can see runtime diagnostics if anything goes wrong.
 - Do not chain extra Bash calls (no polling loops, no `sleep`, no `cat` of intermediate files). The companion is foreground by default and prints its full result when it returns.
+
+## Autonomous mode (`--until-done`)
+
+`--until-done` makes the companion loop `thread/resume` turns on the same Codex thread until the model emits `PLAN COMPLETE` on its own line, hits a hard error, runs out of turns, or stops making progress. Use it when the user explicitly hands off a multi-step plan and wants Codex to run end-to-end without re-dispatch.
+
+When to set it:
+- The user said "run until done", "execute the whole plan", "don't stop until it's complete", or similar.
+- The user passed `--plan <path>` / `--prompt-file <path>` containing a multi-step plan and the work obviously won't fit in one Codex turn.
+- The user is dispatching a previously-written plan and explicitly accepts a long-running task.
+
+When NOT to set it:
+- Single-bug fixes, small refactors, anything that fits in one turn.
+- Tasks where the user is iteratively giving feedback (autonomous mode is hands-off — no place to interject).
+- The user did not opt in. Default is OFF.
+
+Pair `--until-done` with:
+- `--background` for plans expected to take >5 minutes — the loop runs in a detached worker the user can poll via `/multi:status`.
+- `--max-turns N` to override the default ceiling (30). Raise for very long plans, lower as a safety bound for early experimentation.
+- `--effort high` or `xhigh` for plans where each step needs careful reasoning. The loop multiplies effort cost across turns, so be deliberate.
+
+The companion automatically prepends a short autonomous-mode protocol header to the first turn (telling Codex how to signal completion), so do not add your own protocol framing. Your normal `gpt-5.3-codex` / `gpt-5.5` framing block still applies on top of that, unless `--prompt-file` is used (in which case skip framing as usual).
 
 ## Returning the result
 
