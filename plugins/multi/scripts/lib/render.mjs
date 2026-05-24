@@ -176,7 +176,7 @@ function appendReasoningSection(lines, reasoningSummary) {
 
 export function renderSetupReport(report) {
   const lines = [
-    "# Codex Setup",
+    "# Multi-CLI Setup",
     "",
     `Status: ${report.ready ? "ready" : "needs attention"}`,
     "",
@@ -189,6 +189,14 @@ export function renderSetupReport(report) {
     `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
     ""
   ];
+
+  if (Array.isArray(report.clis) && report.clis.length > 0) {
+    lines.push("Detected CLIs:");
+    for (const cli of report.clis) {
+      lines.push(`- ${cli.name}: ${cli.available ? "available" : "not available"} — ${cli.detail}`);
+    }
+    lines.push("");
+  }
 
   if (report.actionsTaken.length > 0) {
     lines.push("Actions taken:");

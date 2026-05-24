@@ -10,25 +10,25 @@ If the user passed `--dry-run` anywhere in $ARGUMENTS, enumerate changes but mak
 
 ## Step 1 — Detect installed CLIs
 
-Run each version probe via Bash:
+This plugin supports three CLIs: **Codex**, **Cursor**, and **Antigravity**.
+
+Run each probe via Bash:
 
 - `codex --version`
-- `gemini --version`
 - Cursor: the binary is named `agent` (not `cursor-agent`). Try `agent --version` first. On Windows the installer does NOT add it to PATH — always fall back to `$LOCALAPPDATA/cursor-agent/agent.cmd --version` (a.k.a. `C:/Users/<name>/AppData/Local/cursor-agent/agent.cmd`). Remember whichever path works; use it throughout the rest of setup.
-- `copilot --version`
+- Antigravity: there is no CLI binary to probe. Antigravity runs through the **Antigravity 2.0 desktop app's Language Server**, not a command-line tool. The companion's setup probe (`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" setup --json`) reports whether a running Antigravity desktop is detected. You may surface that detection result here, but do not try a `--version` probe — it doesn't exist.
 
 Tabulate which succeed. For each failure, tell the user the install command:
 
 - Codex: `npm install -g @openai/codex`
-- Gemini: `npm install -g @google/gemini-cli`
 - Cursor: `curl https://cursor.com/install -fsS | bash` (Unix) or `irm 'https://cursor.com/install?win32=true' | iex` (Windows PowerShell). After install, the binary lives at `$LOCALAPPDATA/cursor-agent/agent.cmd` on Windows and is not on PATH.
-- Copilot: `npm install -g @github/copilot`
+- Antigravity: install the **Antigravity 2.0 desktop app** from https://antigravity.google, sign in, and keep it running. There is no `npm`/`curl` install — it's a desktop application, and detection only works while it is running (Windows-first in this release; the LS transport itself lands in Phase 2).
 
 Continue only with the CLIs that are installed. Do not block on missing ones.
 
-**No CLIs detected:** if zero CLIs from the list are installed, ABORT setup before any further step. Do not prompt for API keys, do not install plugins, do not configure MCPs. Print:
+**No CLIs detected:** if neither Codex nor Cursor is installed and the Antigravity desktop is not running, ABORT setup before any further step. Do not prompt for API keys, do not install plugins, do not configure MCPs. Print:
 
-> *"None of Codex, Gemini, Cursor, or Copilot is installed. Install at least one (commands above) and re-run `/multi:setup`. Nothing was changed."*
+> *"None of Codex, Cursor, or Antigravity is available. Install at least one (commands above; Antigravity must be running) and re-run `/multi:setup`. Nothing was changed."*
 
 Then exit. The wizard has no productive work without at least one CLI to configure.
 
@@ -44,12 +44,11 @@ For each detected CLI, check the current install state FIRST, then act:
 
 2. **For each detected CLI whose plugin is NOT yet installed**, and ONLY for those, use `AskUserQuestion` to ask whether to install it. Skip the prompt entirely if the plugin is already installed — don't ask the user about plugins they already have.
 
-3. **Install only the plugins the user accepted.** Read the actual command list from `marketplace.json` plus the live filesystem (`ls plugins/<cli>/commands/*.md`) — do NOT hardcode a list here, since the customize skill and `multi-cli-anything` skill add commands routinely. As of v2.0.0 defaults, the shipped commands are:
+3. **Install only the plugins the user accepted.** Read the actual command list from `marketplace.json` plus the live filesystem (`ls plugins/<cli>/commands/*.md`) — do NOT hardcode a list here, since the customize skill and `multi-cli-anything` skill add commands routinely. As of v3.0.0 defaults, the shipped commands are:
 
-   - Gemini → `claude plugin install gemini@cc-multi-cli-plugin` (adds `/gemini:research`, `/gemini:explore`)
-   - Codex → `claude plugin install codex@cc-multi-cli-plugin` (adds `/codex:execute`)
-   - Cursor → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:write`, `/cursor:plan`, `/cursor:debug`)
-   - Copilot → `claude plugin install copilot@cc-multi-cli-plugin` (adds `/copilot:research`, `/copilot:review`, `/copilot:plan`)
+   - Codex → `claude plugin install codex@cc-multi-cli-plugin` (adds `/codex:execute`, `/codex:rescue`, `/codex:review`, `/codex:adversarial-review`)
+   - Cursor → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:execute`, `/cursor:plan`, `/cursor:debug`)
+   - Antigravity → `claude plugin install antigravity@cc-multi-cli-plugin` (adds `/antigravity:research`, `/antigravity:explore`)
 
    When announcing what each install will provide, list the actual `commands/*.md` files in that plugin directory rather than the static list above (which can drift).
 
@@ -63,9 +62,9 @@ For each detected CLI, check the current install state FIRST, then act:
 
 ## Step 1.7 — Offer to add CLI binaries to the user's PATH (optional)
 
-**Purpose:** Pure UX. The plugin works regardless — each adapter resolves binaries via absolute path. This step is for users who want to type `agent` / `codex` / `gemini` / `copilot` from any terminal without typing a full path.
+**Purpose:** Pure UX. The plugin works regardless — each adapter resolves binaries via absolute path. This step is for users who want to type `agent` / `codex` from any terminal without typing a full path. (Antigravity has no CLI binary — skip it here; it's reached through the desktop app's Language Server, not PATH.)
 
-**For each installed CLI**, do this check:
+**For each installed CLI with a command-line binary** (Codex, Cursor), do this check:
 
 1. **Resolve the binary's directory.** The Step 1 detection already determined the working binary — derive its parent directory (e.g., for `C:/Users/<n>/AppData/Local/cursor-agent/agent.cmd`, the directory is `C:/Users/<n>/AppData/Local/cursor-agent`).
 
@@ -126,15 +125,10 @@ For each detected CLI, check the current install state FIRST, then act:
 For each installed CLI, check auth:
 
 - Codex: `codex login status` (NOT `codex whoami` — that doesn't exist)
-- Gemini: `gemini --version` should run without prompting for login (if it prompts, the CLI isn't authenticated)
 - Cursor: invoke the resolved binary path from Step 1 (NOT a literal `agent status`). On Windows that's typically `"C:/Users/<n>/AppData/Local/cursor-agent/agent.cmd" status`. Quote the path. Use the variable you stashed in Step 1 throughout the rest of the file — never assume `agent` is on PATH.
-- Copilot: **DO NOT** run a `copilot -p "hi"` inference probe — that burns ~10-20k premium tokens just to check auth. Cheap path:
-  1. Check env vars `GH_TOKEN` / `COPILOT_GITHUB_TOKEN` / `GITHUB_TOKEN` — if any is set, assume authenticated.
-  2. Else check `gh auth status` (the GitHub CLI shares Copilot's auth layer). Exit 0 = authenticated.
-  3. Else check for a Copilot auth file at `~/.copilot/` (look for any auth-related JSON/config; Copilot stores tokens there once logged in).
-  4. Only as last resort, fall back to a tiny `--help`-class probe that doesn't trigger inference. Never use `copilot -p`.
+- Antigravity: there is no CLI login command. Auth lives inside the Antigravity 2.0 desktop app — the user signs in there. The companion's setup probe reports detection only; if the desktop isn't running, tell the user to launch it and sign in. (The LS transport that would verify auth programmatically lands in Phase 2.)
 
-If unauthenticated, give the exact login command and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
+If unauthenticated, give the exact login command (or, for Antigravity, "sign in via the desktop app") and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
 
 ## Step 3 — Collect API keys (Exa required, Context7 optional)
 
@@ -150,9 +144,7 @@ For each parse below: if the file exists but is malformed (broken JSON/TOML), do
 2. **Claude Code's project-level MCP config:** `~/.claude/.mcp.json` (parse JSON; look for any `mcpServers.<name>.env.EXA_API_KEY` and `.CONTEXT7_API_KEY`).
 3. **Other CLI configs on the system** — since the user might already have these MCPs wired to another CLI:
    - `~/.codex/config.toml` — TOML parse; look for `mcp_servers.<any-name>.env.EXA_API_KEY` (any exa-flavored server) and `.CONTEXT7_API_KEY`.
-   - `~/.gemini/settings.json` — same idea.
-   - `~/.cursor/mcp.json` — same.
-   - `~/.copilot/mcp-config.json` — same.
+   - `~/.cursor/mcp.json` — same idea.
 4. **Shell env vars** via Bash: `echo "${EXA_API_KEY:-}"` and `echo "${CONTEXT7_API_KEY:-}"`. The `:-` guard avoids set-u failures on unset vars.
 
 If you find a plausible key, compose a summary and ASK before using it (via `AskUserQuestion`):
@@ -199,7 +191,7 @@ curl -sS -X POST https://api.exa.ai/search \
 ```
 Expected: `200`. 401/403 → key is bad; ask for a correct one or Skip.
 
-**Context7:** do NOT validate via HTTP probe. The previously-suggested `context7.com/api/v1/health` endpoint returns 400 even with a valid key (the endpoint shape is wrong / has moved). We don't have a reliable cheap probe for Context7 keys right now. Just trust the user's input and let key validity surface on first real use of `/gemini:research` / `/copilot:research`. The cost of a wrong-key Context7 is one failed research call, recoverable; the cost of a 400-on-every-setup-run is a bad UX every time.
+**Context7:** do NOT validate via HTTP probe. The previously-suggested `context7.com/api/v1/health` endpoint returns 400 even with a valid key (the endpoint shape is wrong / has moved). We don't have a reliable cheap probe for Context7 keys right now. Just trust the user's input and let key validity surface on first real use of `/codex:rescue` / `/cursor:plan` (or whichever command first invokes the MCP). The cost of a wrong-key Context7 is one failed call, recoverable; the cost of a 400-on-every-setup-run is a bad UX every time.
 
 If you want to confirm the key looks like the right SHAPE before writing it, do a lightweight format check: `ctx7sk-` prefix + UUID-ish body. That catches typos without burning a real probe.
 
@@ -222,7 +214,7 @@ Never echo either key back after capture — just confirm "Saved." If the user s
 
 ## Step 3.5 — One-time migration from v1 (only if needed)
 
-Older versions of this skill wrote `_cc_multi_managed: true` marker keys inside `mcpServers` entries. That's been deprecated (it broke Gemini's schema validator). On the FIRST re-run after upgrading, those markers need to be stripped from any CLI config that has them — AND `managed-servers.json` needs to be written, since v1 users have managed entries already in place but no tracking file.
+Older versions of this skill wrote `_cc_multi_managed: true` marker keys inside `mcpServers` entries. That's been deprecated (it broke strict JSON-schema validators that reject unknown keys). On the FIRST re-run after upgrading, those markers need to be stripped from any CLI config that has them — AND `managed-servers.json` needs to be written, since v1 users have managed entries already in place but no tracking file.
 
 Detect by reading each CLI's config and grepping for `_cc_multi_managed`. If found:
 
@@ -242,7 +234,7 @@ Most re-runs of `/multi:setup` are "everything still matches canonical, nothing 
 
 1. Plugin's `config.json` has both keys (or empty-strings for declined ones).
 2. `~/.claude/plugins/cc-multi-cli-plugin/managed-servers.json` exists.
-3. **The set of CLIs in `managed-servers.json` matches the set of installed-AND-authenticated CLIs from Steps 1 and 2.** A new CLI installed since the last run (e.g., user just installed Copilot) means the tracking file is incomplete → must NOT bail; fall through and configure the new CLI. This is the critical check — Codex's review found the prior version missed this.
+3. **The set of CLIs in `managed-servers.json` matches the set of installed-AND-authenticated CLIs from Steps 1 and 2.** A new CLI installed since the last run (e.g., user just installed Cursor) means the tracking file is incomplete → must NOT bail; fall through and configure the new CLI. This is the critical check — Codex's review found the prior version missed this.
 4. For each CLI listed in `managed-servers.json`, the live config file contains the expected server entries with credentials matching `config.json`'s canonical values, and no stale `_cc_multi_managed` markers.
 5. No conflicting same-purpose servers (Exa-purpose / Context7-purpose) exist beyond the canonical entries.
 
@@ -262,9 +254,8 @@ For each installed, authenticated CLI, do the following:
 
 1. **Locate the config file.**
    - Codex: `~/.codex/config.toml` (create if missing with `[mcp_servers]` section)
-   - Gemini: `~/.gemini/settings.json` (create if missing as `{ "mcpServers": {} }`)
    - Cursor: `~/.cursor/mcp.json` (create if missing as `{ "mcpServers": {} }`)
-   - Copilot: `~/.copilot/mcp-config.json` (create if missing as `{ "mcpServers": {} }`)
+   - Antigravity: **no MCP config file** — MCP servers are configured inside the Antigravity 2.0 desktop app, not by this wizard. Skip Antigravity in this step (and in Steps 5–6's MCP verification/inventory). The Exa/Context7 wiring below applies only to Codex and Cursor.
 
 2. **Back up the existing file ONLY when an edit is about to happen.** Defer this step until after the audit (substep 3 below) determines that an edit IS required. Skipping the backup when no edit will land avoids stomping on a perfectly-good `.bak` for nothing.
 
@@ -275,7 +266,7 @@ For each installed, authenticated CLI, do the following:
 
    **Why this matters:** the original "create on every run" rule overwrote good backups in steady-state re-runs. The "deferred + mtime-aware" rule means `.bak` reflects the state immediately before THIS run's edits, every time, with no churn on no-op runs.
 
-3. **AUDIT existing managed entries first, then merge.** This is NOT a one-shot "additive merge" — re-runs of `/multi:setup` need to detect drift from prior versions of this skill (e.g., stale `_cc_multi_managed: true` marker keys that break Gemini's schema validator). Audit pass:
+3. **AUDIT existing managed entries first, then merge.** This is NOT a one-shot "additive merge" — re-runs of `/multi:setup` need to detect drift from prior versions of this skill (e.g., stale `_cc_multi_managed: true` marker keys that break strict JSON-schema validators). Audit pass:
 
    - Read the current config file.
    - For each existing entry that IS one of our managed servers (`exa`, `context7`, OR matches the purpose patterns from the conflict-handling section below):
@@ -314,7 +305,7 @@ For each installed, authenticated CLI, do the following:
 
    **Without Context7 key:** drop the `env = { ... }` line from the Context7 block.
 
-5. **Gemini / Cursor / Copilot — JSON**: Merge these two servers into `mcpServers`. **Do NOT add any extra marker keys** like `_cc_multi_managed` inside the server entries — Gemini's schema validator rejects unknown keys and this breaks the entire config load. Include Context7's `env` block ONLY if the user provided a key.
+5. **Cursor — JSON**: Merge these two servers into `mcpServers` in `~/.cursor/mcp.json`. **Do NOT add any extra marker keys** like `_cc_multi_managed` inside the server entries — strict JSON-schema validators reject unknown keys and this can break the entire config load. Include Context7's `env` block ONLY if the user provided a key.
 
    **Exa** (always includes its env block — required):
    ```json
@@ -385,29 +376,27 @@ Do NOT run slow "ask the CLI to invoke a tool" probes — those take 30s-2min pe
 - If the user skipped Exa, neither `exa` nor any Exa-purpose server should be expected.
 - If the user opted to consolidate dual credentials, only the canonical entries should be present.
 
-For each CLI, compare the probe output (or parsed JSON for Copilot) against the intended-state list. Report `✓ matches intended state` or `✗ drift` per CLI.
+For each MCP-configured CLI, compare the probe output against the intended-state list. Report `✓ matches intended state` or `✗ drift` per CLI. (Antigravity has no wizard-managed MCP config — it is not verified here.)
 
 | CLI | Probe command |
 |---|---|
 | Codex | `codex mcp list` (or `codex mcp` without args for help) |
-| Gemini | `gemini mcp list` |
 | Cursor | `"<resolved-binary-path>" mcp list` (use the path stashed in Step 1, NOT a literal `agent`) |
-| Copilot | No direct listing command — `[ -f ~/.copilot/mcp-config.json ] && cat` then parse. If parse fails, treat as malformed-config (don't crash). |
 
-**Empty-output gotcha — re-probe with verbose flag before declaring failure.** Some CLIs (notably `gemini mcp list`) exit 0 with empty stdout when servers are correctly configured but the parser used for table rendering is in a weird state. If a probe exits 0 with empty output, retry once with the CLI's verbose/debug flag (`gemini mcp list -d`, etc.) and parse from there. ONLY after both probes return empty should you declare a failure. Exit-0-empty-stdout is not a reliable failure signal.
+**Empty-output gotcha — re-probe with verbose flag before declaring failure.** A CLI can exit 0 with empty stdout when servers are correctly configured but the parser used for table rendering is in a weird state. If a probe exits 0 with empty output, retry once with the CLI's verbose/debug flag (e.g. `-d`) and parse from there. ONLY after both probes return empty should you declare a failure. Exit-0-empty-stdout is not a reliable failure signal.
 
-**Secrets warning when running verbose probes:** verbose / `-d` outputs often print env vars unmasked (Gemini does, Codex masks). If the user is screen-sharing or recording their terminal, this leaks the API key into scrollback. Before running any verbose probe, print:
+**Secrets warning when running verbose probes:** verbose / `-d` outputs can print env vars unmasked (Codex masks them; not every CLI does). If the user is screen-sharing or recording their terminal, this leaks the API key into scrollback. Before running any verbose probe, print:
 
 > *"Running verbose probe for <cli> — output may include API keys. If you're sharing your screen, look away or skip this verification step."*
 
 **If any probe fails** (non-zero exit, schema error, missing servers after both list and verbose):
 - Print the exact error.
 - Do NOT roll back automatically — let the user see what went wrong.
-- For schema errors (e.g., Gemini rejecting unknown keys), tell the user which config file has the issue and quote the error message.
+- For schema errors (a CLI rejecting unknown keys), tell the user which config file has the issue and quote the error message.
 
 **Time budget:** each probe should complete in < 5 seconds. If one hangs, kill it (`timeout 10 <command>` via Bash) and report as failed — don't wait 2 minutes.
 
-**Don't verify MCP server runtime reachability here.** The CLI listing each server confirms the config is valid and the CLI will spawn the server on first use. The server actually responding to queries is tested on the first real `/gemini:research` / `/copilot:research` / etc. invocation — not in setup.
+**Don't verify MCP server runtime reachability here.** The CLI listing each server confirms the config is valid and the CLI will spawn the server on first use. The server actually responding to queries is tested on the first real `/codex:rescue` / `/cursor:plan` / etc. invocation — not in setup.
 
 ## Step 6 — Report (with key inventory + drift summary)
 
@@ -417,11 +406,11 @@ Locations to scan (read-only; report findings; don't modify):
 
 - `~/.claude/plugins/cc-multi-cli-plugin/config.json` — plugin's canonical copy (managed)
 - `~/.codex/config.toml` (managed)
-- `~/.gemini/settings.json` (managed)
 - `~/.cursor/mcp.json` (managed)
-- `~/.copilot/mcp-config.json` (managed)
 - `~/.claude/.mcp.json` — Claude Code's own MCP config (UNMANAGED — user maintains this)
 - Any project-local `.mcp.json` files in commonly-used directories (cwd at minimum; report only)
+
+(Antigravity has no wizard-managed config file, so it does not appear in this inventory.)
 
 For each file containing an Exa or Context7 key, show: file path, which key (Exa or Context7), key fingerprint (last 6 chars), and whether it's managed by this wizard. If the same key family has different fingerprints across files, flag it as drift.
 
@@ -432,9 +421,8 @@ cc-multi-cli-plugin setup complete.
 
 Per-CLI status:
   ✓ Codex: configured (exa, context7)
-  ✓ Gemini: configured (exa, context7)
   ⚠ Cursor: skipped — not authenticated (run `agent status`)
-  ✗ Copilot: configuration failed — <error message>
+  ⚠ Antigravity: desktop not detected — launch Antigravity 2.0 and sign in (no MCP config managed by this wizard)
 
 Drift cleaned this run:
   - Stripped stale _cc_multi_managed marker from cursor/exa, cursor/context7
@@ -444,9 +432,7 @@ Key inventory (where Exa/Context7 keys are embedded right now):
   managed by this wizard:
     ~/.claude/plugins/cc-multi-cli-plugin/config.json  exa…a3adec  ctx7…c7e8c8
     ~/.codex/config.toml                                exa…a3adec  ctx7…c7e8c8
-    ~/.gemini/settings.json                             exa…a3adec  ctx7…c7e8c8
     ~/.cursor/mcp.json                                  exa…a3adec  ctx7…c7e8c8
-    ~/.copilot/mcp-config.json                          exa…a3adec  ctx7…c7e8c8
   not managed (review yourself):
     ~/.claude/.mcp.json                                 exa…a3adec  ctx7…c7e8c8
   drift detected: <none | list of files with mismatched fingerprints>
@@ -454,9 +440,7 @@ Key inventory (where Exa/Context7 keys are embedded right now):
 Backups (restore by copying .bak back — this run rotated stale ones):
   ~/.codex/config.toml.bak             (mtime: 2026-04-24 19:14 — fresh)
   ~/.codex/config.toml.bak.20260424-191100  (older snapshot, kept for reference)
-  ~/.gemini/settings.json.bak          (mtime: 2026-04-24 19:14 — fresh)
   ~/.cursor/mcp.json.bak               (mtime: 2026-04-24 19:14 — fresh)
-  ~/.copilot/mcp-config.json.bak       (mtime: 2026-04-24 19:14 — fresh)
 
 Tracking file:
   ~/.claude/plugins/cc-multi-cli-plugin/managed-servers.json
@@ -464,7 +448,7 @@ Tracking file:
    and by future /multi:uninstall to know what to remove cleanly.)
 
 Next steps:
-  - Try `/gemini:research <topic>` or any other plugin command.
+  - Try `/codex:execute <task>`, `/cursor:plan <task>`, or `/antigravity:research <topic>`.
   - Re-run `/multi:setup` anytime to reconfigure (idempotent: audits + reconciles drift, skips no-ops).
 ```
 
