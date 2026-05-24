@@ -311,11 +311,19 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
     await client.initialize();
 
     let sessionId = options.sessionId ?? null;
+    // Cursor advertises its selectable model IDs in the session/new response
+    // (models.availableModels[].modelId, e.g. "claude-sonnet-4-6[thinking=true,
+    // context=200k,effort=medium]"). We capture them so set_config_option below
+    // can resolve a user-friendly --model name to the exact bracketed modelId
+    // the server requires.
+    let availableModels = [];
     if (sessionId) {
-      await client.request("session/load", { sessionId, cwd, mcpServers });
+      const loaded = await client.request("session/load", { sessionId, cwd, mcpServers });
+      availableModels = loaded?.models?.availableModels ?? [];
     } else {
       const session = await client.request("session/new", { cwd, mcpServers });
       sessionId = session?.sessionId ?? null;
+      availableModels = session?.models?.availableModels ?? [];
     }
 
     // Explicitly set the ACP mode based on the role. Map:
@@ -336,10 +344,40 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
     }
 
     if (options.model) {
+      // Cursor 2026.04.13+ ignores session/new.model and session/set_model.
+      // The working path is session/set_config_option, applied after the
+      // session exists. Verified live against agent 2026.05.01 via ACP_TRACE:
+      //   - the param is `configId` (NOT `key`); sending `key` yields
+      //     -32603 with data path ["configId"] "Invalid input".
+      //   - `value` must be a full advertised modelId, e.g.
+      //     "claude-sonnet-4-6[thinking=true,context=200k,effort=medium]" — the
+      //     bare name "claude-sonnet-4-6" is rejected with -32602 "Invalid
+      //     model value". So we resolve options.model against the session's
+      //     advertised models (exact modelId, then name, then prefix-before-"[").
+      //   - the result echoes the applied value at
+      //     configOptions.find(o => o.id === "model").currentValue (there is no
+      //     top-level currentValue/value field), which we read back and compare.
+      const requested = String(options.model);
+      const match =
+        availableModels.find((m) => m?.modelId === requested) ??
+        availableModels.find((m) => m?.name === requested) ??
+        availableModels.find((m) => String(m?.modelId ?? "").split("[")[0] === requested);
+      const modelValue = match?.modelId ?? requested;
       try {
-        await client.request("session/set_model", { sessionId, modelId: options.model });
+        const res = await client.request("session/set_config_option", {
+          sessionId,
+          configId: "model",
+          value: modelValue
+        });
+        const modelOption = Array.isArray(res?.configOptions)
+          ? res.configOptions.find((o) => o?.id === "model")
+          : null;
+        const applied = modelOption?.currentValue ?? res?.currentValue ?? res?.value ?? null;
+        if (applied && String(applied) !== String(modelValue)) {
+          process.stderr.write(`Warning: Cursor reported model "${applied}" after requesting "${modelValue}".\n`);
+        }
       } catch (error) {
-        process.stderr.write(`Warning: could not set model to ${options.model}: ${error?.message ?? error}\n`);
+        process.stderr.write(`Warning: could not set Cursor model to ${options.model}: ${error?.message ?? error}\n`);
       }
     }
 
