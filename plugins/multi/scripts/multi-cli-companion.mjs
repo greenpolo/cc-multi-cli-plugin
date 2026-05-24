@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import * as codex from "./lib/adapters/codex.mjs";
-import * as gemini from "./lib/adapters/gemini.mjs";
 import * as cursor from "./lib/adapters/cursor.mjs";
 import {
     buildPersistentTaskThreadName,
@@ -66,11 +65,10 @@ import {
   renderTaskResult
 } from "./lib/render.mjs";
 
-// CLI adapter registry. Keys are CLI names as seen by the user
-// ('codex', 'gemini', 'cursor'). New adapters are added in later phases.
+// CLI adapter registry. Keys are CLI names as seen by the user.
+// 'antigravity' is added in a later task once its adapter exists.
 const ADAPTERS = {
   codex,
-  gemini,
   cursor,
 };
 
@@ -131,7 +129,7 @@ function printUsage() {
     [
       "Usage:",
       "  Global flags:",
-      "    --cli <codex|gemini|cursor>   Select the CLI adapter (default: codex)",
+      "    --cli <codex|cursor>   Select the CLI adapter (default: codex)",
       "  node scripts/multi-cli-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/multi-cli-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/multi-cli-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
@@ -543,89 +541,6 @@ async function executeTaskRun(request) {
     cli
   });
 
-  // ── Gemini dispatch path ────────────────────────────────────────────────────
-  // When --cli gemini is used, invoke Gemini ACP instead of the Codex app-server.
-  // Gemini does not currently support thread/session resumption in the same way
-  // as Codex; --resume-last is accepted but falls back to a fresh prompt.
-  if (cli === "gemini") {
-    const geminiAvail = gemini.adapter.isAvailable();
-    if (!geminiAvail.available) {
-      throw new Error(`Gemini CLI is not available: ${geminiAvail.detail ?? "gemini not found on PATH"}. Install with: npm install -g @google/gemini-cli`);
-    }
-
-    if (!request.prompt) {
-      throw new Error("Provide a prompt, a prompt file, or piped stdin for Gemini tasks.");
-    }
-
-    const prompt = request.prompt.trim() || "";
-    // Always use yolo: the agent skips permission prompts internally, our
-    // auto-approve onRequest handler covers anything that still asks, and MCP
-    // servers (Exa, Context7) need tool access to function. Plan mode blocks
-    // tool use entirely and was the cause of multi-topic research hangs.
-    const approvalMode = "yolo";
-    // Treat "auto" as "let the Gemini CLI pick its default model." Calling
-    // session/set_model with "auto" over ACP is silently accepted but causes
-    // the subsequent session/prompt to hang indefinitely, so we omit set_model
-    // entirely in that case.
-    const requestedModel = request.model && String(request.model).toLowerCase() !== "auto"
-      ? request.model
-      : undefined;
-
-    const result = await gemini.adapter.invoke(workspaceRoot, prompt, {
-      model: requestedModel,
-      approvalMode,
-      onStream: request.onProgress
-        ? (event) => {
-            // Drop message_chunk events — see cursor branch comment for rationale.
-            if (event.type === "phase") {
-              request.onProgress({ message: event.message, phase: event.message });
-            }
-          }
-        : undefined
-    });
-
-    const rawOutput = typeof result.text === "string" ? result.text : "";
-    const failureMessage = formatAdapterError(result.error);
-    // Match codex's pattern: in-protocol errors (e.g. JSON-RPC ModelNotFound)
-    // surface via the rendered failure message, not via a non-zero exit code.
-    // A non-zero exit trips the forwarding subagent's "if Bash fails, return
-    // nothing" rule and silently swallows the error message.
-    const exitStatus = 0;
-
-    const rendered = renderTaskResult(
-      {
-        rawOutput,
-        failureMessage,
-        reasoningSummary: []
-      },
-      {
-        title: taskMetadata.title,
-        jobId: request.jobId ?? null,
-        write: Boolean(request.write)
-      }
-    );
-
-    const payload = {
-      status: exitStatus,
-      threadId: result.sessionId ?? null,
-      rawOutput,
-      touchedFiles: (result.fileChanges ?? []).map((fc) => fc.path),
-      reasoningSummary: []
-    };
-
-    return {
-      exitStatus,
-      threadId: result.sessionId ?? null,
-      turnId: null,
-      payload,
-      rendered,
-      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
-      jobTitle: taskMetadata.title,
-      jobClass: "task",
-      write: Boolean(request.write)
-    };
-  }
-
   // ── Cursor dispatch path ────────────────────────────────────────────────────
   // When --cli cursor is used, invoke Cursor ACP (`agent acp`).
   // The role (writer/planner/debugger/ask) is forwarded so the adapter can
@@ -662,7 +577,9 @@ async function executeTaskRun(request) {
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
     const failureMessage = formatAdapterError(result.error);
-    // See gemini branch: surface in-protocol errors via rendered output, not exit code.
+    // Match codex's pattern: surface in-protocol errors via the rendered failure
+    // message, not via a non-zero exit code. A non-zero exit trips the forwarding
+    // subagent's "if Bash fails, return nothing" rule and silently swallows it.
     const exitStatus = 0;
 
     const rendered = renderTaskResult(
@@ -898,8 +815,8 @@ function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex" }) {
     };
   }
 
-  const cliLabel = cli === "gemini" ? "Gemini"
-                 : cli === "cursor" ? "Cursor"
+  const cliLabel = cli === "cursor" ? "Cursor"
+                 : cli === "antigravity" ? "Antigravity"
                  : "Codex";
   const title = resumeLast ? `${cliLabel} Resume` : `${cliLabel} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
@@ -1186,7 +1103,7 @@ async function handleTask(argv, context = {}) {
   if (maxTurns != null && !untilDone) {
     throw new Error("--max-turns requires --until-done.");
   }
-  // --read-only (from gemini-researcher / gemini-explorer subagents) maps to write: false
+  // --read-only (from read-only research/explore subagents) maps to write: false
   const write = Boolean(options.write) && !Boolean(options["read-only"]);
   const taskMetadata = buildTaskRunMetadata({
     prompt,

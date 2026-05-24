@@ -5,7 +5,7 @@
     "url": "https://github.com/greenpolo"
   },
   "metadata": {
-    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Gemini, and Cursor CLIs from Claude Code.",
+    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex and Cursor CLIs from Claude Code.",
     "version": "2.0.1"
   },
   "plugins": [
@@ -17,15 +17,6 @@
         "name": "greenpolo"
       },
       "source": "./plugins/multi"
-    },
-    {
-      "name": "gemini",
-      "description": "Adds /gemini:explore (Gemini 3 Flash, fast code ingestion) and /gemini:research (Gemini 3.1 Pro, deep external research). Requires multi.",
-      "version": "2.0.1",
-      "author": {
-        "name": "greenpolo"
-      },
-      "source": "./plugins/gemini"
     },
     {
       "name": "codex",
