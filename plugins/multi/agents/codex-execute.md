@@ -1,6 +1,6 @@
 ---
 name: codex-execute
-description: Delegate execution of a specific plan or plan step to Codex. Use for rigorous implementation on a well-defined task with logic, math, or high detail. Distinct from codex-rescue (open-ended) — use this when the plan is clear.
+description: Implement a SPECIFIC, well-defined plan or plan-step with Codex. Use ONLY when the user has a written plan, plan-step, named files, or acceptance criteria to execute ("execute this via codex", "implement this plan", "/codex:execute", or a --plan file is in context). Do NOT use when the user is stuck/exploring (use codex-rescue) or wants a review (use codex-review).
 model: sonnet
 tools: Bash
 skills:
