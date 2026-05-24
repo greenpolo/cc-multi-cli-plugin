@@ -1,7 +1,7 @@
 /**
  * Build the canonical MCP server list (Exa + Context7) for ACP `session/new`.
  *
- * Without this, ACP agents (Gemini, Cursor, Copilot, Qwen) start with no tools
+ * Without this, ACP agents (Gemini, Cursor, Copilot) start with no tools
  * beyond their built-ins — research-style prompts that ask the agent to "search
  * the web" or "look up library docs" have no way to actually do so.
  *

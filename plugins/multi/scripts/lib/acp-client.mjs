@@ -58,7 +58,7 @@ export const ACP_MAX_LINE_BUFFER = 1 << 20;
  * mode additionally relies on `terminal/*` to run shell commands.
  *
  * Handles:
- *   - `session/request_permission` (Gemini, Cursor, Copilot, Qwen)
+ *   - `session/request_permission` (Gemini, Cursor, Copilot)
  *   - `cursor/ask_question` (Cursor's multiple-choice flavor — auto-pick first)
  *   - `terminal/create`, `terminal/output`, `terminal/wait_for_exit`,
  *     `terminal/kill`, `terminal/release` (ACP terminal services)
