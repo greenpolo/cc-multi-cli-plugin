@@ -55,6 +55,13 @@ function findCursorBinary() {
   return "agent";
 }
 
+// ─── Current Cursor model IDs (2026-05, informational) ────────────────────────
+// Passed through verbatim via --model; the adapter does not hard-validate.
+// Valid as of Cursor 2026.04.13+: gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.2,
+// gpt-5-mini, gpt-5.1-codex-mini, claude-opus-4-6, claude-sonnet-4-6,
+// claude-sonnet-4, claude-haiku-4-5, gemini-3.1-pro, gemini-2.5-flash, kimi-k2.5.
+// Source: forum #157312 model picker dump. Update when Cursor's /models changes.
+
 // ─── Role-to-prompt-prefix mapping ───────────────────────────────────────────
 //
 // Cursor interprets slash commands (/plan, /debug, /ask) embedded in the
