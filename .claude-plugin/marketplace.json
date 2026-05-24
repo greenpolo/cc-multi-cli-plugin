@@ -5,7 +5,7 @@
     "url": "https://github.com/greenpolo"
   },
   "metadata": {
-    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Gemini, Cursor, and GitHub Copilot CLIs from Claude Code.",
+    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Gemini, and Cursor CLIs from Claude Code.",
     "version": "2.0.1"
   },
   "plugins": [
@@ -44,15 +44,6 @@
         "name": "greenpolo"
       },
       "source": "./plugins/cursor"
-    },
-    {
-      "name": "copilot",
-      "description": "Adds /copilot:research, /copilot:review. Requires multi.",
-      "version": "2.0.1",
-      "author": {
-        "name": "greenpolo"
-      },
-      "source": "./plugins/copilot"
     }
   ]
 }

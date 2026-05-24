@@ -6,7 +6,7 @@ user-invocable: false
 
 # Multi-CLI Result Handling
 
-When a `multi:*` subagent returns helper output (Cursor, Gemini, Copilot, Codex via multi, or any CLI added via `multi-cli-anything`):
+When a `multi:*` subagent returns helper output (Cursor, Gemini, Codex via multi, or any CLI added via `multi-cli-anything`):
 
 ## Preserving the helper's structure
 

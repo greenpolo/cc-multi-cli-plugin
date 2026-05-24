@@ -11,7 +11,6 @@ import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import * as codex from "./lib/adapters/codex.mjs";
 import * as gemini from "./lib/adapters/gemini.mjs";
 import * as cursor from "./lib/adapters/cursor.mjs";
-import * as copilot from "./lib/adapters/copilot.mjs";
 import {
     buildPersistentTaskThreadName,
     DEFAULT_CONTINUE_PROMPT,
@@ -68,12 +67,11 @@ import {
 } from "./lib/render.mjs";
 
 // CLI adapter registry. Keys are CLI names as seen by the user
-// ('codex', 'gemini', 'cursor', 'copilot'). New adapters are added in later phases.
+// ('codex', 'gemini', 'cursor'). New adapters are added in later phases.
 const ADAPTERS = {
   codex,
   gemini,
   cursor,
-  copilot,
 };
 
 function getAdapter(name) {
@@ -133,7 +131,7 @@ function printUsage() {
     [
       "Usage:",
       "  Global flags:",
-      "    --cli <codex|gemini|cursor|copilot>   Select the CLI adapter (default: codex)",
+      "    --cli <codex|gemini|cursor>   Select the CLI adapter (default: codex)",
       "  node scripts/multi-cli-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/multi-cli-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/multi-cli-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
@@ -701,75 +699,6 @@ async function executeTaskRun(request) {
     };
   }
 
-  // ── Copilot dispatch path ────────────────────────────────────────────────────
-  // When --cli copilot is used, invoke GitHub Copilot ACP (`copilot --acp --stdio`).
-  // The role (researcher/reviewer) is forwarded so the adapter can prepend the
-  // appropriate slash-command prefix (/research, /review) to the prompt.
-  if (cli === "copilot") {
-    const copilotAvail = copilot.adapter.isAvailable();
-    if (!copilotAvail.available) {
-      throw new Error(`GitHub Copilot CLI is not available: ${copilotAvail.detail ?? "copilot not found"}. Install with: npm install -g @github/copilot`);
-    }
-
-    if (!request.prompt) {
-      throw new Error("Provide a prompt for Copilot tasks.");
-    }
-
-    const prompt = request.prompt.trim() || "";
-
-    const result = await copilot.adapter.invoke(workspaceRoot, prompt, {
-      model: request.model ?? undefined,
-      role: request.role ?? "default",
-      write: Boolean(request.write),
-      onStream: request.onProgress
-        ? (event) => {
-            // Drop message_chunk events — see cursor branch comment for rationale.
-            if (event.type === "phase") {
-              request.onProgress({ message: event.message, phase: event.message });
-            }
-          }
-        : undefined
-    });
-
-    const rawOutput = typeof result.text === "string" ? result.text : "";
-    const failureMessage = formatAdapterError(result.error);
-    // See gemini branch: surface in-protocol errors via rendered output, not exit code.
-    const exitStatus = 0;
-
-    const rendered = renderTaskResult(
-      {
-        rawOutput,
-        failureMessage,
-        reasoningSummary: []
-      },
-      {
-        title: taskMetadata.title,
-        jobId: request.jobId ?? null,
-        write: Boolean(request.write)
-      }
-    );
-
-    const payload = {
-      status: exitStatus,
-      threadId: result.sessionId ?? null,
-      rawOutput,
-      touchedFiles: (result.fileChanges ?? []).map((fc) => fc.path),
-      reasoningSummary: []
-    };
-
-    return {
-      exitStatus,
-      threadId: result.sessionId ?? null,
-      turnId: null,
-      payload,
-      rendered,
-      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
-      jobTitle: taskMetadata.title,
-      jobClass: "task",
-      write: Boolean(request.write)
-    };
-  }
-
   // ── Codex dispatch path (default) ───────────────────────────────────────────
   ensureCodexAvailable(request.cwd);
 
@@ -971,7 +900,6 @@ function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex" }) {
 
   const cliLabel = cli === "gemini" ? "Gemini"
                  : cli === "cursor" ? "Cursor"
-                 : cli === "copilot" ? "Copilot"
                  : "Codex";
   const title = resumeLast ? `${cliLabel} Resume` : `${cliLabel} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";

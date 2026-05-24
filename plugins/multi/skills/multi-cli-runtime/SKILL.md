@@ -6,13 +6,13 @@ user-invocable: false
 
 # Multi-CLI Runtime
 
-Use this skill only inside `multi:*` forwarding subagents (`cursor-execute`, `cursor-planner`, `cursor-debugger`, `gemini-explorer`, `gemini-researcher`, `copilot-planner`, `copilot-researcher`, `copilot-reviewer`, etc.).
+Use this skill only inside `multi:*` forwarding subagents (`cursor-execute`, `cursor-planner`, `cursor-debugger`, `gemini-explorer`, `gemini-researcher`, etc.).
 
 ## Primary helper
 
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> [flags] --prompt "<text>"`
 
-Where `<cli>` is one of `codex|gemini|cursor|copilot` (or any CLI added via the `multi-cli-anything` skill) and `<role>` is the subagent's logical role (`execute`, `planner`, `writer`, `debugger`, `researcher`, `reviewer`, `explorer`, `ask`).
+Where `<cli>` is one of `codex|gemini|cursor` (or any CLI added via the `multi-cli-anything` skill) and `<role>` is the subagent's logical role (`execute`, `planner`, `writer`, `debugger`, `researcher`, `reviewer`, `explorer`, `ask`).
 
 ## Execution rules
 
