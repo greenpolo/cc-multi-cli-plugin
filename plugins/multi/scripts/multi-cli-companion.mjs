@@ -9,10 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import * as codex from "./lib/adapters/codex.mjs";
-import * as gemini from "./lib/adapters/gemini.mjs";
 import * as cursor from "./lib/adapters/cursor.mjs";
-import * as copilot from "./lib/adapters/copilot.mjs";
-import * as qwen from "./lib/adapters/qwen.mjs";
+import * as antigravity from "./lib/adapters/antigravity.mjs";
 import {
     buildPersistentTaskThreadName,
     DEFAULT_CONTINUE_PROMPT,
@@ -68,14 +66,12 @@ import {
   renderTaskResult
 } from "./lib/render.mjs";
 
-// CLI adapter registry. Keys are CLI names as seen by the user
-// ('codex', 'gemini', 'cursor', 'copilot', 'qwen'). New adapters are added in later phases.
+// CLI adapter registry. Keys are CLI names as seen by the user.
+// 'antigravity' is added in a later task once its adapter exists.
 const ADAPTERS = {
   codex,
-  gemini,
   cursor,
-  copilot,
-  qwen,
+  antigravity,
 };
 
 function getAdapter(name) {
@@ -135,7 +131,7 @@ function printUsage() {
     [
       "Usage:",
       "  Global flags:",
-      "    --cli <codex|gemini|cursor|copilot|qwen>   Select the CLI adapter (default: codex)",
+      "    --cli <codex|cursor|antigravity>   Select the CLI adapter (default: codex)",
       "  node scripts/multi-cli-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/multi-cli-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/multi-cli-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
@@ -266,6 +262,35 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   const authStatus = await getCodexAuthStatus(cwd);
   const config = getConfig(workspaceRoot);
 
+  // Per-CLI detection via each adapter's isAvailable(). Reflects the live
+  // provider set (codex, cursor, antigravity); drives the report's CLI list so
+  // it never drifts from the ADAPTERS registry. Cursor/Antigravity detection is
+  // best-effort and must never throw — guard each probe.
+  const cliOrder = ["codex", "cursor", "antigravity"];
+  const clis = cliOrder.map((name) => {
+    // ADAPTERS[name] is the adapter module namespace; its `.adapter` object
+    // carries the uniform isAvailable() probe (same shape dispatch uses).
+    const adapter = ADAPTERS[name]?.adapter;
+    let availability = { available: false, detail: "adapter not registered", version: null };
+    if (adapter && typeof adapter.isAvailable === "function") {
+      try {
+        availability = adapter.isAvailable(cwd);
+      } catch (error) {
+        availability = {
+          available: false,
+          detail: `detection failed: ${error?.message ?? error}`,
+          version: null
+        };
+      }
+    }
+    return {
+      name,
+      available: Boolean(availability?.available),
+      detail: availability?.detail ?? "",
+      version: availability?.version ?? null
+    };
+  });
+
   const nextSteps = [];
   if (!codexStatus.available) {
     nextSteps.push("Install Codex with `npm install -g @openai/codex`.");
@@ -273,6 +298,10 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   if (codexStatus.available && !authStatus.loggedIn && authStatus.requiresOpenaiAuth) {
     nextSteps.push("Run `!codex login`.");
     nextSteps.push("If browser login is blocked, retry with `!codex login --device-auth` or `!codex login --with-api-key`.");
+  }
+  const antigravityCli = clis.find((entry) => entry.name === "antigravity");
+  if (antigravityCli && !antigravityCli.available) {
+    nextSteps.push("Antigravity: install the Antigravity 2.0 desktop app, sign in, and keep it running (detection only; the LS transport lands in Phase 2).");
   }
   if (!config.stopReviewGate) {
     nextSteps.push("Optional: run `/codex:setup --enable-review-gate` to require a fresh review before stop.");
@@ -284,6 +313,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
     npm: npmStatus,
     codex: codexStatus,
     auth: authStatus,
+    clis,
     sessionRuntime: getSessionRuntimeStatus(process.env, workspaceRoot),
     reviewGateEnabled: Boolean(config.stopReviewGate),
     actionsTaken,
@@ -547,89 +577,6 @@ async function executeTaskRun(request) {
     cli
   });
 
-  // ── Gemini dispatch path ────────────────────────────────────────────────────
-  // When --cli gemini is used, invoke Gemini ACP instead of the Codex app-server.
-  // Gemini does not currently support thread/session resumption in the same way
-  // as Codex; --resume-last is accepted but falls back to a fresh prompt.
-  if (cli === "gemini") {
-    const geminiAvail = gemini.adapter.isAvailable();
-    if (!geminiAvail.available) {
-      throw new Error(`Gemini CLI is not available: ${geminiAvail.detail ?? "gemini not found on PATH"}. Install with: npm install -g @google/gemini-cli`);
-    }
-
-    if (!request.prompt) {
-      throw new Error("Provide a prompt, a prompt file, or piped stdin for Gemini tasks.");
-    }
-
-    const prompt = request.prompt.trim() || "";
-    // Always use yolo: the agent skips permission prompts internally, our
-    // auto-approve onRequest handler covers anything that still asks, and MCP
-    // servers (Exa, Context7) need tool access to function. Plan mode blocks
-    // tool use entirely and was the cause of multi-topic research hangs.
-    const approvalMode = "yolo";
-    // Treat "auto" as "let the Gemini CLI pick its default model." Calling
-    // session/set_model with "auto" over ACP is silently accepted but causes
-    // the subsequent session/prompt to hang indefinitely, so we omit set_model
-    // entirely in that case.
-    const requestedModel = request.model && String(request.model).toLowerCase() !== "auto"
-      ? request.model
-      : undefined;
-
-    const result = await gemini.adapter.invoke(workspaceRoot, prompt, {
-      model: requestedModel,
-      approvalMode,
-      onStream: request.onProgress
-        ? (event) => {
-            // Drop message_chunk events — see cursor branch comment for rationale.
-            if (event.type === "phase") {
-              request.onProgress({ message: event.message, phase: event.message });
-            }
-          }
-        : undefined
-    });
-
-    const rawOutput = typeof result.text === "string" ? result.text : "";
-    const failureMessage = formatAdapterError(result.error);
-    // Match codex's pattern: in-protocol errors (e.g. JSON-RPC ModelNotFound)
-    // surface via the rendered failure message, not via a non-zero exit code.
-    // A non-zero exit trips the forwarding subagent's "if Bash fails, return
-    // nothing" rule and silently swallows the error message.
-    const exitStatus = 0;
-
-    const rendered = renderTaskResult(
-      {
-        rawOutput,
-        failureMessage,
-        reasoningSummary: []
-      },
-      {
-        title: taskMetadata.title,
-        jobId: request.jobId ?? null,
-        write: Boolean(request.write)
-      }
-    );
-
-    const payload = {
-      status: exitStatus,
-      threadId: result.sessionId ?? null,
-      rawOutput,
-      touchedFiles: (result.fileChanges ?? []).map((fc) => fc.path),
-      reasoningSummary: []
-    };
-
-    return {
-      exitStatus,
-      threadId: result.sessionId ?? null,
-      turnId: null,
-      payload,
-      rendered,
-      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
-      jobTitle: taskMetadata.title,
-      jobClass: "task",
-      write: Boolean(request.write)
-    };
-  }
-
   // ── Cursor dispatch path ────────────────────────────────────────────────────
   // When --cli cursor is used, invoke Cursor ACP (`agent acp`).
   // The role (writer/planner/debugger/ask) is forwarded so the adapter can
@@ -666,7 +613,9 @@ async function executeTaskRun(request) {
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
     const failureMessage = formatAdapterError(result.error);
-    // See gemini branch: surface in-protocol errors via rendered output, not exit code.
+    // Match codex's pattern: surface in-protocol errors via the rendered failure
+    // message, not via a non-zero exit code. A non-zero exit trips the forwarding
+    // subagent's "if Bash fails, return nothing" rule and silently swallows it.
     const exitStatus = 0;
 
     const rendered = renderTaskResult(
@@ -703,29 +652,27 @@ async function executeTaskRun(request) {
     };
   }
 
-  // ── Copilot dispatch path ────────────────────────────────────────────────────
-  // When --cli copilot is used, invoke GitHub Copilot ACP (`copilot --acp --stdio`).
-  // The role (researcher/reviewer) is forwarded so the adapter can prepend the
-  // appropriate slash-command prefix (/research, /review) to the prompt.
-  if (cli === "copilot") {
-    const copilotAvail = copilot.adapter.isAvailable();
-    if (!copilotAvail.available) {
-      throw new Error(`GitHub Copilot CLI is not available: ${copilotAvail.detail ?? "copilot not found"}. Install with: npm install -g @github/copilot`);
+  // ── Antigravity dispatch path ───────────────────────────────────────────────
+  // When --cli antigravity is used, invoke the Antigravity 2.0 desktop LS
+  // (live-attach). Phase 1 ships a stub adapter; this branch proves the plumbing.
+  if (cli === "antigravity") {
+    const agAvail = antigravity.adapter.isAvailable();
+    if (!agAvail.available) {
+      throw new Error(`Antigravity is not available: ${agAvail.detail}`);
     }
 
     if (!request.prompt) {
-      throw new Error("Provide a prompt for Copilot tasks.");
+      throw new Error("Provide a prompt for Antigravity tasks.");
     }
 
     const prompt = request.prompt.trim() || "";
 
-    const result = await copilot.adapter.invoke(workspaceRoot, prompt, {
+    const result = await antigravity.adapter.invoke(workspaceRoot, prompt, {
       model: request.model ?? undefined,
-      role: request.role ?? "default",
-      write: Boolean(request.write),
+      role: request.role ?? "researcher",
+      write: false,
       onStream: request.onProgress
         ? (event) => {
-            // Drop message_chunk events — see cursor branch comment for rationale.
             if (event.type === "phase") {
               request.onProgress({ message: event.message, phase: event.message });
             }
@@ -735,20 +682,11 @@ async function executeTaskRun(request) {
 
     const rawOutput = typeof result.text === "string" ? result.text : "";
     const failureMessage = formatAdapterError(result.error);
-    // See gemini branch: surface in-protocol errors via rendered output, not exit code.
     const exitStatus = 0;
 
     const rendered = renderTaskResult(
-      {
-        rawOutput,
-        failureMessage,
-        reasoningSummary: []
-      },
-      {
-        title: taskMetadata.title,
-        jobId: request.jobId ?? null,
-        write: Boolean(request.write)
-      }
+      { rawOutput, failureMessage, reasoningSummary: [] },
+      { title: taskMetadata.title, jobId: request.jobId ?? null, write: false }
     );
 
     const payload = {
@@ -768,76 +706,7 @@ async function executeTaskRun(request) {
       summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
       jobTitle: taskMetadata.title,
       jobClass: "task",
-      write: Boolean(request.write)
-    };
-  }
-
-  // ── Qwen dispatch path ──────────────────────────────────────────────────────
-  // When --cli qwen is used, invoke Qwen Code ACP (`qwen --acp`).
-  // Qwen has no role-specific slash modes today; the `role` is forwarded for
-  // future use but the adapter currently treats every prompt as agent mode.
-  if (cli === "qwen") {
-    const qwenAvail = qwen.adapter.isAvailable();
-    if (!qwenAvail.available) {
-      throw new Error(`Qwen Code CLI is not available: ${qwenAvail.detail ?? "qwen not found"}. Install with: npm install -g @qwen-code/qwen-code@latest`);
-    }
-
-    if (!request.prompt) {
-      throw new Error("Provide a prompt for Qwen tasks.");
-    }
-
-    const prompt = request.prompt.trim() || "";
-
-    const result = await qwen.adapter.invoke(workspaceRoot, prompt, {
-      model: request.model ?? undefined,
-      role: request.role ?? "writer",
-      write: Boolean(request.write),
-      onStream: request.onProgress
-        ? (event) => {
-            // Drop message_chunk events — see cursor branch comment for rationale.
-            if (event.type === "phase") {
-              request.onProgress({ message: event.message, phase: event.message });
-            }
-          }
-        : undefined
-    });
-
-    const rawOutput = typeof result.text === "string" ? result.text : "";
-    const failureMessage = formatAdapterError(result.error);
-    // See gemini branch: surface in-protocol errors via rendered output, not exit code.
-    const exitStatus = 0;
-
-    const rendered = renderTaskResult(
-      {
-        rawOutput,
-        failureMessage,
-        reasoningSummary: []
-      },
-      {
-        title: taskMetadata.title,
-        jobId: request.jobId ?? null,
-        write: Boolean(request.write)
-      }
-    );
-
-    const payload = {
-      status: exitStatus,
-      threadId: result.sessionId ?? null,
-      rawOutput,
-      touchedFiles: (result.fileChanges ?? []).map((fc) => fc.path),
-      reasoningSummary: []
-    };
-
-    return {
-      exitStatus,
-      threadId: result.sessionId ?? null,
-      turnId: null,
-      payload,
-      rendered,
-      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
-      jobTitle: taskMetadata.title,
-      jobClass: "task",
-      write: Boolean(request.write)
+      write: false
     };
   }
 
@@ -1040,10 +909,8 @@ function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex" }) {
     };
   }
 
-  const cliLabel = cli === "gemini" ? "Gemini"
-                 : cli === "cursor" ? "Cursor"
-                 : cli === "copilot" ? "Copilot"
-                 : cli === "qwen" ? "Qwen"
+  const cliLabel = cli === "cursor" ? "Cursor"
+                 : cli === "antigravity" ? "Antigravity"
                  : "Codex";
   const title = resumeLast ? `${cliLabel} Resume` : `${cliLabel} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
@@ -1330,7 +1197,7 @@ async function handleTask(argv, context = {}) {
   if (maxTurns != null && !untilDone) {
     throw new Error("--max-turns requires --until-done.");
   }
-  // --read-only (from gemini-researcher / gemini-explorer subagents) maps to write: false
+  // --read-only (from read-only research/explore subagents) maps to write: false
   const write = Boolean(options.write) && !Boolean(options["read-only"]);
   const taskMetadata = buildTaskRunMetadata({
     prompt,

@@ -6,7 +6,7 @@ user-invocable: false
 
 # Multi-CLI Result Handling
 
-When a `multi:*` subagent returns helper output (Cursor, Gemini, Copilot, Codex via multi, Qwen, or any CLI added via `multi-cli-anything`):
+When a `multi:*` subagent returns helper output (Codex, Cursor, Antigravity via multi, or any CLI added via `multi-cli-anything`):
 
 ## Preserving the helper's structure
 
@@ -37,7 +37,7 @@ Some upstream CLIs (notably Cursor in `agent acp` mode) stream chain-of-thought 
 
 ## Review-style output
 
-For research, review, or diagnosis output from `multi:gemini-researcher`, `multi:copilot-reviewer`, `multi:copilot-researcher`, `multi:cursor-debugger`, etc.:
+For research, review, or diagnosis output from `multi:antigravity-researcher`, `multi:codex-review`, `multi:antigravity-explorer`, `multi:cursor-debugger`, etc.:
 
 - Present findings first, ordered by severity if the helper provided severity labels.
 - If there are no findings, say that explicitly and keep the residual-risk note brief.

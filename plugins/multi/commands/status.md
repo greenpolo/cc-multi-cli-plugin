@@ -1,5 +1,5 @@
 ---
-description: Show active and recent multi-CLI background jobs (codex, gemini, cursor, copilot, qwen) for this repository
+description: Show active and recent multi-CLI background jobs (codex, cursor, antigravity) for this repository
 argument-hint: '[job-id] [--wait] [--timeout-ms <ms>] [--all] [--json]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)

@@ -11,9 +11,6 @@
  */
 
 import { execSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import process from "node:process";
 import { buildAutoApproveRequestHandler, SpawnedAcpClient } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
@@ -57,6 +54,13 @@ function findCursorBinary() {
   // Non-Windows: return plain name and trust PATH.
   return "agent";
 }
+
+// ─── Current Cursor model IDs (2026-05, informational) ────────────────────────
+// Passed through verbatim via --model; the adapter does not hard-validate.
+// Valid as of Cursor 2026.04.13+: gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.2,
+// gpt-5-mini, gpt-5.1-codex-mini, claude-opus-4-6, claude-sonnet-4-6,
+// claude-sonnet-4, claude-haiku-4-5, gemini-3.1-pro, gemini-2.5-flash, kimi-k2.5.
+// Source: forum #157312 model picker dump. Update when Cursor's /models changes.
 
 // ─── Role-to-prompt-prefix mapping ───────────────────────────────────────────
 //
@@ -130,63 +134,9 @@ function maybeWarnAboutCursorVersion(versionString) {
   );
 }
 
-// ─── Permission allowlist ─────────────────────────────────────────────────────
-//
-// Cursor 2026.04.17 in `agent acp` mode does NOT route shell exec through ACP
-// session/request_permission or terminal/* — its tool-permission gate runs
-// out-of-band against ~/.cursor/cli-config.json. Without an allowlist entry,
-// the Terminal/execute tool sticks at tool_call_update[in_progress] forever
-// and never sends anything across the wire that the client could approve.
-//
-// To make `agent acp` actually run shell commands, file edits, and MCP tools
-// without per-tool prompts, we ensure the user's cli-config.json contains
-// permissive allowlist entries. Idempotent: re-runs are no-ops once present.
-
-const CURSOR_DESIRED_ALLOWS = [
-  "Shell(*)",
-  "Read(**)",
-  "Write(**)",
-  "Edit(**)",
-  "MCP(*)"
-];
-
-/**
- * Ensure ~/.cursor/cli-config.json's permissions.allow list contains the
- * entries we need for headless `agent acp` runs to make progress without
- * stalling on Cursor's permission gate. Best-effort — never throws.
- */
-function ensureCursorAllowlist() {
-  const configPath = path.join(os.homedir(), ".cursor", "cli-config.json");
-  let config;
-  try {
-    if (fs.existsSync(configPath)) {
-      config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    } else {
-      // Don't create a fresh cli-config.json — that file is owned by Cursor
-      // and writing it before Cursor's first run can confuse the install.
-      return;
-    }
-  } catch {
-    // Malformed JSON — leave it alone rather than risk clobbering.
-    return;
-  }
-
-  if (!config || typeof config !== "object") return;
-  config.permissions = config.permissions ?? { allow: [], deny: [] };
-  if (!Array.isArray(config.permissions.allow)) config.permissions.allow = [];
-
-  const existing = new Set(config.permissions.allow);
-  const missing = CURSOR_DESIRED_ALLOWS.filter((entry) => !existing.has(entry));
-  if (missing.length === 0) return;
-
-  config.permissions.allow.push(...missing);
-  try {
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-  } catch {
-    // Best-effort. If we can't write, the user just gets the existing
-    // permission behavior (which may stall, but won't break anything else).
-  }
-}
+// ─── Permission allowlist (removed 2026-05) ───────────────────────────────────
+// Cursor's out-of-band cli-config.json allowlist injection is no longer needed:
+// the 2026.04.17 MCP/Terminal regression was fixed upstream (forum #155544/#155516).
 
 // ─── Stream event helpers ─────────────────────────────────────────────────────
 
@@ -344,11 +294,6 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
     }
   };
 
-  // Make sure Cursor's out-of-band permission gate has a permissive allowlist
-  // before we spawn — without this, Terminal/execute tool calls in agent acp
-  // mode stall indefinitely with no incoming JSON-RPC traffic to react to.
-  ensureCursorAllowlist();
-
   // Surface the 2026.04.17 regression once if detected.
   maybeWarnAboutCursorVersion(getCursorAvailability().version);
 
@@ -357,9 +302,8 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
     command: cli,
     // --yolo (alias for --force): force-allow commands without per-tool prompts
     // in interactive mode. Cursor staff confirmed it does NOT apply to ACP-mode
-    // tool gates, but it's harmless and the allowlist (ensureCursorAllowlist
-    // above) is what actually unblocks tool execution. We dropped
-    // --approve-mcps which was confirmed dead in ACP mode per the same source:
+    // tool gates, but it's harmless. We dropped --approve-mcps which was
+    // confirmed dead in ACP mode per:
     //   https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823
     args: ["--yolo", "acp"],
     env: options.env ?? process.env,
@@ -374,11 +318,19 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
     await client.initialize();
 
     let sessionId = options.sessionId ?? null;
+    // Cursor advertises its selectable model IDs in the session/new response
+    // (models.availableModels[].modelId, e.g. "claude-sonnet-4-6[thinking=true,
+    // context=200k,effort=medium]"). We capture them so set_config_option below
+    // can resolve a user-friendly --model name to the exact bracketed modelId
+    // the server requires.
+    let availableModels = [];
     if (sessionId) {
-      await client.request("session/load", { sessionId, cwd, mcpServers });
+      const loaded = await client.request("session/load", { sessionId, cwd, mcpServers });
+      availableModels = loaded?.models?.availableModels ?? [];
     } else {
       const session = await client.request("session/new", { cwd, mcpServers });
       sessionId = session?.sessionId ?? null;
+      availableModels = session?.models?.availableModels ?? [];
     }
 
     // Explicitly set the ACP mode based on the role. Map:
@@ -399,10 +351,40 @@ export async function runAcpPromptCursor(cwd, prompt, options = {}) {
     }
 
     if (options.model) {
+      // Cursor 2026.04.13+ ignores session/new.model and session/set_model.
+      // The working path is session/set_config_option, applied after the
+      // session exists. Verified live against agent 2026.05.01 via ACP_TRACE:
+      //   - the param is `configId` (NOT `key`); sending `key` yields
+      //     -32603 with data path ["configId"] "Invalid input".
+      //   - `value` must be a full advertised modelId, e.g.
+      //     "claude-sonnet-4-6[thinking=true,context=200k,effort=medium]" — the
+      //     bare name "claude-sonnet-4-6" is rejected with -32602 "Invalid
+      //     model value". So we resolve options.model against the session's
+      //     advertised models (exact modelId, then name, then prefix-before-"[").
+      //   - the result echoes the applied value at
+      //     configOptions.find(o => o.id === "model").currentValue (there is no
+      //     top-level currentValue/value field), which we read back and compare.
+      const requested = String(options.model);
+      const match =
+        availableModels.find((m) => m?.modelId === requested) ??
+        availableModels.find((m) => m?.name === requested) ??
+        availableModels.find((m) => String(m?.modelId ?? "").split("[")[0] === requested);
+      const modelValue = match?.modelId ?? requested;
       try {
-        await client.request("session/set_model", { sessionId, modelId: options.model });
+        const res = await client.request("session/set_config_option", {
+          sessionId,
+          configId: "model",
+          value: modelValue
+        });
+        const modelOption = Array.isArray(res?.configOptions)
+          ? res.configOptions.find((o) => o?.id === "model")
+          : null;
+        const applied = modelOption?.currentValue ?? res?.currentValue ?? res?.value ?? null;
+        if (applied && String(applied) !== String(modelValue)) {
+          process.stderr.write(`Warning: Cursor reported model "${applied}" after requesting "${modelValue}".\n`);
+        }
       } catch (error) {
-        process.stderr.write(`Warning: could not set model to ${options.model}: ${error?.message ?? error}\n`);
+        process.stderr.write(`Warning: could not set Cursor model to ${options.model}: ${error?.message ?? error}\n`);
       }
     }
 

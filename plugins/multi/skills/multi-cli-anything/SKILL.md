@@ -1,6 +1,6 @@
 ---
 name: multi-cli-anything
-description: Add a new CLI provider to cc-multi-cli-plugin (beyond the built-in Codex/Gemini/Cursor/Copilot). Use when the user asks to integrate another AI CLI like Qwen, OpenCode, Aider, or any CLI that speaks ACP, ASP, or another structured protocol. Trigger phrases include "add Qwen to the plugin", "integrate OpenCode", "hook up my custom CLI", "support another model via ACP".
+description: Add a new CLI provider to cc-multi-cli-plugin (beyond the built-in Codex/Cursor/Antigravity). Use when the user asks to integrate another AI CLI like OpenCode, Aider, Qwen, or any CLI that speaks ACP, ASP, ConnectRPC, or another structured protocol. Trigger phrases include "add OpenCode to the plugin", "integrate Aider", "hook up my custom CLI", "support another model via ACP".
 ---
 
 # Add a new CLI to cc-multi-cli-plugin
@@ -23,7 +23,7 @@ Before writing any code, pull everything you need to know about the CLI so you d
 
 ### First: search for an existing Claude Code integration of this CLI
 
-Before doing anything else, **search exa for an existing implementation**. The community has wired up many CLIs already (Cursor's ACP adapter, the Gemini plugin port, etc.) — finding one collapses days of trial-and-error into "read their adapter, adapt to our marketplace structure."
+Before doing anything else, **search exa for an existing implementation**. The community has wired up many CLIs already (Cursor's ACP adapter, various OpenCode/Aider ports, etc.) — finding one collapses days of trial-and-error into "read their adapter, adapt to our marketplace structure."
 
 Useful queries (try in this order, stop when you find a working example):
 
@@ -40,7 +40,7 @@ A reference implementation reveals things probes don't:
 - **Spawn quirks** — does the CLI need `shell: true` on Windows? A specific env var to init?
 - **ACP protocol completeness** — many "ACP-supporting" CLIs implement the protocol incompletely; an existing adapter shows what edge cases break.
 - **Auth flow specifics** — env vars, token paths, OAuth dance details.
-- **Model ID conventions** — version suffixes, deprecated aliases. (Gemini's `-preview` suffix trap is the canonical example.)
+- **Model ID conventions** — version suffixes, deprecated aliases. (The Gemini model family's `-preview` suffix trap — which Antigravity surfaces — is the canonical example.)
 - **Schema-validation pitfalls** — does the CLI's config reject unknown keys? Strict-mode JSON?
 
 If you find one:
@@ -66,7 +66,7 @@ For a yes/no question ("does this CLI have ACP?") use source 1 or 3 and stop. Fo
 
 **Hard rules:**
 - **Never ask one CLI about another CLI's features.** It hallucinates as badly as you would. A CLI is a source only for itself.
-- **Preview-suffix trap:** Many CLIs qualify unstable IDs with a suffix (`-preview`, `-beta`, `-exp`). Don't hardcode the unsuffixed variant — it will 404 at runtime. Gemini 3.x IDs all end in `-preview`.
+- **Preview-suffix trap:** Many CLIs qualify unstable IDs with a suffix (`-preview`, `-beta`, `-exp`). Don't hardcode the unsuffixed variant — it will 404 at runtime. Gemini-family IDs (served via Antigravity) have historically all ended in `-preview`.
 - **Resolving disagreements:** CLI wins for "does it work right now"; docs win for "should I use this."
 - **Record the source you used** inline in your response so the user can catch a bad citation.
 - **Check existing adapters** in `plugins/multi/scripts/lib/adapters/` as reference templates for the transport pattern you'll reuse.
@@ -80,7 +80,7 @@ Check in this order:
 ### 1. Does it support ACP (Agent Client Protocol)?
 
 ACP is a cross-vendor standard. Check the CLI's `--help` output for:
-- `--acp` flag (used by Gemini, Copilot)
+- `--acp` flag (used by several Gemini/Copilot-style CLIs)
 - `acp` subcommand (used by Cursor)
 - An `--stdio` or `--server` mode that outputs NDJSON/JSON-RPC
 
@@ -114,7 +114,7 @@ cp plugins/multi/scripts/lib/adapters/cursor.mjs plugins/multi/scripts/lib/adapt
 
 Edit the new file:
 
-1. **Rename functions** from `*Cursor` to `*<NewCli>` (e.g., `runAcpPromptCursor` → `runAcpPromptQwen`).
+1. **Rename functions** from `*Cursor` to `*<NewCli>` (e.g., `runAcpPromptCursor` → `runAcpPromptOpenCode`).
 2. **Update `buildPrompt(role, userTask)`** — map role names to slash-command prefixes the CLI understands.
 3. **Update the CLI binary name / args.** ACP subcommand: `args: ["acp"]`. ACP flag: `args: ["--acp"]` or `["--acp", "--stdio"]`.
 4. **Update the `adapter` export:**
@@ -140,7 +140,7 @@ Edit `plugins/multi/scripts/multi-cli-companion.mjs`:
    ```
 2. Extend `ADAPTERS`:
    ```js
-   const ADAPTERS = { codex, gemini, cursor, copilot, <newCli> };
+   const ADAPTERS = { codex, cursor, antigravity, <newCli> };
    ```
 3. Extend `executeTaskRun`'s dispatch with an `else if (cli === "<new-cli>")` branch mirroring the cursor branch exactly, substituting `<newCli>.adapter.invoke(...)`.
 4. Extend `buildTaskRunMetadata`'s label map so jobs get a CLI-specific title.
@@ -162,14 +162,14 @@ Then look at stderr for incoming JSON-RPC traffic from the agent. The `[acp-trac
 
 Things to verify (don't have to be in order — just check whichever is relevant for what the user wants this CLI to do):
 
-- **Permission gate.** Does the agent send `session/request_permission` over ACP, or does it gate tool use through some out-of-band mechanism (a config file, a flag, a pre-approval list)? If you see `tool_call_update` go to `in_progress` and never `completed` with no incoming REQs, it's almost always an out-of-band gate. (Cursor, for example, uses `~/.cursor/cli-config.json`'s `permissions.allow` array — see `ensureCursorAllowlist` in `cursor.mjs`.)
+- **Permission gate.** Does the agent send `session/request_permission` over ACP, or does it gate tool use through some out-of-band mechanism (a config file, a flag, a pre-approval list)? If you see `tool_call_update` go to `in_progress` and never `completed` with no incoming REQs, it's almost always an out-of-band gate. (Cursor historically gated via `~/.cursor/cli-config.json`'s `permissions.allow` array — that workaround is no longer needed since the 2026.04.17 regression was fixed upstream, but the pattern recurs in other CLIs, so watch for it.)
 - **Terminal handling.** Some agents implement `terminal/*` RPCs themselves (just declare `clientCapabilities.terminal=true` in the handshake and `acp-client.mjs`'s `buildAutoApproveRequestHandler` services them). Others run terminals internally and skip ACP entirely. Watching for `<- REQ terminal/create` tells you which.
 - **MCP wiring.** `session/new` accepts an `mcpServers` array, but some agents silently ignore it in ACP mode (Cursor staff has confirmed this for `agent acp`). If the agent reports your MCP tools as missing, see if the CLI has a per-CLI MCP config file (e.g. `~/.cursor/mcp.json`) you should populate instead.
-- **Mode setting.** `session/set_mode` semantics vary: for Cursor, "agent" gives full tool access while "plan"/"ask" restrict it; for Gemini, the equivalent is `approvalMode: "yolo"` for max permissions. Try setting and not setting it during testing.
+- **Mode setting.** `session/set_mode` semantics vary: for Cursor, "agent" gives full tool access while "plan"/"ask" restrict it; other ACP CLIs expose an equivalent (e.g. an `approvalMode: "yolo"`-style param) for max permissions. Try setting and not setting it during testing.
 - **CLI-side flags.** A CLI's interactive `--yolo` / `--force` / `--approve-mcps` flags often **don't apply to ACP mode** — they're for the interactive REPL or `-p` print mode. Don't assume they're a fix; verify on the wire.
 - **Version sensitivity.** The same CLI can change behavior across builds (e.g. Cursor 2026.04.14 → 2026.04.17 broke MCP tool use in ACP). If something works locally and breaks in the field, check version specifics.
 
-**The Cursor adapter is the worked example for everything above.** When in doubt, read `plugins/multi/scripts/lib/adapters/cursor.mjs` end-to-end — it shows the full set of workarounds that actually shipped: handshake capability declaration, mode-setting per role, allowlist file injection, version-specific warnings, and spawn flags. Adapt the patterns that apply to the new CLI; not all of them will.
+**The Cursor adapter is the worked example for everything above.** When in doubt, read `plugins/multi/scripts/lib/adapters/cursor.mjs` end-to-end — it shows the full set of workarounds that actually shipped: handshake capability declaration, mode-setting per role, model selection via `session/set_config_option`, version-specific warnings, and spawn flags. Adapt the patterns that apply to the new CLI; not all of them will.
 
 For straightforward CLIs (clean ACP impl, no out-of-band gates), most of the above will be no-ops and the basic adapter scaffold from Step 2 will just work. Don't add guards for problems the CLI doesn't have.
 
@@ -193,7 +193,7 @@ Use exactly one `Bash` call:
 Preserve task text verbatim. Return stdout exactly. No commentary.
 ```
 
-Subagent names are `<cli>-<role>` (e.g., `qwen-writer`). Invocation path: `subagent_type: "multi:<cli>-<role>"`.
+Subagent names are `<cli>-<role>` (e.g., `opencode-writer`). Invocation path: `subagent_type: "multi:<cli>-<role>"`.
 
 ### Step 5 — Create the new plugin directory
 
@@ -207,7 +207,7 @@ Write `plugins/<new-cli>/.claude-plugin/plugin.json`:
 {
   "name": "<new-cli>",
   "description": "Delegate <roles> to <NewCli> CLI. Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "author": { "name": "greenpolo", "url": "https://github.com/greenpolo" },
   "license": "Apache-2.0",
   "keywords": ["claude-code", "<new-cli>", "<role>", "acp"]
@@ -233,7 +233,7 @@ $ARGUMENTS
 Return the subagent's output verbatim.
 ```
 
-Command filename becomes the part after the colon in the slash: `plugins/qwen/commands/write.md` → `/qwen:write`.
+Command filename becomes the part after the colon in the slash: `plugins/opencode/commands/write.md` → `/opencode:write`.
 
 ### Step 7 — Register the new plugin in the marketplace
 
@@ -243,7 +243,7 @@ Edit `.claude-plugin/marketplace.json` (at the repo root) and add a new entry to
 {
   "name": "<new-cli>",
   "description": "Adds /<new-cli>:<roles>. Requires multi.",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "author": { "name": "greenpolo" },
   "source": "./plugins/<new-cli>"
 }
@@ -280,14 +280,20 @@ If the CLI lacks ACP/ASP but has a headless JSON-output mode, write an adapter t
 
 The `adapter` export interface (`name`, `isAvailable`, `invoke`, etc.) stays identical — only the transport differs.
 
-## Tested examples
+## Worked examples by transport
 
-OpenCode has been tested successfully via ACP. Qwen and Aider have similar ACP support and should work the same way. Any CLI that speaks a structured protocol is a candidate.
+The shipped adapters cover three transport shapes — use whichever matches the CLI you're adding:
+
+- **ACP (stdio JSON-RPC)** — `cursor.mjs` is the canonical worked example. Any CLI exposing an `acp` subcommand or `--acp`/`--stdio` mode follows this pattern. OpenCode, Aider, and similar ACP-capable CLIs are candidates here.
+- **ASP (HTTP + SSE)** — `codex.mjs` is the worked example (`codex --app-server`). Model on it when the CLI uses an app-server style transport.
+- **Non-ACP Language Server (ConnectRPC)** — `antigravity.mjs` is the worked example of a CLI that does **not** speak ACP at all. Antigravity has no command-line binary and no ACP/ASP mode; it is reached by live-attaching to the running Antigravity 2.0 desktop app's Language Server over ConnectRPC (gRPC-style RPCs over HTTP). Phase 1 ships it as a stub adapter that conforms to the same `adapter` export interface (`name`, `isAvailable`, `isAuthenticated`, `invoke`, `cancel`) and reports a clean "not implemented / desktop not detected" until the Phase 2 transport lands. The lesson it teaches: **the `adapter` interface is transport-agnostic** — when a CLI has no structured stdio/HTTP protocol you can drive headlessly, you can still register it and wire dispatch by implementing the same five-method interface over whatever transport it does expose (here, a desktop LS), and detection (`isAvailable`) can be process/port discovery rather than a `--version` probe.
+
+Any CLI that speaks a structured protocol — stdio, HTTP, or RPC-to-a-running-app — is a candidate.
 
 ## Things NOT to change when adding a new CLI
 
 - `plugins/multi/scripts/lib/acp-client.mjs`, `job-control.mjs`, `state.mjs`, `render.mjs` — shared infrastructure.
-- `plugins/multi/scripts/lib/adapters/codex.mjs`, `gemini.mjs`, `cursor.mjs`, `copilot.mjs` — existing adapters.
+- `plugins/multi/scripts/lib/adapters/codex.mjs`, `cursor.mjs`, `antigravity.mjs` — existing adapters.
 - `plugins/multi/hooks/hooks.json` — unless the new CLI specifically needs a hook.
 
 ## Closing

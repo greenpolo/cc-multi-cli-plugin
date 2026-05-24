@@ -58,7 +58,7 @@ export const ACP_MAX_LINE_BUFFER = 1 << 20;
  * mode additionally relies on `terminal/*` to run shell commands.
  *
  * Handles:
- *   - `session/request_permission` (Gemini, Cursor, Copilot, Qwen)
+ *   - `session/request_permission` (Gemini, Cursor)
  *   - `cursor/ask_question` (Cursor's multiple-choice flavor — auto-pick first)
  *   - `terminal/create`, `terminal/output`, `terminal/wait_for_exit`,
  *     `terminal/kill`, `terminal/release` (ACP terminal services)
@@ -350,10 +350,9 @@ class AcpClientBase {
       protocolVersion: 1,
       // Declare `terminal: true` so any agent that uses the standard ACP
       // terminal/* RPCs (and we have handlers for them) can route shell
-      // exec through us. Cursor 2026.04.17 doesn't actually use those
-      // RPCs in agent acp mode — its tool-permission gate runs out-of-band
-      // and is configured via ~/.cursor/cli-config.json (see
-      // ensureCursorAllowlist in adapters/cursor.mjs).
+      // exec through us. Cursor doesn't use those RPCs in agent acp mode —
+      // its tool-permission gate runs out-of-band and is handled at spawn
+      // time via --yolo/--approve-mcps (see adapters/cursor.mjs).
       clientCapabilities: {
         terminal: true
       },
