@@ -1,0 +1,11 @@
+{
+  "name": "antigravity",
+  "description": "Delegate research and codebase exploration to Google Antigravity (Gemini 3.x via the Antigravity 2.0 desktop Language Server). Requires the multi plugin and a running Antigravity 2.0 desktop.",
+  "version": "3.0.0",
+  "author": {
+    "name": "greenpolo",
+    "url": "https://github.com/greenpolo"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["claude-code", "antigravity", "gemini", "research", "explore"]
+}

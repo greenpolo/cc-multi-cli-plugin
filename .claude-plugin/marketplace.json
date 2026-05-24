@@ -35,6 +35,15 @@
         "name": "greenpolo"
       },
       "source": "./plugins/cursor"
+    },
+    {
+      "name": "antigravity",
+      "description": "Adds /antigravity:research and /antigravity:explore (Gemini 3.x via Antigravity 2.0 desktop LS). Requires multi and a running Antigravity 2.0 desktop.",
+      "version": "3.0.0",
+      "author": {
+        "name": "greenpolo"
+      },
+      "source": "./plugins/antigravity"
     }
   ]
 }
