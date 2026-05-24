@@ -5,14 +5,14 @@
     "url": "https://github.com/greenpolo"
   },
   "metadata": {
-    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex and Cursor CLIs from Claude Code.",
-    "version": "2.0.1"
+    "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Cursor, and Antigravity CLIs from Claude Code.",
+    "version": "3.0.0"
   },
   "plugins": [
     {
       "name": "multi",
       "description": "Hub — companion runtime, subagents, setup wizard, customization skills. Install first.",
-      "version": "2.0.1",
+      "version": "3.0.0",
       "author": {
         "name": "greenpolo"
       },
@@ -20,8 +20,8 @@
     },
     {
       "name": "codex",
-      "description": "Adds /codex:execute. Requires multi.",
-      "version": "2.0.1",
+      "description": "Adds /codex:execute, /codex:rescue, /codex:review, /codex:adversarial-review. Requires multi.",
+      "version": "3.0.0",
       "author": {
         "name": "greenpolo"
       },
@@ -29,8 +29,8 @@
     },
     {
       "name": "cursor",
-      "description": "Adds /cursor:write, /cursor:plan, /cursor:debug. Requires multi.",
-      "version": "2.0.1",
+      "description": "Adds /cursor:execute, /cursor:plan, /cursor:debug. Requires multi.",
+      "version": "3.0.0",
       "author": {
         "name": "greenpolo"
       },
