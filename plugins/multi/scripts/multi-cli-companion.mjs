@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import * as codex from "./lib/adapters/codex.mjs";
 import * as cursor from "./lib/adapters/cursor.mjs";
+import * as antigravity from "./lib/adapters/antigravity.mjs";
 import {
     buildPersistentTaskThreadName,
     DEFAULT_CONTINUE_PROMPT,
@@ -70,6 +71,7 @@ import {
 const ADAPTERS = {
   codex,
   cursor,
+  antigravity,
 };
 
 function getAdapter(name) {
@@ -129,7 +131,7 @@ function printUsage() {
     [
       "Usage:",
       "  Global flags:",
-      "    --cli <codex|cursor>   Select the CLI adapter (default: codex)",
+      "    --cli <codex|cursor|antigravity>   Select the CLI adapter (default: codex)",
       "  node scripts/multi-cli-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/multi-cli-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/multi-cli-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
@@ -613,6 +615,64 @@ async function executeTaskRun(request) {
       jobTitle: taskMetadata.title,
       jobClass: "task",
       write: Boolean(request.write)
+    };
+  }
+
+  // ── Antigravity dispatch path ───────────────────────────────────────────────
+  // When --cli antigravity is used, invoke the Antigravity 2.0 desktop LS
+  // (live-attach). Phase 1 ships a stub adapter; this branch proves the plumbing.
+  if (cli === "antigravity") {
+    const agAvail = antigravity.adapter.isAvailable();
+    if (!agAvail.available) {
+      throw new Error(`Antigravity is not available: ${agAvail.detail}`);
+    }
+
+    if (!request.prompt) {
+      throw new Error("Provide a prompt for Antigravity tasks.");
+    }
+
+    const prompt = request.prompt.trim() || "";
+
+    const result = await antigravity.adapter.invoke(workspaceRoot, prompt, {
+      model: request.model ?? undefined,
+      role: request.role ?? "researcher",
+      write: false,
+      onStream: request.onProgress
+        ? (event) => {
+            if (event.type === "phase") {
+              request.onProgress({ message: event.message, phase: event.message });
+            }
+          }
+        : undefined
+    });
+
+    const rawOutput = typeof result.text === "string" ? result.text : "";
+    const failureMessage = formatAdapterError(result.error);
+    const exitStatus = 0;
+
+    const rendered = renderTaskResult(
+      { rawOutput, failureMessage, reasoningSummary: [] },
+      { title: taskMetadata.title, jobId: request.jobId ?? null, write: false }
+    );
+
+    const payload = {
+      status: exitStatus,
+      threadId: result.sessionId ?? null,
+      rawOutput,
+      touchedFiles: (result.fileChanges ?? []).map((fc) => fc.path),
+      reasoningSummary: []
+    };
+
+    return {
+      exitStatus,
+      threadId: result.sessionId ?? null,
+      turnId: null,
+      payload,
+      rendered,
+      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+      jobTitle: taskMetadata.title,
+      jobClass: "task",
+      write: false
     };
   }
 
