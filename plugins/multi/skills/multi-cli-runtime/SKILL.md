@@ -6,18 +6,18 @@ user-invocable: false
 
 # Multi-CLI Runtime
 
-Use this skill only inside `multi:*` forwarding subagents (`cursor-execute`, `cursor-planner`, `cursor-debugger`, `gemini-explorer`, `gemini-researcher`, etc.).
+Use this skill only inside `multi:*` forwarding subagents (`codex-execute`, `cursor-execute`, `cursor-planner`, `cursor-debugger`, `antigravity-researcher`, `antigravity-explorer`, etc.).
 
 ## Primary helper
 
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> [flags] --prompt "<text>"`
 
-Where `<cli>` is one of `codex|gemini|cursor` (or any CLI added via the `multi-cli-anything` skill) and `<role>` is the subagent's logical role (`execute`, `planner`, `writer`, `debugger`, `researcher`, `reviewer`, `explorer`, `ask`).
+Where `<cli>` is one of `codex|cursor|antigravity` (or any CLI added via the `multi-cli-anything` skill) and `<role>` is the subagent's logical role (`execute`, `planner`, `writer`, `debugger`, `researcher`, `reviewer`, `explorer`, `ask`).
 
 ## Execution rules
 
 - Each `multi:*` subagent is a forwarder, not an orchestrator. Its only job is to invoke the companion once and return that stdout unchanged.
-- Prefer the helper over hand-rolled `git`, direct CLI strings (`cursor agent acp`, `gemini --acp`, `copilot --acp --stdio`, `codex exec`), or any other Bash activity.
+- Prefer the helper over hand-rolled `git`, direct CLI strings (`cursor agent acp`, `codex exec`), or any other Bash activity.
 - Use exactly one Bash call per subagent dispatch. Do not chain `cat`, `sleep`, polling loops, or follow-up `node` calls.
 
 ## Routing flag handling

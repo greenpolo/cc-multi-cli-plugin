@@ -1,13 +1,13 @@
 ---
 name: customize
-description: Rewire which CLI handles which role in cc-multi-cli-plugin, OR diagnose/work around an upstream CLI quirk via env vars and config files. Use when the user asks to swap CLIs, change a subagent's target CLI, add or disable a subagent or command, restrict a CLI, hardcode a model, or modify a role's prompt template — and also when a CLI is misbehaving (hangs, missing tools, broken release) and the user needs operator escape hatches like CURSOR_AGENT_PATH, ACP_TRACE, or per-CLI allowlist/MCP config tuning. Works for any CLI in the marketplace — the four default CLIs (Codex, Gemini, Cursor, Copilot) and any additional CLIs the user added via the multi-cli-anything skill. Trigger phrases include "swap Gemini and Cursor", "make Copilot the writer", "disable cursor-debugger", "restrict Codex to read-only", "change which CLI handles debugging", "add /<cli>:<command>", "only install the plugins I need", "hardcode a model for <some-role>", "use /plan from copilot for planning", "cursor is hanging / broken / stuck", "pin an older cursor build", "see what ACP traffic the CLI is sending".
+description: Rewire which CLI handles which role in cc-multi-cli-plugin, OR diagnose/work around an upstream CLI quirk via env vars and config files. Use when the user asks to swap CLIs, change a subagent's target CLI, add or disable a subagent or command, restrict a CLI, hardcode a model, or modify a role's prompt template — and also when a CLI is misbehaving (hangs, missing tools, broken release) and the user needs operator escape hatches like CURSOR_AGENT_PATH, ACP_TRACE, or per-CLI MCP config tuning. Works for any CLI in the marketplace — the three default CLIs (Codex, Cursor, Antigravity) and any additional CLIs the user added via the multi-cli-anything skill. Trigger phrases include "swap Codex and Cursor", "make Antigravity the researcher", "disable cursor-debugger", "restrict Codex to read-only", "change which CLI handles debugging", "add /<cli>:<command>", "only install the plugins I need", "hardcode a model for <some-role>", "use /plan from cursor for planning", "cursor is hanging / broken / stuck", "pin an older cursor build", "see what ACP traffic the CLI is sending".
 ---
 
 # Customize cc-multi-cli-plugin
 
 cc-multi-cli-plugin is a **multi-plugin marketplace**: one hub plugin (`multi`) plus one thin plugin per AI CLI the user has wired up. Customization is explicit file edits across those plugins. No runtime config layer.
 
-**This skill is CLI-agnostic.** Every instruction below works for any CLI in the marketplace — the four shipped defaults (Codex, Gemini, Cursor, Copilot) and any CLIs added later via the `multi-cli-anything` skill (OpenCode, Qwen, Aider, etc.). Concrete examples use specific CLI names for clarity, but apply the same pattern to any CLI.
+**This skill is CLI-agnostic.** Every instruction below works for any CLI in the marketplace — the three shipped defaults (Codex, Cursor, Antigravity) and any CLIs added later via the `multi-cli-anything` skill (OpenCode, Aider, etc.). Concrete examples use specific CLI names for clarity, but apply the same pattern to any CLI.
 
 ## The shape every customization touches
 
@@ -50,7 +50,7 @@ The output is ground truth for what exists. Planning against it avoids the "suba
 
 Before hardcoding any CLI-specific string (model IDs, effort levels, sandbox modes, flag names, slash commands, mode names) as a default, verify it. Do not ask the user to confirm these — Claude can look them up faster.
 
-**The verification-trap:** CLIs often accept version-qualified IDs (`-preview`, `-beta`, `-exp` suffixes). Dropping the suffix produces a runtime 4xx. Gemini's `gemini-3.1-pro-preview` is *not* interchangeable with `gemini-3.1-pro`; the latter 404s. Every CLI has analogous traps.
+**The verification-trap:** CLIs often accept version-qualified IDs (`-preview`, `-beta`, `-exp` suffixes). Dropping the suffix produces a runtime 4xx. For example a model ID like `gpt-5.4` vs `gpt-5.4-mini` is not interchangeable, and Gemini-family IDs (which Antigravity surfaces) have historically used `-preview` suffixes that 404 when dropped. Every CLI has analogous traps.
 
 ### Pick ONE source proportional to the question. Stop when confident.
 
@@ -62,7 +62,7 @@ Do NOT run every source for every question. The verification sources form a LADD
 
 - **Enumerating what exists** — "what slash commands does `<cli>` have?" or "what models does `<cli>` accept?" → ONE source. Try `<cli> --help` first, or a vendor-docs lookup via context7 if `--help` isn't exhaustive. Escalate to a second source only if the first comes up empty or suspicious.
 
-- **Exact canonical ID with version suffix** (e.g., "what's the current stable model ID for Gemini's flash tier?") — up to TWO sources when the answer must be typed into code and a wrong suffix bricks the feature. Prefer (a) asking the CLI itself via a natural-language prompt, then cross-check with (b) vendor docs. Only escalate to reading source constants on disagreement.
+- **Exact canonical ID with version suffix** (e.g., "what's the current stable model ID for Antigravity's flash tier?") — up to TWO sources when the answer must be typed into code and a wrong suffix bricks the feature. Prefer (a) asking the CLI itself via a natural-language prompt, then cross-check with (b) vendor docs. Only escalate to reading source constants on disagreement.
 
 ### The sources, in the order you'd try them
 
@@ -122,10 +122,10 @@ All examples use `<cli>`, `<cli-a>`, `<cli-b>`, `<role>`, `<action>` as placehol
 
 **If the new role doesn't exist in the target adapter's `buildPrompt()`**, add it (see change type #7).
 
-**Illustrative:** user says "make Gemini the writer instead of Cursor."
-→ Create `plugins/gemini/commands/write.md` (dispatching to `multi:gemini-writer`).
-→ Create `plugins/multi/agents/gemini-writer.md` (forwarding to `--cli gemini --role writer`).
-→ Remove or disable the cursor counterparts if Cursor shouldn't write anymore.
+**Illustrative:** user says "make Codex the executor instead of Cursor."
+→ Create `plugins/codex/commands/execute.md` (dispatching to `multi:codex-execute`) — if it doesn't already exist.
+→ Create `plugins/multi/agents/codex-execute.md` (forwarding to `--cli codex --role execute`).
+→ Remove or disable the cursor counterparts if Cursor shouldn't execute anymore.
 
 ### 2. Add a net-new command for an existing CLI
 
@@ -135,10 +135,10 @@ All examples use `<cli>`, `<cli-a>`, `<cli-b>`, `<role>`, `<action>` as placehol
 - **Create** `plugins/multi/agents/<cli>-<role>.md` — thin forwarder. Copy any existing subagent file; update `name:`, description, and the Bash invocation's `--role <role>` field.
 - **If `<role>` is new to this CLI's adapter**, update `plugins/multi/scripts/lib/adapters/<cli>.mjs`'s `buildPrompt()` to map the new role to whatever slash-command prefix the CLI expects (see change type #7).
 
-**Illustrative:** user says "add `/copilot:plan`" and your verification in Step 2 confirmed Copilot has a `/plan` slash command.
-→ Create `plugins/copilot/commands/plan.md` (dispatching to `multi:copilot-planner`).
-→ Create `plugins/multi/agents/copilot-planner.md` (forwarding with `--cli copilot --role planner`).
-→ Edit `plugins/multi/scripts/lib/adapters/copilot.mjs` to add `planner: "/plan "` to the `buildPrompt()` prefix map.
+**Illustrative:** user says "add `/cursor:research`" and your verification in Step 2 confirmed Cursor can run a read-only research role.
+→ Create `plugins/cursor/commands/research.md` (dispatching to `multi:cursor-researcher`).
+→ Create `plugins/multi/agents/cursor-researcher.md` (forwarding with `--cli cursor --role researcher`).
+→ Edit `plugins/multi/scripts/lib/adapters/cursor.mjs` to add `researcher: ""` (or the appropriate prefix) to the `buildPrompt()` prefix map.
 
 ### 3. Disable a command or subagent
 
@@ -188,7 +188,7 @@ to:
 - Pass `--resume`, `--fresh` as runtime controls.
 ```
 
-**Illustrative:** pinning `/gemini:research` to Gemini 3.1 Pro. Step 2 verification confirmed the ID is `gemini-3.1-pro-preview` (WITH suffix). The edit pins `--model gemini-3.1-pro-preview` with override rules preserved. Forgetting the `-preview` suffix is the most common way to ship a broken subagent.
+**Illustrative:** pinning `/antigravity:research` to Gemini 3.1 Pro. Step 2 verification confirms the exact ID (including any version suffix) before you type it. The edit pins `--model <verified-id>` with override rules preserved. Forgetting a required version suffix is the most common way to ship a broken subagent.
 
 The same pattern works for `--effort`, `--sandbox`, `--reasoning-effort`, or any CLI-specific flag.
 
@@ -210,9 +210,9 @@ Edit the mapping to change how a role's prompt gets prefixed, or to add a new ro
 When a CLI misbehaves upstream — a broken release, a regression, an obscure config requirement — these env vars and config files give the user direct control without code changes:
 
 - **`CURSOR_AGENT_PATH=<absolute-path>`** — point our Cursor adapter at a specific binary (e.g. an older cached build at `~/AppData/Local/cursor-agent/versions/<old-version>/index.js`). Useful when a new Cursor release breaks ACP and the user wants to pin a working older one. The `findCursorBinary()` helper checks this before falling back to PATH.
-- **`ACP_TRACE=1`** — turns on `[acp-trace] <- REQ/RES/NOTIF <method>` lines on stderr for any ACP-based CLI invocation. Single most useful diagnostic when an agent silently hangs — tells you exactly what JSON-RPC traffic is or isn't crossing the wire. Off by default.
-- **`~/.cursor/cli-config.json` `permissions.allow`** — Cursor's out-of-band tool gate. Our `ensureCursorAllowlist()` auto-injects `Shell(*)`, `Read(**)`, `Write(**)`, `Edit(**)`, `MCP(*)`. Users can tighten or extend that list (idempotent — we only ever append). If a user wants stricter shell sandboxing, edit the array directly; we won't fight them.
-- **Per-CLI MCP config files** (`~/.gemini/settings.json`, `~/.cursor/mcp.json`, `~/.copilot/mcp-config.json`) — when a CLI ignores `mcpServers` passed via ACP `session/new` (Cursor in `agent acp` mode does, per Cursor staff), populate the CLI's own config file as a fallback.
+- **`ACP_TRACE=1`** — turns on `[acp-trace] <- REQ/RES/NOTIF <method>` lines on stderr for any ACP-based CLI invocation. Single most useful diagnostic when an agent silently hangs — tells you exactly what JSON-RPC traffic is or isn't crossing the wire. Off by default. (Antigravity does not use ACP, so this has no effect on `--cli antigravity`.)
+- **Antigravity has no CLI-pin equivalent.** It is reached through the running Antigravity 2.0 desktop app's Language Server, not a pinnable binary — there is no `ANTIGRAVITY_*_PATH` knob. The only operator requirement is that the desktop app is installed, signed in, and running; if it isn't, the adapter reports "not detected." (Live-attach to a specific port/build is a Phase 2 concern.)
+- **Per-CLI MCP config files** (`~/.cursor/mcp.json`) — when a CLI ignores `mcpServers` passed via ACP `session/new` (Cursor in `agent acp` mode does, per Cursor staff), populate the CLI's own config file as a fallback. (Codex uses `~/.codex/config.toml`; Antigravity manages MCP servers inside the desktop app, not via a wizard-managed file.)
 
 These are knobs the user can twist; the adapter code reads them automatically. Surface them in the user-facing answer when an upstream CLI bug is the root cause.
 
@@ -265,20 +265,20 @@ Claude restart is the one thing you can't do — don't pretend you can. Reinstal
 
 ## Illustrative walk-through: swap two CLIs' roles
 
-User says: *"Make Gemini the bulk writer and Cursor the researcher."*
+User says: *"Make Codex the executor and Cursor the researcher."*
 
 1. `claude plugin marketplace list` → confirm `cc-multi-cli-plugin` lives in an editable location.
-2. `ls $REPO/plugins/` → confirm both `gemini/` and `cursor/` plugins exist. `ls $REPO/plugins/multi/agents/` → see current subagent set.
+2. `ls $REPO/plugins/` → confirm both `codex/` and `cursor/` plugins exist. `ls $REPO/plugins/multi/agents/` → see current subagent set.
 3. No CLI-specific strings mentioned; skip Step 2 verification.
 4. Safety commit if needed.
-5. Create `plugins/multi/agents/gemini-writer.md` (copy from `cursor-writer.md`, change name and `--cli gemini --role writer`).
-6. Create `plugins/multi/agents/cursor-researcher.md` (copy from `gemini-researcher.md`, change similarly).
-7. Create `plugins/gemini/commands/write.md` (copy from `plugins/cursor/commands/write.md`, change dispatch to `multi:gemini-writer`).
-8. Create `plugins/cursor/commands/research.md` (copy from `plugins/gemini/commands/research.md`, change dispatch to `multi:cursor-researcher`).
+5. Create `plugins/multi/agents/codex-execute.md` (copy from `cursor-execute.md`, change name and `--cli codex --role execute`) — if it doesn't already exist.
+6. Create `plugins/multi/agents/cursor-researcher.md` (copy from an existing read-only forwarder, change to `--cli cursor --role researcher`).
+7. Create `plugins/codex/commands/execute.md` (copy from `plugins/cursor/commands/execute.md`, change dispatch to `multi:codex-execute`) — if it doesn't already exist.
+8. Create `plugins/cursor/commands/research.md` (copy from an existing command, change dispatch to `multi:cursor-researcher`).
 9. Optionally delete or `_disabled-` the originals.
 10. `claude plugin validate $REPO` via Bash — must pass.
-11. `claude plugin install gemini@cc-multi-cli-plugin --force` + cursor + multi, via Bash.
+11. `claude plugin install codex@cc-multi-cli-plugin --force` + cursor + multi, via Bash.
 12. Commit via Bash.
-13. Tell the user: *"Done. Please restart Claude Code — I touched subagent files and the definitions are session-cached. After restart, try `/gemini:write create /tmp/hello.py that prints 'hi'`."*
+13. Tell the user: *"Done. Please restart Claude Code — I touched subagent files and the definitions are session-cached. After restart, try `/codex:execute create /tmp/hello.py that prints 'hi'`."*
 
 Substitute any other pair of CLIs and the same steps apply.
