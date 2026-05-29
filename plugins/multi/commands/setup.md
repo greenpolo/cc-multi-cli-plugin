@@ -1,10 +1,22 @@
 ---
 description: One-shot setup wizard — detects CLIs, configures Exa + Context7 MCPs on each
-argument-hint: "[--dry-run]"
+argument-hint: "[--dry-run] [--enable-review-gate|--disable-review-gate]"
 allowed-tools: Read, Edit, Write, Bash, AskUserQuestion
 ---
 
-You are running the setup wizard for cc-multi-cli-plugin. Work through these steps in order, using your native tools. Do NOT invoke subagents. Do NOT run the plugin's companion scripts.
+## Review-gate toggle (short-circuit)
+
+If `$ARGUMENTS` contains `--enable-review-gate` or `--disable-review-gate`, this is a review-gate toggle, NOT a full setup run. Do ONLY this, then stop:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" setup --json $ARGUMENTS
+```
+
+Present the resulting status (it reflects the new review-gate state) and do not run any of the wizard steps below.
+
+---
+
+You are running the setup wizard for cc-multi-cli-plugin. Work through these steps in order, using your native tools. Do NOT invoke subagents. Do NOT run the plugin's companion scripts (except the review-gate short-circuit above and the Antigravity detection probe noted in Step 1).
 
 If the user passed `--dry-run` anywhere in $ARGUMENTS, enumerate changes but make NO writes.
 

@@ -63,7 +63,7 @@ function buildSetupNote(cwd) {
   }
 
   const detail = availability.detail ? ` ${availability.detail}.` : "";
-  return `Codex is not set up for the review gate.${detail} Run /codex:setup.`;
+  return `Codex is not set up for the review gate.${detail} Run /multi:setup.`;
 }
 
 function parseStopReviewOutput(rawOutput) {

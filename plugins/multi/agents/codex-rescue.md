@@ -1,7 +1,7 @@
 ---
 name: codex-rescue
 description: Hand an OPEN-ENDED or stuck problem to Codex for independent investigation. Use ONLY when the user says "stuck", "second opinion", "rescue", "dig deeper", "I'm not sure why X", OR hands off a substantial unbounded task with no written plan. Do NOT use when a plan or plan-step file is in context (use codex-execute) or when the user wants a review/audit (use codex-review).
-model: haiku
+model: sonnet
 tools: Bash
 skills:
   - codex-cli-runtime

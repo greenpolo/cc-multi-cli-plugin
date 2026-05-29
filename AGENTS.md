@@ -11,7 +11,7 @@ Orientation for AI agents (Claude, Codex, Cursor) working in this repo. **Read t
 Claude does as little thinking as possible; the external CLI does the work.
 
 - The per-command subagents (`plugins/multi/agents/codex-*.md`) are **thin forwarders**: they build exactly one companion command, run it, and return stdout unchanged. They must not read files, reason about the task, or "help."
-- Forwarders run on **Haiku** (`model: haiku` in their frontmatter) — they only route flags, so a small model is sufficient and correct. Do not "upgrade" them.
+- Forwarder models are tuned by role. Forwarders that **frame/route** the prompt — `codex-execute`, `codex-rescue`, and the cursor/antigravity ones — run on **Sonnet**, because shaping the task well (model/effort choice, prompt framing) materially improves what the external CLI then produces (this mirrors the official `codex-plugin-cc` rescue subagent). Forwarders that do **no framing** and only bridge to the companion — `codex-review` — run on **Haiku**, the correct cheapest model for a pure forwarder. Keep them all thin either way: never add file reading or task reasoning.
 - Do **not** spawn fleets of Claude subagents to do or validate work in this repo — that defeats the plugin's purpose. Validate with `npm test` (offline) or by delegating to a CLI.
 
 ## The request chain
