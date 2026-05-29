@@ -7,10 +7,13 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
+import { parseArgs } from "./lib/args.mjs";
+import { normalizeArgv, normalizeReasoningEffort, normalizeRequestedModel } from "./lib/task-options.mjs";
+import { firstMeaningfulLine, shorten } from "./lib/text.mjs";
 import * as codex from "./lib/adapters/codex.mjs";
 import * as cursor from "./lib/adapters/cursor.mjs";
 import * as antigravity from "./lib/adapters/antigravity.mjs";
+import { ADAPTERS, getAdapter } from "./lib/adapters/registry.mjs";
 import {
     buildPersistentTaskThreadName,
     DEFAULT_CONTINUE_PROMPT,
@@ -66,28 +69,10 @@ import {
   renderTaskResult
 } from "./lib/render.mjs";
 
-// CLI adapter registry. Keys are CLI names as seen by the user.
-// 'antigravity' is added in a later task once its adapter exists.
-const ADAPTERS = {
-  codex,
-  cursor,
-  antigravity,
-};
-
-function getAdapter(name) {
-  const adapter = ADAPTERS[name];
-  if (!adapter) {
-    throw new Error(`Unknown CLI: ${name}. Available: ${Object.keys(ADAPTERS).join(', ')}`);
-  }
-  return adapter;
-}
-
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const REVIEW_SCHEMA = path.join(ROOT_DIR, "schemas", "review-output.schema.json");
 const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000;
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 2000;
-const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-const MODEL_ALIASES = new Map([["spark", "gpt-5.3-codex-spark"]]);
 const STOP_REVIEW_TASK_MARKER = "Run a stop-gate review of the previous Claude turn.";
 
 // ─── Autonomous mode (--until-done) ───────────────────────────────────────────
@@ -175,44 +160,6 @@ function outputCommandResult(payload, rendered, asJson) {
   outputResult(asJson ? payload : rendered, asJson);
 }
 
-function normalizeRequestedModel(model) {
-  if (model == null) {
-    return null;
-  }
-  const normalized = String(model).trim();
-  if (!normalized) {
-    return null;
-  }
-  return MODEL_ALIASES.get(normalized.toLowerCase()) ?? normalized;
-}
-
-function normalizeReasoningEffort(effort) {
-  if (effort == null) {
-    return null;
-  }
-  const normalized = String(effort).trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  if (!VALID_REASONING_EFFORTS.has(normalized)) {
-    throw new Error(
-      `Unsupported reasoning effort "${effort}". Use one of: none, minimal, low, medium, high, xhigh.`
-    );
-  }
-  return normalized;
-}
-
-function normalizeArgv(argv) {
-  if (argv.length === 1) {
-    const [raw] = argv;
-    if (!raw || !raw.trim()) {
-      return [];
-    }
-    return splitRawArgumentString(raw);
-  }
-  return argv;
-}
-
 function parseCommandInput(argv, config = {}) {
   return parseArgs(normalizeArgv(argv), {
     ...config,
@@ -233,25 +180,6 @@ function resolveCommandWorkspace(options = {}) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function shorten(text, limit = 96) {
-  const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
-  if (!normalized) {
-    return "";
-  }
-  if (normalized.length <= limit) {
-    return normalized;
-  }
-  return `${normalized.slice(0, limit - 3)}...`;
-}
-
-function firstMeaningfulLine(text, fallback) {
-  const line = String(text ?? "")
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .find(Boolean);
-  return line ?? fallback;
 }
 
 async function buildSetupReport(cwd, actionsTaken = []) {

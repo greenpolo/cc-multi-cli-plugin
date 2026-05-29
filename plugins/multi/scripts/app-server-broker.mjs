@@ -8,6 +8,7 @@ import process from "node:process";
 import { parseArgs } from "./lib/args.mjs";
 import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "./lib/app-server.mjs";
 import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
+import { clearBrokerSession, shouldIdleShutdown } from "./lib/broker-lifecycle.mjs";
 
 const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
 
@@ -52,7 +53,7 @@ async function main() {
   }
 
   const { options } = parseArgs(argv, {
-    valueOptions: ["cwd", "pid-file", "endpoint"]
+    valueOptions: ["cwd", "pid-file", "endpoint", "log-file"]
   });
 
   if (!options.endpoint) {
@@ -63,6 +64,7 @@ async function main() {
   const endpoint = String(options.endpoint);
   const listenTarget = parseBrokerEndpoint(endpoint);
   const pidFile = options["pid-file"] ? path.resolve(options["pid-file"]) : null;
+  const logFile = options["log-file"] ? path.resolve(options["log-file"]) : null;
   writePidFile(pidFile);
 
   const appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
@@ -70,6 +72,21 @@ async function main() {
   let activeStreamSocket = null;
   let activeStreamThreadIds = null;
   const sockets = new Set();
+
+  // Idle self-shutdown: this broker is detached and reused across tasks, so it
+  // must reap itself once unused — otherwise it lingers forever (and on Windows
+  // pins its cwd directory open). The SessionEnd hook only reaps the broker for
+  // the session's primary cwd; this timer covers every other cwd. Disabled when
+  // CODEX_COMPANION_BROKER_IDLE_MS <= 0.
+  const idleShutdownMs = Number(process.env.CODEX_COMPANION_BROKER_IDLE_MS ?? 600000);
+  let lastActivityMs = Date.now();
+  let idleTimer = null;
+  let shuttingDown = false;
+  let shutdownPromise = null;
+  const markActivity = () => {
+    lastActivityMs = Date.now();
+  };
+  const isBusy = () => Boolean(activeRequestSocket || activeStreamSocket);
 
   function clearSocketOwnership(socket) {
     if (activeRequestSocket === socket) {
@@ -82,6 +99,7 @@ async function main() {
   }
 
   function routeNotification(message) {
+    markActivity();
     const target = activeRequestSocket ?? activeStreamSocket;
     if (!target) {
       return;
@@ -99,28 +117,74 @@ async function main() {
     }
   }
 
-  async function shutdown(server) {
-    for (const socket of sockets) {
-      socket.end();
+  function shutdown(server) {
+    if (shutdownPromise) {
+      return shutdownPromise; // idempotent: idle timer + signals may all call this
     }
-    await appClient.close().catch(() => {});
-    await new Promise((resolve) => server.close(resolve));
-    if (listenTarget.kind === "unix" && fs.existsSync(listenTarget.path)) {
-      fs.unlinkSync(listenTarget.path);
+    shuttingDown = true;
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
     }
-    if (pidFile && fs.existsSync(pidFile)) {
-      fs.unlinkSync(pidFile);
-    }
+    shutdownPromise = (async () => {
+      // Stop accepting new connections BEFORE tearing down the app client, so a
+      // late request can't start a turn against a closing client. server.close()
+      // stops the listener immediately; its callback resolves once the sockets we
+      // end below have drained.
+      const closed = new Promise((resolve) => server.close(resolve));
+      for (const socket of sockets) {
+        socket.end();
+      }
+      await closed;
+      await appClient.close().catch(() => {});
+      if (listenTarget.kind === "unix" && fs.existsSync(listenTarget.path)) {
+        fs.unlinkSync(listenTarget.path);
+      }
+      if (pidFile && fs.existsSync(pidFile)) {
+        fs.unlinkSync(pidFile);
+      }
+      // Best-effort artifact cleanup: on idle self-shutdown no parent
+      // teardownBrokerSession runs, so clear our own broker.json + temp files.
+      // The log file is this process's own stdout/stderr handle, so the unlink
+      // may fail on Windows — that's fine, the OS temp cleaner reaps it (and on
+      // the hook path teardownBrokerSession removes it after we exit).
+      try {
+        clearBrokerSession(cwd);
+      } catch {
+        // ignore stale-state cleanup failures
+      }
+      if (logFile && fs.existsSync(logFile)) {
+        try {
+          fs.unlinkSync(logFile);
+        } catch {
+          // own open handle on Windows
+        }
+      }
+      const sessionDir = pidFile ? path.dirname(pidFile) : null;
+      if (sessionDir && fs.existsSync(sessionDir)) {
+        try {
+          fs.rmdirSync(sessionDir);
+        } catch {
+          // non-empty (e.g. the log handle is still open)
+        }
+      }
+    })();
+    return shutdownPromise;
   }
 
   appClient.setNotificationHandler(routeNotification);
 
   const server = net.createServer((socket) => {
+    if (shuttingDown) {
+      socket.destroy(); // refuse connections racing an in-progress shutdown
+      return;
+    }
     sockets.add(socket);
     socket.setEncoding("utf8");
     let buffer = "";
 
     socket.on("data", async (chunk) => {
+      markActivity();
       buffer += chunk;
       let newlineIndex = buffer.indexOf("\n");
       while (newlineIndex !== -1) {
@@ -243,7 +307,25 @@ async function main() {
     process.exit(0);
   });
 
-  server.listen(listenTarget.path);
+  // Poll for idleness once per window. On fire: shut down if truly idle, else
+  // re-arm. unref so the timer alone never keeps the process alive — the
+  // listening server does that, and once it closes the loop ends naturally.
+  function armIdleTimer() {
+    if (!Number.isFinite(idleShutdownMs) || idleShutdownMs <= 0) {
+      return; // idle shutdown disabled
+    }
+    idleTimer = setTimeout(async () => {
+      if (shouldIdleShutdown({ busy: isBusy(), lastActivityMs, nowMs: Date.now(), idleMs: idleShutdownMs })) {
+        await shutdown(server);
+        process.exit(0);
+        return;
+      }
+      armIdleTimer(); // still active — re-check after the next idle window
+    }, idleShutdownMs);
+    idleTimer.unref?.();
+  }
+
+  server.listen(listenTarget.path, armIdleTimer);
 }
 
 main().catch((error) => {

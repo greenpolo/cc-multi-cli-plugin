@@ -58,7 +58,7 @@ export async function sendBrokerShutdown(endpoint) {
 
 export function spawnBrokerProcess({ scriptPath, cwd, endpoint, pidFile, logFile, env = process.env }) {
   const logFd = fs.openSync(logFile, "a");
-  const child = spawn(process.execPath, [scriptPath, "serve", "--endpoint", endpoint, "--cwd", cwd, "--pid-file", pidFile], {
+  const child = spawn(process.execPath, [scriptPath, "serve", "--endpoint", endpoint, "--cwd", cwd, "--pid-file", pidFile, "--log-file", logFile], {
     cwd,
     env,
     detached: true,
@@ -168,6 +168,24 @@ export async function ensureBrokerSession(cwd, options = {}) {
   };
   saveBrokerSession(cwd, session);
   return session;
+}
+
+/**
+ * Decide whether an idle broker should shut itself down. Pure (no I/O) so the
+ * policy can be unit-tested without spawning a broker. `busy` is true while a
+ * turn/stream is in flight; `idleMs <= 0` or non-finite disables idle shutdown.
+ *
+ * @param {{ busy: boolean, lastActivityMs: number, nowMs: number, idleMs: number }} args
+ * @returns {boolean}
+ */
+export function shouldIdleShutdown({ busy, lastActivityMs, nowMs, idleMs }) {
+  if (!Number.isFinite(idleMs) || idleMs <= 0) {
+    return false;
+  }
+  if (busy) {
+    return false;
+  }
+  return nowMs - lastActivityMs >= idleMs;
 }
 
 export function teardownBrokerSession({ endpoint = null, pidFile, logFile, sessionDir = null, pid = null, killProcess = null }) {

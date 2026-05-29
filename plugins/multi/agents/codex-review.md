@@ -1,7 +1,7 @@
 ---
 name: codex-review
 description: Run a Codex code review or adversarial design review. Use ONLY when the user says "review", "audit", "check this PR", "adversarial review", or "is this approach right". Do NOT use when the user wants any code written or modified (use codex-execute) or when they're stuck and want investigation (use codex-rescue). Review-only — never edits files.
-model: sonnet
+model: haiku
 tools: Bash(node:*), Bash(git:*)
 skills:
   - multi-cli-runtime

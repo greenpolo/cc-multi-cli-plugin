@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Codex broker leak.** The reused per-cwd app-server broker daemon now self-terminates after an idle window (`CODEX_COMPANION_BROKER_IDLE_MS`, default 600000 ms), so brokers spawned for transient or extra workspaces no longer linger forever (and, on Windows, no longer pin their cwd directory open). The SessionEnd hook already reaped the session's primary-cwd broker; this idle timer is the backstop for every other case (`app-server-broker.mjs`, `lib/broker-lifecycle.mjs` → `shouldIdleShutdown`).
+
+### Changed
+
+- **Forwarder subagents now run on Haiku** (`codex-execute`, `codex-rescue`, `codex-review`) instead of Sonnet. They only route flags to the companion — verified live across all three roles, including rescue's flag-routing — so a smaller, cheaper model is sufficient and better aligned with the plugin's token-saving purpose.
+- **Repo structure for multi-agent work (no behavior change).** Added `AGENTS.md`/`CLAUDE.md` orientation, `ARCHITECTURE.md`, an explicit adapter `CONTRACT.md`, a zero-dependency offline test suite (`npm test`, Node's built-in runner) with a reusable sandbox fixture, and a gitignored `.agent/` scratch area. Began splitting the companion monolith: extracted the pure task-option normalizers (model alias, reasoning-effort validation, argv splitting) into `lib/task-options.mjs` with characterization tests.
+
 ## v3.0.0 — 2026-05-24
 
 **Breaking release.** The provider set is now **Codex, Cursor, and Antigravity**. Three providers were removed and command namespaces were reorganized — there is no in-place behavioral compatibility with v2.x for the dropped CLIs. After upgrading, restart Claude Code so the subagent roster refreshes, then re-run `/multi:setup`.

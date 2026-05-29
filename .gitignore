@@ -9,3 +9,9 @@ tmp_rp.txt
 # One-off working docs not meant for the public repo
 /docs/release-readiness.md
 /docs/transport-decisions.md
+
+# --- Tooling ---
+node_modules/
+
+# Agent scratch area: plans, specs, reverse-engineering notes. Local-only.
+/.agent/
