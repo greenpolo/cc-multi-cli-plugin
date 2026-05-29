@@ -1,2 +1,11 @@
 # Stray scratch file from an unrelated project (LangSlice) — do not track
 tmp_rp.txt
+
+# --- AI-generated docs: kept locally, not published to the public repo ---
+# Spec/plan output from the superpowers workflow
+/docs/superpowers/
+# Ad-hoc research / reverse-engineering write-ups (matches at any depth)
+*_RESEARCH.md
+# One-off working docs not meant for the public repo
+/docs/release-readiness.md
+/docs/transport-decisions.md
