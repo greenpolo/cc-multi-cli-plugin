@@ -29,7 +29,7 @@
     },
     {
       "name": "cursor",
-      "description": "Adds /cursor:execute, /cursor:plan, /cursor:debug. Requires multi.",
+      "description": "Adds /cursor:delegate, /cursor:research, /cursor:explore. Requires multi.",
       "version": "3.0.0",
       "author": {
         "name": "greenpolo"
@@ -38,7 +38,7 @@
     },
     {
       "name": "antigravity",
-      "description": "Adds /antigravity:research and /antigravity:explore (Gemini 3.x via Antigravity 2.0 desktop LS). Requires multi and a running Antigravity 2.0 desktop.",
+      "description": "Adds /antigravity:research and /antigravity:explore (read-only; Gemini 3.5 Flash via Google's headless agy CLI). EXPERIMENTAL. Requires multi and the agy CLI installed + signed in.",
       "version": "3.0.0",
       "author": {
         "name": "greenpolo"

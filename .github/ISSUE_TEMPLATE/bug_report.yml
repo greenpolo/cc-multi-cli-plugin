@@ -37,9 +37,9 @@ body:
       label: What happened?
       description: What did you run, what did you expect, what did you get?
       placeholder: |
-        I ran `/cursor:debug investigate the bug in foo.js`.
-        I expected Cursor to read foo.js and propose a fix.
-        Instead the subagent returned "Cursor debugger failed: no output" after 8 minutes.
+        I ran `/cursor:delegate fix the bug in foo.js`.
+        I expected Cursor to edit foo.js and report what it changed.
+        Instead the subagent returned "Cursor delegate failed: no output" after 8 minutes.
     validations:
       required: true
 

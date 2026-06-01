@@ -1,6 +1,6 @@
 {
   "name": "cursor",
-  "description": "Delegate coding, planning, and debugging to Cursor CLI via ACP. Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
+  "description": "Delegate implementation, web research, and codebase exploration to the Cursor CLI (headless agent -p). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
   "version": "3.0.0",
   "author": {
     "name": "greenpolo",
@@ -10,8 +10,8 @@
   "keywords": [
     "claude-code",
     "cursor",
-    "execute",
-    "debug",
-    "acp"
+    "delegate",
+    "research",
+    "explore"
   ]
 }

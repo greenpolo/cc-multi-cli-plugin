@@ -1,0 +1,9 @@
+I0531 14:33:06.999643 907368 server.go:1306] Starting language server process with pid 907368
+I0531 14:33:06.999643 907368 printmode.go:71] Print mode: starting (promptLength=120, model="", conversationID="")
+I0531 14:33:07.000143 907368 printmode.go:164] Print mode: not authenticated, trying silent auth
+I0531 14:33:07.921737 907368 printmode.go:166] Print mode: silent auth succeeded
+I0531 14:33:07.999000 907368 common.go:203] CLI app data directory: C:\Users\dev\.gemini\antigravity-cli
+I0531 14:33:08.000784 907368 server.go:755] Created conversation 1b6eab11-dffb-48c6-bc75-cf29b8f5d8f7
+I0531 14:33:08.001788 907368 printmode.go:130] Print mode: conversation=1b6eab11-dffb-48c6-bc75-cf29b8f5d8f7, sending message
+I0531 14:33:22.238213 907368 manager.go:459] CLI store manager shutting down
+I0531 14:33:22.243719 907368 server.go:2186] Language server shutting down

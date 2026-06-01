@@ -93,14 +93,24 @@ export function filterJobsForCurrentClaudeSession(jobs) {
   return jobs.filter((job) => job.sessionId === sessionId);
 }
 
-export function findLatestResumableTaskJob(jobs) {
+// When `cli` is provided, only jobs from that CLI match (legacy codex jobs with
+// no `cli` field count as codex). When omitted, every task job matches — the
+// historical behavior the codex resume path relies on.
+function jobMatchesCli(job, cli) {
+  if (!cli) return true;
+  if (job.cli === cli) return true;
+  return cli === "codex" && job.cli == null;
+}
+
+export function findLatestResumableTaskJob(jobs, options = {}) {
   return (
     jobs.find(
       (job) =>
         job.jobClass === "task" &&
         job.threadId &&
         job.status !== "queued" &&
-        job.status !== "running"
+        job.status !== "running" &&
+        jobMatchesCli(job, options.cli)
     ) ?? null
   );
 }
@@ -110,12 +120,14 @@ export async function resolveLatestTrackedTaskThread(cwd, options = {}) {
   const sessionId = getCurrentClaudeSessionId();
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot)).filter((job) => job.id !== options.excludeJobId);
   const visibleJobs = filterJobsForCurrentClaudeSession(jobs);
-  const activeTask = visibleJobs.find((job) => job.jobClass === "task" && (job.status === "queued" || job.status === "running"));
+  const activeTask = visibleJobs.find(
+    (job) => job.jobClass === "task" && jobMatchesCli(job, options.cli) && (job.status === "queued" || job.status === "running")
+  );
   if (activeTask) {
     throw new Error(`Task ${activeTask.id} is still running. Use /multi:status before continuing it.`);
   }
 
-  const trackedTask = findLatestResumableTaskJob(visibleJobs);
+  const trackedTask = findLatestResumableTaskJob(visibleJobs, { cli: options.cli });
   if (trackedTask) {
     return { id: trackedTask.threadId };
   }
@@ -124,7 +136,12 @@ export async function resolveLatestTrackedTaskThread(cwd, options = {}) {
     return null;
   }
 
-  return findLatestTaskThread(workspaceRoot);
+  // The on-disk fallback scans codex app-server threads, so only use it for the
+  // codex (or unscoped) path — a cursor resume must not pick up a codex thread.
+  if (!options.cli || options.cli === "codex") {
+    return findLatestTaskThread(workspaceRoot);
+  }
+  return null;
 }
 
 export function getJobKindLabel(kind, jobClass) {

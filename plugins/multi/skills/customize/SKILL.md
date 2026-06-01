@@ -1,6 +1,6 @@
 ---
 name: customize
-description: Rewire which CLI handles which role in cc-multi-cli-plugin, OR diagnose/work around an upstream CLI quirk via env vars and config files. Use when the user asks to swap CLIs, change a subagent's target CLI, add or disable a subagent or command, restrict a CLI, hardcode a model, or modify a role's prompt template — and also when a CLI is misbehaving (hangs, missing tools, broken release) and the user needs operator escape hatches like CURSOR_AGENT_PATH, ACP_TRACE, or per-CLI MCP config tuning. Works for any CLI in the marketplace — the three default CLIs (Codex, Cursor, Antigravity) and any additional CLIs the user added via the multi-cli-anything skill. Trigger phrases include "swap Codex and Cursor", "make Antigravity the researcher", "disable cursor-debugger", "restrict Codex to read-only", "change which CLI handles debugging", "add /<cli>:<command>", "only install the plugins I need", "hardcode a model for <some-role>", "use /plan from cursor for planning", "cursor is hanging / broken / stuck", "pin an older cursor build", "see what ACP traffic the CLI is sending".
+description: Rewire which CLI handles which role in cc-multi-cli-plugin, OR diagnose/work around an upstream CLI quirk via env vars and config files. Use when the user asks to swap CLIs, change a subagent's target CLI, add or disable a subagent or command, restrict a CLI, hardcode a model, or modify a role's prompt template — and also when a CLI is misbehaving (hangs, missing tools, broken release) and the user needs operator escape hatches like CURSOR_AGENT_PATH, ACP_TRACE, or per-CLI MCP config tuning. Works for any CLI in the marketplace — the three default CLIs (Codex, Cursor, Antigravity) and any additional CLIs the user added via the multi-cli-anything skill. Trigger phrases include "swap Codex and Cursor", "make Antigravity the researcher", "disable cursor-explore", "restrict Codex to read-only", "change which CLI handles implementation", "add /<cli>:<command>", "only install the plugins I need", "hardcode a model for <some-role>", "use cursor to research a library", "cursor is hanging / broken / stuck", "pin an older cursor build", "see what ACP traffic the CLI is sending".
 ---
 
 # Customize cc-multi-cli-plugin
@@ -188,7 +188,7 @@ to:
 - Pass `--resume`, `--fresh` as runtime controls.
 ```
 
-**Illustrative:** pinning `/antigravity:research` to Gemini 3.1 Pro. Step 2 verification confirms the exact ID (including any version suffix) before you type it. The edit pins `--model <verified-id>` with override rules preserved. Forgetting a required version suffix is the most common way to ship a broken subagent.
+**Illustrative:** pinning `/cursor:research` to a specific Cursor model (e.g. `gpt-5.5-medium`). Step 2 verification confirms the exact ID (including any version suffix) before you type it. The edit pins `--model <verified-id>` with override rules preserved. Forgetting a required version suffix is the most common way to ship a broken subagent. (Antigravity is the exception — its headless `agy` path ignores `--model`; see below.)
 
 The same pattern works for `--effort`, `--sandbox`, `--reasoning-effort`, or any CLI-specific flag.
 
@@ -211,8 +211,8 @@ When a CLI misbehaves upstream — a broken release, a regression, an obscure co
 
 - **`CURSOR_AGENT_PATH=<absolute-path>`** — point our Cursor adapter at a specific binary (e.g. an older cached build at `~/AppData/Local/cursor-agent/versions/<old-version>/index.js`). Useful when a new Cursor release breaks ACP and the user wants to pin a working older one. The `findCursorBinary()` helper checks this before falling back to PATH.
 - **`ACP_TRACE=1`** — turns on `[acp-trace] <- REQ/RES/NOTIF <method>` lines on stderr for any ACP-based CLI invocation. Single most useful diagnostic when an agent silently hangs — tells you exactly what JSON-RPC traffic is or isn't crossing the wire. Off by default. (Antigravity does not use ACP, so this has no effect on `--cli antigravity`.)
-- **Antigravity has no CLI-pin equivalent.** It is reached through the running Antigravity 2.0 desktop app's Language Server, not a pinnable binary — there is no `ANTIGRAVITY_*_PATH` knob. The only operator requirement is that the desktop app is installed, signed in, and running; if it isn't, the adapter reports "not detected." (Live-attach to a specific port/build is a Phase 2 concern.)
-- **Per-CLI MCP config files** (`~/.cursor/mcp.json`) — when a CLI ignores `mcpServers` passed via ACP `session/new` (Cursor in `agent acp` mode does, per Cursor staff), populate the CLI's own config file as a fallback. (Codex uses `~/.codex/config.toml`; Antigravity manages MCP servers inside the desktop app, not via a wizard-managed file.)
+- **`AGY_CLI_PATH=<absolute-path>`** — point our Antigravity adapter at a specific `agy` binary (`findAgyBinary()` checks it before PATH and the Windows fallback `$LOCALAPPDATA/agy/bin/agy.exe`). Note `agy` headless does **not** honor `--model` — the model is whatever `agy` is configured to use (Gemini 3.5 Flash by default), so there is no per-subagent model pin for Antigravity. The operator requirement is that `agy` is installed and signed in (run `agy` once interactively); if it isn't, the adapter reports "not signed in."
+- **Per-CLI MCP config files** (`~/.cursor/mcp.json`) — when a CLI ignores `mcpServers` passed via ACP `session/new` (Cursor in `agent acp` mode does, per Cursor staff), populate the CLI's own config file as a fallback. (Codex uses `~/.codex/config.toml`; Antigravity's `agy` reads MCP servers from its Gemini-CLI config `~/.gemini/settings.json`, not a wizard-managed file.)
 
 These are knobs the user can twist; the adapter code reads them automatically. Surface them in the user-facing answer when an upstream CLI bug is the root cause.
 
@@ -271,9 +271,9 @@ User says: *"Make Codex the executor and Cursor the researcher."*
 2. `ls $REPO/plugins/` → confirm both `codex/` and `cursor/` plugins exist. `ls $REPO/plugins/multi/agents/` → see current subagent set.
 3. No CLI-specific strings mentioned; skip Step 2 verification.
 4. Safety commit if needed.
-5. Create `plugins/multi/agents/codex-execute.md` (copy from `cursor-execute.md`, change name and `--cli codex --role execute`) — if it doesn't already exist.
+5. Create `plugins/multi/agents/codex-execute.md` (copy from `cursor-delegate.md`, change name and `--cli codex --role execute`) — if it doesn't already exist.
 6. Create `plugins/multi/agents/cursor-researcher.md` (copy from an existing read-only forwarder, change to `--cli cursor --role researcher`).
-7. Create `plugins/codex/commands/execute.md` (copy from `plugins/cursor/commands/execute.md`, change dispatch to `multi:codex-execute`) — if it doesn't already exist.
+7. Create `plugins/codex/commands/execute.md` (copy from `plugins/cursor/commands/delegate.md`, change dispatch to `multi:codex-execute`) — if it doesn't already exist.
 8. Create `plugins/cursor/commands/research.md` (copy from an existing command, change dispatch to `multi:cursor-researcher`).
 9. Optionally delete or `_disabled-` the originals.
 10. `claude plugin validate $REPO` via Bash — must pass.

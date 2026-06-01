@@ -32,7 +32,7 @@ When you invoke one of the plugin's commands or subagents, your prompt is forwar
 |---|---|---|
 | `/codex:execute` | OpenAI | https://openai.com/policies/privacy-policy |
 | `/gemini:research`, `/gemini:explore` | Google | https://policies.google.com/privacy |
-| `/cursor:write`, `/cursor:plan`, `/cursor:debug` | Cursor (Anysphere) | https://cursor.com/privacy |
+| `/cursor:delegate`, `/cursor:research`, `/cursor:explore` | Cursor (Anysphere) | https://cursor.com/privacy |
 | `/copilot:research`, `/copilot:review`, `/copilot:plan` | GitHub | https://docs.github.com/en/site-policy/privacy-policies |
 | `/qwen:write` | Alibaba | https://qwenlm.com/privacy (or the provider you've configured) |
 | Exa MCP (web search) | Exa | https://exa.ai/privacy-policy |

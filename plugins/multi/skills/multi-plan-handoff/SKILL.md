@@ -6,7 +6,7 @@ user-invocable: false
 
 # Multi-CLI Plan Handoff
 
-When the user asks to delegate work to a `multi:*` execute subagent (`multi:codex-execute`, `multi:cursor-execute`, or any future `*-execute` subagent), you must check whether a plan file exists in conversation context. If one does, dispatch the subagent with `--plan <path>` and **never** paste the plan's content into the Agent tool's prompt.
+When the user asks to delegate work to a `multi:*` execute/delegate subagent (`multi:codex-execute`, `multi:cursor-delegate`, or any future execute/delegate subagent), you must check whether a plan file exists in conversation context. If one does, dispatch the subagent with `--plan <path>` and **never** paste the plan's content into the Agent tool's prompt.
 
 The reason: every paraphrasing layer (you summarizing the plan, the Sonnet wrapper prepending framing, the upstream CLI re-reading prose) loses fidelity. `--plan <path>` makes the upstream CLI read the file directly — bytes-identical, zero rewriting.
 
@@ -34,7 +34,7 @@ Apply this skill when the user says any of these (case-insensitive, fuzzy):
 - "execute it via codex" / "send to codex" / "delegate to codex" / "have codex implement this" / "codex it"
 - "execute via cursor" / "send to cursor" / "delegate to cursor" / "cursor it"
 - "execute the plan" (with no path — auto-resolve from context)
-- Any explicit "/codex:execute" or "/cursor:execute" with no inline prompt text
+- Any explicit "/codex:execute" or "/cursor:delegate" with no inline prompt text
 
 If the user explicitly types a prompt rather than referencing a plan ("write me a fizzbuzz via cursor"), don't apply this skill — that's a normal prompt-based dispatch.
 
@@ -73,6 +73,6 @@ Wrong (current behavior):
 - Cursor: receives third-generation rewrite
 
 Right (with this skill):
-- You: dispatch `multi:cursor-execute` with prompt: `--plan C:/Users/.../plans/cursor-format-test.md`
-- Subagent: `node ... task --cli cursor --role execute --prompt-file C:/Users/.../plans/cursor-format-test.md --write`
+- You: dispatch `multi:cursor-delegate` with prompt: `--plan C:/Users/.../plans/cursor-format-test.md`
+- Subagent: `node ... task --cli cursor --role delegate --prompt-file C:/Users/.../plans/cursor-format-test.md --write`
 - Cursor: reads the file directly, bytes-identical to what was authored

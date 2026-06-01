@@ -4,7 +4,7 @@ Orientation for AI agents (Claude, Codex, Cursor) working in this repo. **Read t
 
 ## What this is
 
-`cc-multi-cli-plugin` is a Claude Code plugin that **offloads heavy coding work to external CLIs** — Codex, Cursor (ACP), and Antigravity — so the orchestrating Claude session spends as few tokens as possible. The plugin's entire value is *token reduction by delegation*. Keep that goal central to every change.
+`cc-multi-cli-plugin` is a Claude Code plugin that **offloads heavy coding work to external CLIs** — Codex, Cursor (headless `agent -p`), and Antigravity — so the orchestrating Claude session spends as few tokens as possible. The plugin's entire value is *token reduction by delegation*. Keep that goal central to every change.
 
 ## The golden rule
 
@@ -18,7 +18,7 @@ Claude does as little thinking as possible; the external CLI does the work.
 
 ```
 /codex:<cmd>  →  multi:codex-<role> (forwarder, Haiku)  →  multi-cli-companion.mjs <subcommand> --cli <name>
-              →  lib/adapters/<name>.mjs  →  (codex app-server broker | cursor ACP | antigravity LS)  →  external CLI
+              →  lib/adapters/<name>.mjs  →  (codex app-server broker | cursor headless `agent -p` | antigravity headless `agy -p`)  →  external CLI
 ```
 
 See `ARCHITECTURE.md` for the full picture and the job / state / broker model.
@@ -46,7 +46,7 @@ No dependencies; uses Node's built-in test runner (Node ≥ 20; repo runs on 25)
 - **Broker lifecycle**: the Codex app-server broker is a detached per-cwd daemon, reused across tasks. The SessionEnd hook reaps the session's *primary*-cwd broker; brokers for any other cwd self-terminate after an idle window (`CODEX_COMPANION_BROKER_IDLE_MS`, default 600000 ms — see `app-server-broker.mjs` + `lib/broker-lifecycle.mjs` → `shouldIdleShutdown`). Set the env to `0` to disable idle shutdown.
 - **State is per-cwd**: jobs and brokers key off the working directory; always pass `--cwd`. Parallel agents should use separate worktrees / cwds to stay isolated.
 - **`spark`** (`gpt-5.3-codex-spark`) is rejected on ChatGPT-auth Codex accounts — expect a 400; not a bug.
-- **Cursor on Windows**: `agent acp` auto-detects WSL bash and hangs Terminal/execute tool calls (open upstream). `cursor-execute` is scoped to file ops only.
+- **Cursor uses headless `agent -p`** (not ACP): the prompt is delivered on stdin (newline-safe), models pass through as flat `--model` names (default `auto`), roles map to flags (`delegate`→agent+`--force --trust`, `research`/`explore`→`--mode ask --force`), and cancel is the generic process-tree kill. `--until-done` loops `--resume` turns. **Cursor's shell is slow/unreliable on Windows** (host-PATH/WSL, open upstream), so `/cursor:delegate` defers build/test verification to the caller (Claude) — file writes and web/codebase reads are unaffected.
 - **Forwarders only have `Bash`** (review additionally `git`) — by design. Don't add tools.
 
 ## Conventions

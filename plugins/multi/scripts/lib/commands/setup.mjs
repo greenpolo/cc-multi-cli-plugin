@@ -60,7 +60,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   }
   const antigravityCli = clis.find((entry) => entry.name === "antigravity");
   if (antigravityCli && !antigravityCli.available) {
-    nextSteps.push("Antigravity: install the Antigravity 2.0 desktop app, sign in, and keep it running (detection only; the LS transport lands in Phase 2).");
+    nextSteps.push("Antigravity: install the `agy` CLI (https://antigravity.google) and run `agy` once interactively to sign in. Read-only research/explore only (EXPERIMENTAL).");
   }
   if (!config.stopReviewGate) {
     nextSteps.push("Optional: run `/multi:setup --enable-review-gate` to require a fresh review before stop.");

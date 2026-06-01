@@ -1,20 +1,35 @@
 /**
  * Cursor adapter — availability checks, auth status, and running prompts
- * through Cursor's ACP server (`agent acp`).
+ * through Cursor's headless print mode (`agent -p`).
  *
  * Cursor's CLI is the `agent` command, installed by Cursor into a per-user
  * location (e.g. C:/Users/<name>/AppData/Local/cursor-agent/agent.cmd on
- * Windows). It speaks the same ACP JSON-RPC protocol as `gemini --acp`.
+ * Windows). We drive it in non-interactive print mode and parse its structured
+ * output:
+ *   - --output-format json        → a single {type:"result", ...} object
+ *   - --output-format stream-json  → newline-delimited events + a final result
  *
- * Slash-command roles are implemented by prepending the appropriate slash
- * prefix to the prompt text before sending it via ACP.
+ * The prompt is delivered on STDIN (not as a CLI arg) so multi-line prompts and
+ * shell metacharacters never need cmd.exe quoting.
+ *
+ * Roles map to flags (not to /slash prefixes as the old ACP path did):
+ *   delegate / writer / debugger → default agent mode + --force --trust  (writes)
+ *   research / researcher        → --mode ask --force                    (read-only + web)
+ *   explore / explorer / ask     → --mode ask --force                    (read-only)
+ *
+ * Headless replaces the previous `agent acp` (ACP JSON-RPC) transport, which on
+ * this CLI carried two upstream bugs: MCP tool-calls silently stopped firing
+ * (~2026.04.17) and there was no working cancel. Headless `-p` fires MCP/web
+ * tools normally and is cancelled by killing the process tree.
  */
 
 import { execSync } from "node:child_process";
+import readline from "node:readline";
 import process from "node:process";
-import { buildAutoApproveRequestHandler, SpawnedAcpClient } from "../acp-client.mjs";
+
+import { spawnCommand } from "../process.mjs";
+import { buildSpawnEnvironment } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
-import { buildStandardMcpServers } from "../mcp-servers.mjs";
 
 // ─── Binary resolution ────────────────────────────────────────────────────────
 //
@@ -55,68 +70,93 @@ function findCursorBinary() {
   return "agent";
 }
 
-// ─── Current Cursor model IDs (2026-05, informational) ────────────────────────
-// Passed through verbatim via --model; the adapter does not hard-validate.
-// Valid as of Cursor 2026.04.13+: gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.2,
-// gpt-5-mini, gpt-5.1-codex-mini, claude-opus-4-6, claude-sonnet-4-6,
-// claude-sonnet-4, claude-haiku-4-5, gemini-3.1-pro, gemini-2.5-flash, kimi-k2.5.
-// Source: forum #157312 model picker dump. Update when Cursor's /models changes.
+// ─── Model IDs (informational) ────────────────────────────────────────────────
+// Model names are passed straight through via --model; the adapter does not
+// validate them (Cursor itself rejects an unknown id with exit 1 + a stderr
+// "Available models: ..." list, which we surface). The current catalog is
+// available live via `agent models` / `agent --list-models` — do not hardcode it
+// here; it drifts. `auto` is the intended default. Flat names like
+// `gpt-5.5-medium`, `claude-opus-4-8-thinking-high`, `composer-2.5-fast` work
+// (the bracketed `modelId[...]` form the old ACP path resolved is NOT used).
 
-// ─── Role-to-prompt-prefix mapping ───────────────────────────────────────────
-//
-// Cursor interprets slash commands (/plan, /debug, /ask) embedded in the
-// prompt text. The `writer` role uses Agent mode (the default — no prefix).
+// ─── Role → headless flags ────────────────────────────────────────────────────
+
+const READ_ONLY_ROLES = new Set([
+  "research",
+  "researcher",
+  "explore",
+  "explorer",
+  "ask",
+  "planner",
+  "plan"
+]);
+
+/** Read-only roles run in `--mode ask` and never write files. */
+export function isReadOnlyRole(role) {
+  return READ_ONLY_ROLES.has(String(role ?? "").toLowerCase());
+}
 
 /**
- * Prepend the Cursor slash-command prefix for the given role.
- *
- * @param {string} role  — "writer" | "planner" | "debugger" | "ask" | other
- * @param {string} userTask
- * @returns {string}
+ * Read-only roles only need the final answer (json); write roles use stream-json
+ * so we can surface live progress and derive file/command activity per turn.
  */
-function buildPrompt(role, userTask) {
-  const prefix = {
-    planner: "/plan ",
-    debugger: "/debug ",
-    ask: "/ask "
-  }[role] ?? "";
-  return prefix + userTask;
+export function headlessOutputFormat(role) {
+  return isReadOnlyRole(role) ? "json" : "stream-json";
+}
+
+/**
+ * Build the `agent` argv (prompt is delivered on stdin, never here).
+ *
+ * @param {{ role?: string, model?: string, sessionId?: string|null, cwd?: string, outputFormat?: string }} [opts]
+ * @returns {string[]}
+ */
+export function buildHeadlessArgs({ role = "delegate", model, sessionId, cwd, outputFormat } = {}) {
+  const fmt = outputFormat ?? headlessOutputFormat(role);
+  const args = ["-p", "--output-format", fmt];
+  if (fmt === "stream-json") {
+    args.push("--stream-partial-output");
+  }
+  const resolvedModel = model && String(model).trim() ? String(model).trim() : "auto";
+  args.push("--model", resolvedModel);
+  if (isReadOnlyRole(role)) {
+    // Read-only Q&A/planning. --force keeps the built-in WebFetch tool from
+    // stalling on the approval gate; --mode ask refuses edits even under --force.
+    args.push("--mode", "ask", "--force");
+  } else {
+    // Default agent mode: full tools incl. write + shell. --force auto-approves
+    // tool execution; --trust (headless-only) trusts the workspace without a prompt.
+    args.push("--force", "--trust");
+  }
+  if (cwd) {
+    args.push("--workspace", cwd);
+  }
+  if (sessionId) {
+    // Resume a prior session — context is preserved server-side.
+    args.push("--resume", String(sessionId));
+  }
+  return args;
 }
 
 // ─── Known-bad version warning ────────────────────────────────────────────────
 //
-// Cursor's `agent acp` mode has two distinct upstream bugs we have to live
-// with. Both are confirmed by Cursor staff with no published fix or ETA:
-//
-// Bug 1 — MCP tool-call regression starting in 2026.04.17.
-//   Tool descriptors are visible to the model but mcpToolCall events silently
-//   never fire. CLI/headless only; the IDE is fine.
-//   Forum:
-//     https://forum.cursor.com/t/cursor-agent-cli-mcp-tool-calls-silently-stopped-working-in-2026-04-17/158988
-//   Last known working version per Cursor staff: 2026.04.14-ee4b43a.
-//   Workaround: pin via CURSOR_AGENT_PATH if you have an older binary cached.
-//
-// Bug 2 — Windows shell auto-detection picks WSL bash (C:\Windows\System32\
-//   bash.exe) instead of PowerShell, so command output capture fails silently
-//   and Terminal/execute tool calls hang at tool_call_update[in_progress]
-//   forever. Confirmed Windows-only; Cursor IDE handles this differently.
-//   Forum:
-//     https://forum.cursor.com/t/shell-commands-in-agent-mode-are-not-returning-output/155544
-//     https://forum.cursor.com/t/acp-permission-rejection-not-reported-to-client/153825
-//   Tested workarounds that don't help: Legacy Terminal Tool, removing WSL
-//   from PATH, disabling MCP. No working software fix as of 2026-04-30.
-//
-// Our response: cursor-execute.md instructs Cursor to NOT use Terminal in agent
-// acp mode and defers shell verification to the parent Claude thread. File ops
-// (Read/Write/Edit/Apply Patch) work fine and that's what cursor-execute is
-// scoped to do. Warning below fires once per process if a known-affected
-// version is detected.
+// The headless `-p` path fires MCP/web tools fine (the 2026.04.17 ACP MCP
+// regression was headless-fixed in a late-May update). The one bug it does NOT
+// fix is the Windows shell-tool hang: Cursor's bash resolver / WSL2 sandbox can
+// make a shell command hang on this OS (host-PATH ordering, still open upstream).
+// We do not run shell verification through Cursor (the caller verifies), so this
+// does not affect delegate's file writes. Warn once if a known-affected build is
+// detected.
+//   https://forum.cursor.com/t/shell-commands-in-agent-mode-are-not-returning-output/155544
+//   https://forum.cursor.com/t/agent-command-execution-uses-wsl-instead-of-the-windows-default-integrated-terminal-git-bash/160196
 
 const KNOWN_BROKEN_CURSOR_VERSIONS = new Set([
   "2026.04.17-787b533",
   "2026.04.29-c83a488"
 ]);
 let warnedAboutCursorVersion = false;
+// The version probe shells out (`agent --version`); run it at most once per
+// process so an --until-done loop doesn't pay a blocking execSync per turn.
+let cursorVersionProbed = false;
 
 function maybeWarnAboutCursorVersion(versionString) {
   if (warnedAboutCursorVersion) return;
@@ -125,18 +165,12 @@ function maybeWarnAboutCursorVersion(versionString) {
   if (!KNOWN_BROKEN_CURSOR_VERSIONS.has(v)) return;
   warnedAboutCursorVersion = true;
   process.stderr.write(
-    `[cursor] Note: agent ${v} has known upstream ACP regressions — ` +
-    `Terminal/execute tool calls hang on Windows (WSL shell auto-detection) and ` +
-    `MCP tool calls silently fail (regression starting in 2026.04.17). ` +
-    `cursor-execute is scoped to file ops only and defers shell verification ` +
-    `to the parent thread. Pin 2026.04.14-ee4b43a via CURSOR_AGENT_PATH if ` +
-    `you need MCP tools through Cursor; otherwise wait for the next Cursor release.\n`
+    `[cursor] Note: agent ${v} predates the headless MCP-regression fix (~late May 2026). ` +
+    `Update Cursor (\`agent update\`) if MCP tools don't fire. Separately, Cursor's shell tool ` +
+    `can hang on Windows (host-PATH/WSL); this plugin defers verification to the caller, so it ` +
+    `does not affect file writes.\n`
   );
 }
-
-// ─── Permission allowlist (removed 2026-05) ───────────────────────────────────
-// Cursor's out-of-band cli-config.json allowlist injection is no longer needed:
-// the 2026.04.17 MCP/Terminal regression was fixed upstream (forum #155544/#155516).
 
 // ─── Stream event helpers ─────────────────────────────────────────────────────
 
@@ -149,56 +183,162 @@ function emitStreamEvent(onStream, event) {
   }
 }
 
-// ─── Notification dispatch ────────────────────────────────────────────────────
-
-function createNotificationSinks() {
-  return {
-    textChunks: [],
-    chunkCount: 0,
-    chunkChars: 0,
-    toolCalls: [],
-    fileChanges: [],
-    events: []
-  };
+/** Extract the tool kind from a stream-json tool_call object (keyed e.g. `shellToolCall`). */
+export function streamToolKind(toolCallObj) {
+  if (!toolCallObj || typeof toolCallObj !== "object") return "tool";
+  const key = Object.keys(toolCallObj)[0] ?? "tool";
+  return key.replace(/ToolCall$/, "") || "tool";
 }
 
-function dispatchOneNotification(notification, sinks, onStream) {
-  const update = notification?.params?.update;
-  if (!update) return;
+function extractAssistantText(event) {
+  const content = event?.message?.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((c) => c?.type === "text" && typeof c.text === "string")
+    .map((c) => c.text)
+    .join("");
+}
 
-  if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text") {
-    const text = String(update.content.text ?? "");
-    sinks.textChunks.push(text);
-    sinks.chunkCount += 1;
-    sinks.chunkChars += text.length;
-    const ev = { type: "message_chunk", text };
-    sinks.events?.push(ev);
-    emitStreamEvent(onStream, ev);
-  } else if (update.sessionUpdate === "tool_call") {
-    sinks.toolCalls.push({
-      name: update.toolName ?? update.name ?? "unknown",
-      arguments: update.arguments ?? update.input ?? {},
-      result: update.result ?? undefined
-    });
-    const ev = {
-      type: "tool_call",
-      toolName: sanitizeDiagnosticMessage(update.toolName ?? update.name ?? "unknown") || "unknown"
-    };
-    sinks.events?.push(ev);
-    emitStreamEvent(onStream, ev);
-  } else if (update.sessionUpdate === "file_change") {
-    sinks.fileChanges.push({
-      path: update.path ?? "",
-      action: update.action ?? "modify"
-    });
-    const ev = {
-      type: "file_change",
-      path: sanitizeDiagnosticMessage(update.path ?? ""),
-      action: sanitizeDiagnosticMessage(update.action ?? "modify") || "modify"
-    };
-    sinks.events?.push(ev);
-    emitStreamEvent(onStream, ev);
+/**
+ * Map a stream-json event to a progress event for the companion's onStream sink.
+ * task.mjs forwards only `phase` events to the user, so tool-call starts become
+ * phase pings ("things happening"); assistant deltas become message_chunks
+ * (filtered as token noise downstream but available for richer sinks).
+ *
+ * @returns {{ type: string, [k: string]: any } | null}
+ */
+export function mapStreamEventToProgress(event) {
+  if (!event || typeof event !== "object") return null;
+  if (event.type === "tool_call" && event.subtype === "started") {
+    const kind = streamToolKind(event.tool_call);
+    return { type: "phase", message: `Cursor: ${sanitizeDiagnosticMessage(kind) || "tool"}`, phase: kind };
   }
+  if (event.type === "assistant") {
+    const text = extractAssistantText(event);
+    if (text) return { type: "message_chunk", text };
+  }
+  return null;
+}
+
+// ─── Output parsing (pure) ─────────────────────────────────────────────────────
+
+// A completed tool-call counts as a file change when its key carries an edit
+// verb AND it targets a path. This is POSITIVE matching — not a read-pattern veto
+// — so edit tools whose names contain "search" (e.g. `search_replace`) are not
+// misclassified as reads. The path requirement filters non-file tools that happen
+// to match a verb (e.g. `create_chat`, which has no path). Read/search/grep/glob
+// tool keys carry no edit verb, so they never match.
+const EDIT_TOOL_PATTERN = /(write|edit|create|delete|move|rename|patch|replace)/i;
+
+/** Derive file changes from completed edit tool_call events that target a path. */
+export function deriveFileChanges(events) {
+  const out = [];
+  const seen = new Set();
+  for (const e of events ?? []) {
+    if (e?.type !== "tool_call" || e.subtype !== "completed") continue;
+    const tc = e.tool_call;
+    if (!tc || typeof tc !== "object") continue;
+    const key = Object.keys(tc)[0] ?? "";
+    if (!EDIT_TOOL_PATTERN.test(key)) continue;
+    const inner = tc[key] ?? {};
+    const path = inner.args?.path ?? inner.result?.success?.path ?? null;
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    const action = /delete/i.test(key) ? "delete" : /create/i.test(key) ? "create" : "modify";
+    out.push({ path, action });
+  }
+  return out;
+}
+
+/** Derive shell command executions from completed shell tool_call events. */
+export function deriveCommandExecutions(events) {
+  const out = [];
+  for (const e of events ?? []) {
+    if (e?.type !== "tool_call" || e.subtype !== "completed") continue;
+    const tc = e.tool_call;
+    const key = tc && typeof tc === "object" ? Object.keys(tc)[0] : null;
+    if (key !== "shellToolCall") continue;
+    const command = tc.shellToolCall?.args?.command ?? "";
+    out.push({ command });
+  }
+  return out;
+}
+
+/** Lightweight tool-call list (name only) from completed tool_call events. */
+export function deriveToolCalls(events) {
+  const out = [];
+  for (const e of events ?? []) {
+    if (e?.type !== "tool_call" || e.subtype !== "completed") continue;
+    out.push({ name: streamToolKind(e.tool_call) });
+  }
+  return out;
+}
+
+function firstSessionId(events) {
+  for (const e of events ?? []) {
+    if (e && typeof e === "object" && e.session_id) return e.session_id;
+  }
+  return null;
+}
+
+/** Parse the single result object emitted by `--output-format json`. */
+export function parseJsonResult(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return null;
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj && typeof obj === "object") return obj;
+  } catch {
+    // Fall through to a line scan for the result object.
+  }
+  for (const line of trimmed.split(/\r?\n/).reverse()) {
+    const l = line.trim();
+    if (!l.startsWith("{")) continue;
+    try {
+      const obj = JSON.parse(l);
+      if (obj?.type === "result") return obj;
+    } catch {
+      // keep scanning
+    }
+  }
+  return null;
+}
+
+/**
+ * Normalize a finished headless run into the adapter result shape. Pure: takes
+ * the collected output and returns what invoke() resolves with.
+ *
+ * IMPORTANT: startup/validation errors (bad model, auth) print plain text to
+ * stderr with a non-zero exit code and produce NO json envelope — so we branch
+ * on exit code AND on the parsed result, never on the result alone.
+ *
+ * @returns {{ sessionId: string|null, text: string, error: object|null, status: number, fileChanges: Array, commandExecutions: Array, toolCalls: Array }}
+ */
+export function normalizeHeadlessOutcome({ events = [], stdoutText = "", stderr = "", exitCode = 0, outputFormat = "json" } = {}) {
+  const resultObj = outputFormat === "stream-json"
+    ? (events.filter((e) => e?.type === "result").pop() ?? null)
+    : parseJsonResult(stdoutText);
+
+  const fileChanges = deriveFileChanges(events);
+  const commandExecutions = deriveCommandExecutions(events);
+  const toolCalls = deriveToolCalls(events);
+
+  if (!resultObj) {
+    const message = (stderr || "").trim()
+      || (stdoutText || "").trim()
+      || `Cursor produced no result (exit ${exitCode}).`;
+    return { sessionId: firstSessionId(events), text: "", error: { message }, status: exitCode || 1, fileChanges, commandExecutions, toolCalls };
+  }
+
+  const text = typeof resultObj.result === "string" ? resultObj.result : "";
+  const sessionId = resultObj.session_id ?? firstSessionId(events) ?? null;
+  const isError = Boolean(resultObj.is_error) || exitCode !== 0;
+  const error = isError
+    ? { message: text || (stderr || "").trim() || "Cursor reported an error." }
+    : null;
+  const status = isError ? (exitCode || 1) : 0;
+
+  return { sessionId, text, error, status, fileChanges, commandExecutions, toolCalls };
 }
 
 // ─── Availability & Auth ──────────────────────────────────────────────────────
@@ -262,176 +402,122 @@ export function getCursorAuthStatus() {
   }
 }
 
-// ─── ACP Operations ───────────────────────────────────────────────────────────
+// ─── Headless turn ─────────────────────────────────────────────────────────────
 
 /**
- * Run a prompt through Cursor ACP and capture the result.
+ * Run a single prompt through Cursor headless print mode and capture the result.
+ * The prompt is written to stdin (newline-safe). For write roles we stream-parse
+ * NDJSON and surface progress via onStream; for read-only roles we collect the
+ * single json result. The execution mode (agent vs ask) is derived from
+ * `options.role` via isReadOnlyRole; `options.write` is accepted for caller
+ * symmetry but is not read here.
  *
  * @param {string} cwd
- * @param {string} prompt  — should already have role prefix applied via buildPrompt()
- * @param {{ model?: string, role?: string, sessionId?: string, env?: NodeJS.ProcessEnv, onNotification?: (n: any) => void, onStream?: (event: any) => void }} [options]
- * @returns {Promise<{ sessionId: string | null, text: string, chunkCount: number, chunkChars: number, toolCalls: Array<any>, fileChanges: Array<any>, error: unknown }>}
+ * @param {string} prompt
+ * @param {{ model?: string, role?: string, write?: boolean, sessionId?: string|null, env?: NodeJS.ProcessEnv, onStream?: (event: any) => void, outputFormat?: string }} [options]
+ * @returns {Promise<{ sessionId: string|null, text: string, error: object|null, status: number, fileChanges: Array, commandExecutions: Array, toolCalls: Array }>}
  */
-export async function runAcpPromptCursor(cwd, prompt, options = {}) {
-  const sinks = createNotificationSinks();
-  const role = options.role ?? "writer";
-  const fullPrompt = buildPrompt(role, prompt);
-
-  const notificationHandler = (notification) => {
-    dispatchOneNotification(notification, sinks, options.onStream);
-    if (options.onNotification) {
-      options.onNotification(notification);
-    }
-  };
-
-  const diagnosticHandler = (payload) => {
-    if (options.onDiagnostic) {
-      try {
-        options.onDiagnostic(payload);
-      } catch {
-        // Best-effort.
-      }
-    }
-  };
-
-  // Surface the 2026.04.17 regression once if detected.
-  maybeWarnAboutCursorVersion(getCursorAvailability().version);
-
-  const cli = findCursorBinary();
-  const client = new SpawnedAcpClient(cwd, {
-    command: cli,
-    // --yolo (alias for --force): force-allow commands without per-tool prompts
-    // in interactive mode. Cursor staff confirmed it does NOT apply to ACP-mode
-    // tool gates, but it's harmless. We dropped --approve-mcps which was
-    // confirmed dead in ACP mode per:
-    //   https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823
-    args: ["--yolo", "acp"],
-    env: options.env ?? process.env,
-    onNotification: notificationHandler,
-    onDiagnostic: diagnosticHandler,
-    onRequest: buildAutoApproveRequestHandler()
+export async function runHeadlessCursorTurn(cwd, prompt, options = {}) {
+  const role = options.role ?? "delegate";
+  const outputFormat = options.outputFormat ?? headlessOutputFormat(role);
+  const args = buildHeadlessArgs({
+    role,
+    model: options.model,
+    sessionId: options.sessionId,
+    cwd,
+    outputFormat
   });
+  const cli = findCursorBinary();
+  if (!cursorVersionProbed) {
+    cursorVersionProbed = true;
+    maybeWarnAboutCursorVersion(getCursorAvailability().version);
+  }
 
-  const mcpServers = buildStandardMcpServers();
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
 
-  try {
-    await client.initialize();
-
-    let sessionId = options.sessionId ?? null;
-    // Cursor advertises its selectable model IDs in the session/new response
-    // (models.availableModels[].modelId, e.g. "claude-sonnet-4-6[thinking=true,
-    // context=200k,effort=medium]"). We capture them so set_config_option below
-    // can resolve a user-friendly --model name to the exact bracketed modelId
-    // the server requires.
-    let availableModels = [];
-    if (sessionId) {
-      const loaded = await client.request("session/load", { sessionId, cwd, mcpServers });
-      availableModels = loaded?.models?.availableModels ?? [];
-    } else {
-      const session = await client.request("session/new", { cwd, mcpServers });
-      sessionId = session?.sessionId ?? null;
-      availableModels = session?.models?.availableModels ?? [];
+    let child;
+    try {
+      child = spawnCommand(cli, args, {
+        cwd,
+        env: buildSpawnEnvironment(options.env ?? process.env),
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true
+      });
+    } catch (error) {
+      finish({ sessionId: null, text: "", error, status: 1, fileChanges: [], commandExecutions: [], toolCalls: [] });
+      return;
     }
 
-    // Explicitly set the ACP mode based on the role. Map:
-    //   writer / debugger → "agent" (full tool access)
-    //   planner           → "plan"  (Plan mode, read-only design)
-    //   ask               → "ask"   (read-only Q&A)
-    {
-      const role = options.role ?? "writer";
-      const modeId =
-        role === "planner" ? "plan" :
-        role === "ask" ? "ask" :
-        "agent";
-      try {
-        await client.request("session/set_mode", { sessionId, modeId });
-      } catch (error) {
-        process.stderr.write(`Warning: could not set Cursor mode to ${modeId}: ${error?.message ?? error}\n`);
-      }
-    }
+    const events = [];
+    let stdoutText = "";
+    let stderrText = "";
 
-    if (options.model) {
-      // Cursor 2026.04.13+ ignores session/new.model and session/set_model.
-      // The working path is session/set_config_option, applied after the
-      // session exists. Verified live against agent 2026.05.01 via ACP_TRACE:
-      //   - the param is `configId` (NOT `key`); sending `key` yields
-      //     -32603 with data path ["configId"] "Invalid input".
-      //   - `value` must be a full advertised modelId, e.g.
-      //     "claude-sonnet-4-6[thinking=true,context=200k,effort=medium]" — the
-      //     bare name "claude-sonnet-4-6" is rejected with -32602 "Invalid
-      //     model value". So we resolve options.model against the session's
-      //     advertised models (exact modelId, then name, then prefix-before-"[").
-      //   - the result echoes the applied value at
-      //     configOptions.find(o => o.id === "model").currentValue (there is no
-      //     top-level currentValue/value field), which we read back and compare.
-      const requested = String(options.model);
-      const match =
-        availableModels.find((m) => m?.modelId === requested) ??
-        availableModels.find((m) => m?.name === requested) ??
-        availableModels.find((m) => String(m?.modelId ?? "").split("[")[0] === requested);
-      const modelValue = match?.modelId ?? requested;
-      try {
-        const res = await client.request("session/set_config_option", {
-          sessionId,
-          configId: "model",
-          value: modelValue
-        });
-        const modelOption = Array.isArray(res?.configOptions)
-          ? res.configOptions.find((o) => o?.id === "model")
-          : null;
-        const applied = modelOption?.currentValue ?? res?.currentValue ?? res?.value ?? null;
-        if (applied && String(applied) !== String(modelValue)) {
-          process.stderr.write(`Warning: Cursor reported model "${applied}" after requesting "${modelValue}".\n`);
+    if (outputFormat === "stream-json") {
+      const rl = readline.createInterface({ input: child.stdout });
+      rl.on("line", (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        let evt;
+        try {
+          evt = JSON.parse(trimmed);
+        } catch {
+          return;
         }
-      } catch (error) {
-        process.stderr.write(`Warning: could not set Cursor model to ${options.model}: ${error?.message ?? error}\n`);
-      }
+        events.push(evt);
+        const progress = mapStreamEventToProgress(evt);
+        if (progress) emitStreamEvent(options.onStream, progress);
+      });
+    } else if (child.stdout) {
+      child.stdout.on("data", (chunk) => {
+        stdoutText += chunk.toString();
+      });
     }
 
-    const result = await client.request("session/prompt", {
-      sessionId,
-      prompt: [{ type: "text", text: fullPrompt }]
+    if (child.stderr) {
+      child.stderr.on("data", (chunk) => {
+        stderrText += chunk.toString();
+      });
+    }
+
+    child.on("error", (error) => {
+      finish({ sessionId: null, text: "", error, status: 1, fileChanges: [], commandExecutions: [], toolCalls: [] });
     });
 
-    const text = sinks.textChunks.join("");
+    child.on("close", (code) => {
+      finish(normalizeHeadlessOutcome({ events, stdoutText, stderr: stderrText, exitCode: code ?? 0, outputFormat }));
+    });
 
-    return {
-      sessionId,
-      text,
-      chunkCount: sinks.chunkCount,
-      chunkChars: sinks.chunkChars,
-      toolCalls: sinks.toolCalls,
-      fileChanges: sinks.fileChanges,
-      error: null
-    };
-  } catch (error) {
-    return {
-      sessionId: null,
-      text: sinks.textChunks.join(""),
-      chunkCount: sinks.chunkCount,
-      chunkChars: sinks.chunkChars,
-      toolCalls: sinks.toolCalls,
-      fileChanges: sinks.fileChanges,
-      error
-    };
-  } finally {
-    await client.close();
-  }
+    // Deliver the prompt on stdin (newline-safe; avoids cmd.exe arg quoting).
+    try {
+      if (child.stdin) {
+        child.stdin.write(prompt ?? "");
+        child.stdin.end();
+      }
+    } catch {
+      // stdin may already be closed if the child errored on spawn.
+    }
+  });
 }
 
 /**
- * Interrupt an active Cursor ACP session (best-effort; Cursor may not implement cancel).
+ * Cancel a Cursor headless job. The authoritative cancellation is the
+ * companion's process-tree kill of the job's pid (handleCancel); this reports
+ * the mechanism so the contract member is honored.
  *
  * @param {string} jobId
- * @returns {Promise<{ attempted: boolean, interrupted: boolean, transport: string | null, detail: string }>}
  */
-export async function interruptAcpPromptCursor(jobId) {
-  // Cursor ACP does not currently expose a cancel endpoint; return a no-op result.
+export async function cancelHeadlessCursor(jobId) {
   return {
-    attempted: false,
+    attempted: true,
     interrupted: false,
-    transport: null,
-    detail: `Cancel not implemented for Cursor ACP (jobId: ${jobId}).`
+    transport: "process-tree",
+    detail: `Cursor headless jobs are cancelled by killing the process tree (job ${jobId}).`
   };
 }
 
@@ -441,7 +527,7 @@ export const adapter = {
   name: "cursor",
   isAvailable: getCursorAvailability,
   isAuthenticated: getCursorAuthStatus,
-  invoke: runAcpPromptCursor,
-  cancel: interruptAcpPromptCursor,
+  invoke: runHeadlessCursorTurn,
+  cancel: cancelHeadlessCursor,
   getSession: undefined
 };

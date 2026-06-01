@@ -9,6 +9,7 @@ import {
   buildAutonomousRawOutput,
   buildTaskRunMetadata,
   computeTaskFingerprint,
+  evaluateAutonomousStop,
   findActiveDuplicateBackgroundTask,
   getTaskDedupWindowMs,
   normalizeMaxTurns
@@ -92,6 +93,93 @@ test("buildAutonomousRawOutput emits the matching footer per stopReason", () => 
     { stopReason: "single-turn", turnCount: 1, maxTurns: 1 }
   );
   assert.ok(!none.includes("---"));
+});
+
+test("buildAutonomousRawOutput error footer honors a custom cliLabel", () => {
+  const codex = buildAutonomousRawOutput(
+    [{ turn: 1, message: "x" }],
+    { stopReason: "error", turnCount: 1, maxTurns: 30 }
+  );
+  assert.match(codex, /Codex returned an error/);
+  const cursor = buildAutonomousRawOutput(
+    [{ turn: 1, message: "x" }],
+    { stopReason: "error", turnCount: 1, maxTurns: 30, cliLabel: "Cursor" }
+  );
+  assert.match(cursor, /Cursor returned an error/);
+});
+
+// ── evaluateAutonomousStop (shared codex/cursor stop ladder) ───────────────────
+
+test("evaluateAutonomousStop: non-autonomous run always stops after one turn", () => {
+  assert.equal(
+    evaluateAutonomousStop({ status: 0, finalMessage: "anything" }, { untilDone: false, turnCount: 1, maxTurns: 1 }),
+    "single-turn"
+  );
+});
+
+test("evaluateAutonomousStop: a non-zero status stops with 'error' before anything else", () => {
+  // Error precedence: even with a PLAN COMPLETE line present, a failed turn is an error.
+  assert.equal(
+    evaluateAutonomousStop(
+      { status: 1, finalMessage: "PLAN COMPLETE" },
+      { untilDone: true, turnCount: 2, maxTurns: 30 }
+    ),
+    "error"
+  );
+});
+
+test("evaluateAutonomousStop: a PLAN COMPLETE line stops with 'plan-complete'", () => {
+  assert.equal(
+    evaluateAutonomousStop(
+      { status: 0, finalMessage: "did the work\nPLAN COMPLETE\n" },
+      { untilDone: true, turnCount: 1, maxTurns: 30 }
+    ),
+    "plan-complete"
+  );
+  // plan-complete is checked before the max-turns ceiling.
+  assert.equal(
+    evaluateAutonomousStop(
+      { status: 0, finalMessage: "PLAN COMPLETE" },
+      { untilDone: true, turnCount: 5, maxTurns: 5 }
+    ),
+    "plan-complete"
+  );
+});
+
+test("evaluateAutonomousStop: hitting the max-turns ceiling stops with 'max-turns'", () => {
+  assert.equal(
+    evaluateAutonomousStop(
+      { status: 0, finalMessage: "still going", fileChanges: [{ path: "a" }] },
+      { untilDone: true, turnCount: 3, maxTurns: 3 }
+    ),
+    "max-turns"
+  );
+});
+
+test("evaluateAutonomousStop: no edits and no commands from turn 2+ stops with 'no-progress'", () => {
+  assert.equal(
+    evaluateAutonomousStop(
+      { status: 0, finalMessage: "thinking out loud", fileChanges: [], commandExecutions: [] },
+      { untilDone: true, turnCount: 2, maxTurns: 30 }
+    ),
+    "no-progress"
+  );
+  // Progress (a file change) keeps the loop going.
+  assert.equal(
+    evaluateAutonomousStop(
+      { status: 0, finalMessage: "edited", fileChanges: [{ path: "a" }], commandExecutions: [] },
+      { untilDone: true, turnCount: 2, maxTurns: 30 }
+    ),
+    null
+  );
+  // The no-progress detector does not fire on the very first turn.
+  assert.equal(
+    evaluateAutonomousStop(
+      { status: 0, finalMessage: "warming up", fileChanges: [], commandExecutions: [] },
+      { untilDone: true, turnCount: 1, maxTurns: 30 }
+    ),
+    null
+  );
 });
 
 test("buildTaskRunMetadata detects the stop-gate review marker when not resuming", () => {

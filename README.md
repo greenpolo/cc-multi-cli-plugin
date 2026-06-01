@@ -10,7 +10,7 @@
 
 If you have access to multiple AI coding CLIs (Codex, Cursor, Antigravity), this plugin lets Claude Code delegate to whichever one is best for the task — without you having to switch tools or run them yourself.
 
-Each CLI is wired up through its native transport (Codex via ASP, Cursor via ACP, Antigravity via the Antigravity 2.0 desktop Language Server). This lets you pick and choose the best features from each — like `/cursor:debug` for hypothesis-driven debugging, `/codex:review` for code review, or `/antigravity:research` for deep research. Sessions, streaming, tool calls, and background jobs all work normally.
+Each CLI is wired up through its native transport (Codex via ASP, Cursor via headless `agent -p`, Antigravity via its headless `agy` CLI). This lets you pick and choose the best features from each — like `/cursor:delegate` for fast implementation, `/codex:review` for code review, or `/antigravity:research` for deep research. Sessions, streaming, tool calls, and background jobs all work normally.
 
 ## Install
 
@@ -44,11 +44,11 @@ Provider commands live under each CLI's namespace; the cross-cutting `/multi:*` 
 | `/codex:rescue` | Hand a stuck or open-ended problem to Codex for an independent investigation |
 | `/codex:review` | Codex code review of your working tree or a branch (read-only) |
 | `/codex:adversarial-review` | Adversarial design/code review — challenges the approach, not just the diff (read-only) |
-| `/cursor:execute` | Delegate a plan or plan step to Cursor (Agent mode) |
-| `/cursor:plan` | Ask Cursor to design an approach (Plan mode, read-only) |
-| `/cursor:debug` | Hand a hard bug to Cursor's hypothesis-driven Debug mode |
-| `/antigravity:research` | Deep external research with Antigravity (Gemini 3.1 Pro, read-only) |
-| `/antigravity:explore` | Fast codebase exploration with Antigravity (Gemini 3.5 Flash, read-only) |
+| `/cursor:delegate` | Delegate an implementation task or plan step to Cursor (agentic; writes code; supports `--until-done`) |
+| `/cursor:research` | Read-only external web/documentation research via Cursor |
+| `/cursor:explore` | Read-only codebase exploration via Cursor |
+| `/antigravity:research` | Deep external research with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
+| `/antigravity:explore` | Fast codebase exploration with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
 | `/multi:setup` | One-shot wizard — detects CLIs, configures Exa + Context7 MCPs |
 | `/multi:status` | Show active and recent background jobs for this repo |
 | `/multi:result` | Show the stored final output for a finished job |
@@ -62,15 +62,13 @@ All of them are interchangeable, and can be altered to whatever you want using t
 
 These are upstream CLI quirks and current limitations. If you hit something not listed, set `ACP_TRACE=1` and check stderr — that reveals which JSON-RPC traffic is or isn't crossing the wire (ACP CLIs only; Antigravity does not use ACP).
 
-- **Cursor `agent acp` 2026.04.17 — Terminal/MCP regression (FIXED upstream).** Older builds could stick the `Terminal` (execute) tool at `in_progress` forever and silently fail MCP tools. This was fixed in Cursor 2026.04.13+ (forum #155544/#155516), so the plugin no longer injects a `cli-config.json` allowlist. If you're stuck on a broken build, pin a known-good one: `export CURSOR_AGENT_PATH=<path-to-good-build>`. ([forum](https://forum.cursor.com/t/cursor-agent-cli-mcp-tool-calls-silently-stopped-working-in-2026-04-17/158988))
+- **Cursor runs in headless `agent -p` mode** (not ACP). The adapter delivers the prompt on stdin, selects the model with `--model` (default `auto`), and parses `json`/`stream-json` output. This sidesteps the older ACP-mode bugs (silent MCP drop, model-hint quirks). MCP servers come from Cursor's own `~/.cursor/mcp.json`, which `/multi:setup` maintains.
 
-- **Cursor `agent acp` — `mcpServers` ignored.** MCP servers passed via ACP `session/new` are silently dropped in `agent acp` mode (per Cursor staff). The plugin falls back to Cursor's own `~/.cursor/mcp.json`. ([forum](https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823))
+- **Cursor's shell is slow/unreliable on Windows.** Cursor's terminal tool can stall or wait out a per-command timeout on Windows (host-PATH/WSL, open upstream). So `/cursor:delegate` does **not** run build/test verification itself — it lists the commands in a `## Verification` block and Claude runs them. File writes and web/codebase reads are unaffected.
 
-- **Cursor model selection via `session/set_config_option`.** Cursor 2026.04.13+ ignores model hints in `session/new` and `session/set_model`; the adapter sets the model with `session/set_config_option` after the session exists. ([forum #157312](https://forum.cursor.com/))
+- **Antigravity runs via the headless `agy` CLI (experimental).** Install the `agy` CLI (https://antigravity.google) and run `agy` once interactively to sign in — the desktop app is **not** required. `/multi:setup` reports whether `agy` is detected.
 
-- **Antigravity requires the desktop app to be running.** Antigravity has no command-line binary — it is reached by attaching to the running **Antigravity 2.0 desktop app's** Language Server. You must install Antigravity (https://antigravity.google), sign in, and keep the app open; `/multi:setup` reports whether it's detected. If the desktop isn't running, `/antigravity:*` commands report "not detected."
-
-- **Antigravity transport is Phase 2 / Windows-first.** This release ships a **stub** Antigravity adapter: detection works (Windows process discovery), but the Language Server transport (ConnectRPC live-attach) is not implemented yet, so `/antigravity:*` commands return a clean "not implemented (Phase 2)" message. macOS/Linux discovery also lands in Phase 2.
+- **Antigravity reads its answer from a transcript, not stdout.** `agy`'s headless print mode (`agy -p`) currently emits nothing to stdout when piped (an upstream bug, gemini-cli#27466, unfixed as of agy 1.0.3), so the adapter recovers the model's answer from `agy`'s on-disk conversation transcript. Consequences: read-only `research`/`explore` only (no write-`delegate`), the model is fixed to **Gemini 3.5 Flash** (no per-call `--model`), and there are no token-usage metrics on this path. This is a deliberate workaround pending the upstream stdout fix.
 
 When upstream CLIs change behavior, the plugin's adapters absorb it — these notes track the current state.
 

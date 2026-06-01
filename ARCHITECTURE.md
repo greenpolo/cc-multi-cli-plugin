@@ -24,8 +24,8 @@ lib/adapters/codex.mjs (adapter.invoke)      adapter speaks the CLI's native pro
 app-server broker  ──►  codex app-server  ──►  Codex model
 ```
 
-The same chain holds for `cursor` (ACP transport) and `antigravity` (LS, stubbed),
-just with a different adapter and transport.
+The same chain holds for `cursor` (headless `agent -p`) and `antigravity` (headless
+`agy -p`), just with a different adapter and transport.
 
 ## Companion subcommands
 
@@ -87,8 +87,11 @@ with no in-flight turn and no activity for `CODEX_COMPANION_BROKER_IDLE_MS`
 ## Transports at a glance
 
 - **Codex** — App Server Protocol via the broker daemon (`lib/app-server.mjs`).
-- **Cursor** — Agent Client Protocol (`lib/acp-client.mjs`), spawning `agent acp`.
-  On Windows, terminal/execute tool calls are unreliable (WSL-bash auto-detect);
-  `cursor-execute` is scoped to file ops.
-- **Antigravity** — Language Server live-attach. Phase-1 stub; `invoke` returns a
-  structured not-implemented error in the same shape as the others.
+- **Cursor** — headless print mode (`lib/adapters/cursor.mjs`), spawning `agent -p`
+  with the prompt on stdin and parsing `json`/`stream-json` output. On Windows,
+  Cursor's shell tool is slow/unreliable (host-PATH/WSL), so `/cursor:delegate`
+  defers build/test verification to the caller.
+- **Antigravity** — headless `agy -p` (`lib/adapters/antigravity.mjs`). `agy`'s
+  headless stdout is empty upstream (gemini-cli#27466), so the adapter learns the
+  conversation id from a per-invocation `--log-file` and recovers the answer from
+  the on-disk transcript JSONL. Read-only research/explore only (EXPERIMENTAL).

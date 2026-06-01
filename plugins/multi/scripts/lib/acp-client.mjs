@@ -433,7 +433,7 @@ function resolveCliBinary(command) {
 // backfilled for any missing critical var. Idempotent — vars that are already
 // set pass through unchanged.
 
-function buildSpawnEnvironment(baseEnv) {
+export function buildSpawnEnvironment(baseEnv) {
   if (process.platform !== "win32") {
     return baseEnv ?? process.env;
   }

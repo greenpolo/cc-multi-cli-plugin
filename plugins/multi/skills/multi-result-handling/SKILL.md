@@ -17,7 +17,7 @@ When a `multi:*` subagent returns helper output (Codex, Cursor, Antigravity via 
 
 ## When the helper's output is messy
 
-Some upstream CLIs (notably Cursor in `agent acp` mode) stream chain-of-thought tokens interleaved with the final answer. When you see a mix of reasoning prose and a structured final report:
+Some upstream CLIs stream chain-of-thought tokens interleaved with the final answer. When you see a mix of reasoning prose and a structured final report:
 
 - Present the structured final report as the answer.
 - Optionally quote 1–2 short lines of reasoning if they explain a non-obvious choice — never paraphrase the whole stream.
@@ -37,7 +37,7 @@ Some upstream CLIs (notably Cursor in `agent acp` mode) stream chain-of-thought 
 
 ## Review-style output
 
-For research, review, or diagnosis output from `multi:antigravity-researcher`, `multi:codex-review`, `multi:antigravity-explorer`, `multi:cursor-debugger`, etc.:
+For research, review, or diagnosis output from `multi:antigravity-researcher`, `multi:codex-review`, `multi:antigravity-explorer`, `multi:cursor-research`, etc.:
 
 - Present findings first, ordered by severity if the helper provided severity labels.
 - If there are no findings, say that explicitly and keep the residual-risk note brief.

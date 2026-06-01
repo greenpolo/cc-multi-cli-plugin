@@ -28,19 +28,19 @@ Run each probe via Bash:
 
 - `codex --version`
 - Cursor: the binary is named `agent` (not `cursor-agent`). Try `agent --version` first. On Windows the installer does NOT add it to PATH — always fall back to `$LOCALAPPDATA/cursor-agent/agent.cmd --version` (a.k.a. `C:/Users/<name>/AppData/Local/cursor-agent/agent.cmd`). Remember whichever path works; use it throughout the rest of setup.
-- Antigravity: there is no CLI binary to probe. Antigravity runs through the **Antigravity 2.0 desktop app's Language Server**, not a command-line tool. The companion's setup probe (`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" setup --json`) reports whether a running Antigravity desktop is detected. You may surface that detection result here, but do not try a `--version` probe — it doesn't exist.
+- Antigravity: the binary is `agy` (Google's Antigravity CLI). Try `agy --version`. On Windows the installer drops it at `$LOCALAPPDATA/agy/bin/agy.exe` and may not add it to PATH. The companion's setup probe (`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" setup --json`) reports whether `agy` is detected. (EXPERIMENTAL; read-only research/explore only.)
 
 Tabulate which succeed. For each failure, tell the user the install command:
 
 - Codex: `npm install -g @openai/codex`
 - Cursor: `curl https://cursor.com/install -fsS | bash` (Unix) or `irm 'https://cursor.com/install?win32=true' | iex` (Windows PowerShell). After install, the binary lives at `$LOCALAPPDATA/cursor-agent/agent.cmd` on Windows and is not on PATH.
-- Antigravity: install the **Antigravity 2.0 desktop app** from https://antigravity.google, sign in, and keep it running. There is no `npm`/`curl` install — it's a desktop application, and detection only works while it is running (Windows-first in this release; the LS transport itself lands in Phase 2).
+- Antigravity: install the **`agy` CLI** from https://antigravity.google, then run `agy` once interactively to sign in with your Google account. The desktop app is not required.
 
 Continue only with the CLIs that are installed. Do not block on missing ones.
 
-**No CLIs detected:** if neither Codex nor Cursor is installed and the Antigravity desktop is not running, ABORT setup before any further step. Do not prompt for API keys, do not install plugins, do not configure MCPs. Print:
+**No CLIs detected:** if none of Codex, Cursor, or `agy` is installed, ABORT setup before any further step. Do not prompt for API keys, do not install plugins, do not configure MCPs. Print:
 
-> *"None of Codex, Cursor, or Antigravity is available. Install at least one (commands above; Antigravity must be running) and re-run `/multi:setup`. Nothing was changed."*
+> *"None of Codex, Cursor, or Antigravity is available. Install at least one (commands above) and re-run `/multi:setup`. Nothing was changed."*
 
 Then exit. The wizard has no productive work without at least one CLI to configure.
 
@@ -59,7 +59,7 @@ For each detected CLI, check the current install state FIRST, then act:
 3. **Install only the plugins the user accepted.** Read the actual command list from `marketplace.json` plus the live filesystem (`ls plugins/<cli>/commands/*.md`) — do NOT hardcode a list here, since the customize skill and `multi-cli-anything` skill add commands routinely. As of v3.0.0 defaults, the shipped commands are:
 
    - Codex → `claude plugin install codex@cc-multi-cli-plugin` (adds `/codex:execute`, `/codex:rescue`, `/codex:review`, `/codex:adversarial-review`)
-   - Cursor → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:execute`, `/cursor:plan`, `/cursor:debug`)
+   - Cursor → `claude plugin install cursor@cc-multi-cli-plugin` (adds `/cursor:delegate`, `/cursor:research`, `/cursor:explore`)
    - Antigravity → `claude plugin install antigravity@cc-multi-cli-plugin` (adds `/antigravity:research`, `/antigravity:explore`)
 
    When announcing what each install will provide, list the actual `commands/*.md` files in that plugin directory rather than the static list above (which can drift).
@@ -74,7 +74,7 @@ For each detected CLI, check the current install state FIRST, then act:
 
 ## Step 1.7 — Offer to add CLI binaries to the user's PATH (optional)
 
-**Purpose:** Pure UX. The plugin works regardless — each adapter resolves binaries via absolute path. This step is for users who want to type `agent` / `codex` from any terminal without typing a full path. (Antigravity has no CLI binary — skip it here; it's reached through the desktop app's Language Server, not PATH.)
+**Purpose:** Pure UX. The plugin works regardless — each adapter resolves binaries via absolute path. This step is for users who want to type `agent` / `codex` / `agy` from any terminal without typing a full path. (Antigravity's `agy` may also not be on PATH on Windows; the same optional PATH treatment applies.)
 
 **For each installed CLI with a command-line binary** (Codex, Cursor), do this check:
 
@@ -138,9 +138,9 @@ For each installed CLI, check auth:
 
 - Codex: `codex login status` (NOT `codex whoami` — that doesn't exist)
 - Cursor: invoke the resolved binary path from Step 1 (NOT a literal `agent status`). On Windows that's typically `"C:/Users/<n>/AppData/Local/cursor-agent/agent.cmd" status`. Quote the path. Use the variable you stashed in Step 1 throughout the rest of the file — never assume `agent` is on PATH.
-- Antigravity: there is no CLI login command. Auth lives inside the Antigravity 2.0 desktop app — the user signs in there. The companion's setup probe reports detection only; if the desktop isn't running, tell the user to launch it and sign in. (The LS transport that would verify auth programmatically lands in Phase 2.)
+- Antigravity: sign in by running `agy` once interactively (it opens a Google OAuth browser flow; creds are stored in the OS keyring / `~/.gemini`). The companion's setup probe reports whether `agy` appears signed in; if not, tell the user to run `agy` once and sign in.
 
-If unauthenticated, give the exact login command (or, for Antigravity, "sign in via the desktop app") and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
+If unauthenticated, give the exact login command (or, for Antigravity, "run `agy` once and sign in") and use `AskUserQuestion` to ask whether to pause for the user to log in or skip that CLI.
 
 ## Step 3 — Collect API keys (Exa required, Context7 optional)
 
@@ -203,7 +203,7 @@ curl -sS -X POST https://api.exa.ai/search \
 ```
 Expected: `200`. 401/403 → key is bad; ask for a correct one or Skip.
 
-**Context7:** do NOT validate via HTTP probe. The previously-suggested `context7.com/api/v1/health` endpoint returns 400 even with a valid key (the endpoint shape is wrong / has moved). We don't have a reliable cheap probe for Context7 keys right now. Just trust the user's input and let key validity surface on first real use of `/codex:rescue` / `/cursor:plan` (or whichever command first invokes the MCP). The cost of a wrong-key Context7 is one failed call, recoverable; the cost of a 400-on-every-setup-run is a bad UX every time.
+**Context7:** do NOT validate via HTTP probe. The previously-suggested `context7.com/api/v1/health` endpoint returns 400 even with a valid key (the endpoint shape is wrong / has moved). We don't have a reliable cheap probe for Context7 keys right now. Just trust the user's input and let key validity surface on first real use of `/codex:rescue` / `/cursor:research` (or whichever command first invokes the MCP). The cost of a wrong-key Context7 is one failed call, recoverable; the cost of a 400-on-every-setup-run is a bad UX every time.
 
 If you want to confirm the key looks like the right SHAPE before writing it, do a lightweight format check: `ctx7sk-` prefix + UUID-ish body. That catches typos without burning a real probe.
 
@@ -267,7 +267,7 @@ For each installed, authenticated CLI, do the following:
 1. **Locate the config file.**
    - Codex: `~/.codex/config.toml` (create if missing with `[mcp_servers]` section)
    - Cursor: `~/.cursor/mcp.json` (create if missing as `{ "mcpServers": {} }`)
-   - Antigravity: **no MCP config file** — MCP servers are configured inside the Antigravity 2.0 desktop app, not by this wizard. Skip Antigravity in this step (and in Steps 5–6's MCP verification/inventory). The Exa/Context7 wiring below applies only to Codex and Cursor.
+   - Antigravity (`agy`): MCP servers live in `agy`'s own Gemini-CLI config (`~/.gemini/settings.json` → `mcpServers`), not a wizard-managed file. Skip Antigravity in this step (and in Steps 5–6's MCP verification/inventory). The Exa/Context7 wiring below applies only to Codex and Cursor.
 
 2. **Back up the existing file ONLY when an edit is about to happen.** Defer this step until after the audit (substep 3 below) determines that an edit IS required. Skipping the backup when no edit will land avoids stomping on a perfectly-good `.bak` for nothing.
 
@@ -408,7 +408,7 @@ For each MCP-configured CLI, compare the probe output against the intended-state
 
 **Time budget:** each probe should complete in < 5 seconds. If one hangs, kill it (`timeout 10 <command>` via Bash) and report as failed — don't wait 2 minutes.
 
-**Don't verify MCP server runtime reachability here.** The CLI listing each server confirms the config is valid and the CLI will spawn the server on first use. The server actually responding to queries is tested on the first real `/codex:rescue` / `/cursor:plan` / etc. invocation — not in setup.
+**Don't verify MCP server runtime reachability here.** The CLI listing each server confirms the config is valid and the CLI will spawn the server on first use. The server actually responding to queries is tested on the first real `/codex:rescue` / `/cursor:research` / etc. invocation — not in setup.
 
 ## Step 6 — Report (with key inventory + drift summary)
 
@@ -434,7 +434,7 @@ cc-multi-cli-plugin setup complete.
 Per-CLI status:
   ✓ Codex: configured (exa, context7)
   ⚠ Cursor: skipped — not authenticated (run `agent status`)
-  ⚠ Antigravity: desktop not detected — launch Antigravity 2.0 and sign in (no MCP config managed by this wizard)
+  ⚠ Antigravity: `agy` not detected — install the agy CLI and run `agy` once to sign in (no MCP config managed by this wizard)
 
 Drift cleaned this run:
   - Stripped stale _cc_multi_managed marker from cursor/exa, cursor/context7
@@ -460,7 +460,7 @@ Tracking file:
    and by future /multi:uninstall to know what to remove cleanly.)
 
 Next steps:
-  - Try `/codex:execute <task>`, `/cursor:plan <task>`, or `/antigravity:research <topic>`.
+  - Try `/codex:execute <task>`, `/cursor:delegate <task>`, or `/antigravity:research <topic>`.
   - Re-run `/multi:setup` anytime to reconfigure (idempotent: audits + reconciles drift, skips no-ops).
 ```
 

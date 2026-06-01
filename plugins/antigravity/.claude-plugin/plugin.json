@@ -1,6 +1,6 @@
 {
   "name": "antigravity",
-  "description": "Delegate research and codebase exploration to Google Antigravity (Gemini 3.x via the Antigravity 2.0 desktop Language Server). Requires the multi plugin and a running Antigravity 2.0 desktop.",
+  "description": "Delegate read-only research and codebase exploration to Google Antigravity via its headless agy CLI (Gemini 3.5 Flash). EXPERIMENTAL. Requires the multi plugin and the agy CLI installed + signed in.",
   "version": "3.0.0",
   "author": {
     "name": "greenpolo",
