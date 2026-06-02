@@ -1,0 +1,17 @@
+{
+  "name": "opencode",
+  "description": "Delegate implementation, web research, and codebase exploration to the OpenCode CLI (headless opencode run). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
+  "version": "3.0.0",
+  "author": {
+    "name": "greenpolo",
+    "url": "https://github.com/greenpolo"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude-code",
+    "opencode",
+    "delegate",
+    "research",
+    "explore"
+  ]
+}

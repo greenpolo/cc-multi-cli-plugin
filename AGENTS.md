@@ -4,7 +4,7 @@ Orientation for AI agents (Claude, Codex, Cursor) working in this repo. **Read t
 
 ## What this is
 
-`cc-multi-cli-plugin` is a Claude Code plugin that **offloads heavy coding work to external CLIs** — Codex, Cursor (headless `agent -p`), and Antigravity — so the orchestrating Claude session spends as few tokens as possible. The plugin's entire value is *token reduction by delegation*. Keep that goal central to every change.
+`cc-multi-cli-plugin` is a Claude Code plugin that **offloads heavy coding work to external CLIs** — Codex, Cursor (headless `agent -p`), Antigravity, and OpenCode (headless `opencode run --format json`) — so the orchestrating Claude session spends as few tokens as possible. The plugin's entire value is *token reduction by delegation*. Keep that goal central to every change.
 
 ## The golden rule
 
@@ -18,7 +18,7 @@ Claude does as little thinking as possible; the external CLI does the work.
 
 ```
 /codex:<cmd>  →  multi:codex-<role> (forwarder, Haiku)  →  multi-cli-companion.mjs <subcommand> --cli <name>
-              →  lib/adapters/<name>.mjs  →  (codex app-server broker | cursor headless `agent -p` | antigravity headless `agy -p`)  →  external CLI
+              →  lib/adapters/<name>.mjs  →  (codex app-server broker | cursor headless `agent -p` | antigravity headless `agy -p` | opencode headless `opencode run --format json`)  →  external CLI
 ```
 
 See `ARCHITECTURE.md` for the full picture and the job / state / broker model.
@@ -38,7 +38,7 @@ No dependencies; uses Node's built-in test runner (Node ≥ 20; repo runs on 25)
 - `plugins/multi/scripts/multi-cli-companion.mjs` — CLI entrypoint; dispatches subcommands (`task`, `review`, `adversarial-review`, `status`, `result`, `cancel`, `setup`).
 - `plugins/multi/scripts/lib/adapters/` — one adapter per CLI. Interface in `CONTRACT.md`.
 - `plugins/multi/scripts/lib/` — shared runtime: broker lifecycle, ACP client, app-server, job control, render, git.
-- `plugins/{codex,cursor,antigravity}/` — per-CLI command slices that forward into `multi`.
+- `plugins/{codex,cursor,antigravity,opencode}/` — per-CLI command slices that forward into `multi`.
 - `test/` — `unit/` (offline) + `fixtures/` (sandbox helper). `test:live` reuses `plugins/multi/scripts/test/`.
 
 ## Landmines
@@ -47,6 +47,7 @@ No dependencies; uses Node's built-in test runner (Node ≥ 20; repo runs on 25)
 - **State is per-cwd**: jobs and brokers key off the working directory; always pass `--cwd`. Parallel agents should use separate worktrees / cwds to stay isolated.
 - **`spark`** (`gpt-5.3-codex-spark`) is rejected on ChatGPT-auth Codex accounts — expect a 400; not a bug.
 - **Cursor uses headless `agent -p`** (not ACP): the prompt is delivered on stdin (newline-safe), models pass through as flat `--model` names (default `auto`), roles map to flags (`delegate`→agent+`--force --trust`, `research`/`explore`→`--mode ask --force`), and cancel is the generic process-tree kill. `--until-done` loops `--resume` turns. **Cursor's shell is slow/unreliable on Windows** (host-PATH/WSL, open upstream), so `/cursor:delegate` defers build/test verification to the caller (Claude) — file writes and web/codebase reads are unaffected.
+- **OpenCode uses headless `opencode run --format json`**: prompt on stdin, NDJSON event stream on stdout. Read-only roles (`research`, `explore`) are enforced via injected oc-* primary agents with write/edit/bash denied (no `--read-only` flag). Write roles use `--dangerously-skip-permissions`. `--until-done` is supported; `--effort` is not. Default model: `opencode/claude-opus-4-8` (Zen). **Token-offload caveat:** `anthropic/*` models = zero offload (same Claude bill). Use `opencode/*`, `openai/*`, `google/*`, etc. for real offload. Set `OPENCODE_CLI_DEFAULT_MODEL` or `OPENCODE_CLI_PATH` for overrides.
 - **Forwarders only have `Bash`** (review additionally `git`) — by design. Don't add tools.
 
 ## Conventions

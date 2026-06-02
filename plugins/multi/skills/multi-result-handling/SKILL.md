@@ -6,7 +6,7 @@ user-invocable: false
 
 # Multi-CLI Result Handling
 
-When a `multi:*` subagent returns helper output (Codex, Cursor, Antigravity via multi, or any CLI added via `multi-cli-anything`):
+When a `multi:*` subagent returns helper output (Codex, Cursor, Antigravity, OpenCode via multi, or any CLI added via `multi-cli-anything`):
 
 ## Preserving the helper's structure
 
@@ -37,7 +37,7 @@ Some upstream CLIs stream chain-of-thought tokens interleaved with the final ans
 
 ## Review-style output
 
-For research, review, or diagnosis output from `multi:antigravity-researcher`, `multi:codex-review`, `multi:antigravity-explorer`, `multi:cursor-research`, etc.:
+For research, review, or diagnosis output from `multi:antigravity-researcher`, `multi:codex-review`, `multi:antigravity-explorer`, `multi:cursor-research`, `multi:opencode-researcher`, `multi:opencode-explorer`, etc.:
 
 - Present findings first, ordered by severity if the helper provided severity labels.
 - If there are no findings, say that explicitly and keep the residual-risk note brief.

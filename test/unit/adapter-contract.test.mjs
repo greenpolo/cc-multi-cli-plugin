@@ -31,8 +31,8 @@ for (const [key, mod] of Object.entries(ADAPTERS)) {
   });
 }
 
-test("registry exposes exactly the three known adapters", () => {
-  assert.deepEqual(Object.keys(ADAPTERS).sort(), ["antigravity", "codex", "cursor"]);
+test("registry exposes exactly the four known adapters", () => {
+  assert.deepEqual(Object.keys(ADAPTERS).sort(), ["antigravity", "codex", "cursor", "opencode"]);
 });
 
 test("getAdapter resolves a known CLI and throws a clear error for an unknown one", () => {

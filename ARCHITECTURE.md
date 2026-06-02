@@ -24,8 +24,9 @@ lib/adapters/codex.mjs (adapter.invoke)      adapter speaks the CLI's native pro
 app-server broker  ──►  codex app-server  ──►  Codex model
 ```
 
-The same chain holds for `cursor` (headless `agent -p`) and `antigravity` (headless
-`agy -p`), just with a different adapter and transport.
+The same chain holds for `cursor` (headless `agent -p`), `antigravity` (headless
+`agy -p`), and `opencode` (headless `opencode run --format json`), just with a
+different adapter and transport.
 
 ## Companion subcommands
 
@@ -38,15 +39,15 @@ The same chain holds for `cursor` (headless `agent -p`) and `antigravity` (headl
 | `status` / `result` / `cancel` | Inspect / fetch / stop background jobs. |
 | `setup` | Toggle the stop-review gate and other config. |
 
-Global: `--cli <codex|cursor|antigravity>` (default `codex`), `--cwd`/`-C <dir>`.
+Global: `--cli <codex|cursor|antigravity|opencode>` (default `codex`), `--cwd`/`-C <dir>`.
 
 ## Adapter registry
 
-`multi-cli-companion.mjs` imports the three adapter modules and registers them by
-name (`{ codex, cursor, antigravity }`). `getAdapter(name)` throws a clear error
-for unknown names. Each module exports an `adapter` object — see `CONTRACT.md`.
-Adding a CLI = add a conforming adapter module + register it; the conformance test
-(`test/unit/adapter-contract.test.mjs`) enforces the shape.
+`multi-cli-companion.mjs` imports the four adapter modules and registers them by
+name (`{ codex, cursor, antigravity, opencode }`). `getAdapter(name)` throws a clear
+error for unknown names. Each module exports an `adapter` object — see `CONTRACT.md`.
+Adding a CLI = add a conforming adapter module + register it in `registry.mjs`; the
+conformance test (`test/unit/adapter-contract.test.mjs`) enforces the shape.
 
 ## Job & state model
 
@@ -95,3 +96,12 @@ with no in-flight turn and no activity for `CODEX_COMPANION_BROKER_IDLE_MS`
   headless stdout is empty upstream (gemini-cli#27466), so the adapter learns the
   conversation id from a per-invocation `--log-file` and recovers the answer from
   the on-disk transcript JSONL. Read-only research/explore only (EXPERIMENTAL).
+- **OpenCode** — headless `opencode run --format json` (`lib/adapters/opencode.mjs`),
+  spawning the npm `opencode.cmd` shim with the prompt on stdin and parsing the
+  NDJSON event stream (one JSON object per line). Read-only roles (`research`,
+  `explore`) run via injected oc-* primary agents with write/edit/bash denied
+  (OpenCode has no `--read-only` flag). Write roles use `--dangerously-skip-permissions`.
+  `--until-done` is supported; `--effort` is not. Default model: `opencode/claude-opus-4-8`
+  (Zen — billed separately). **Token-offload caveat:** `anthropic/*` models reuse the
+  Claude Code subscription and provide zero offload; real offload requires `opencode/*`,
+  `openai/*`, `google/*`, `github-copilot/*`, or `ollama/*` models.

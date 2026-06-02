@@ -8,6 +8,7 @@ import { normalizeReasoningEffort, normalizeRequestedModel } from "../task-optio
 import { firstMeaningfulLine, shorten } from "../text.mjs";
 import * as cursor from "../adapters/cursor.mjs";
 import * as antigravity from "../adapters/antigravity.mjs";
+import * as opencode from "../adapters/opencode.mjs";
 import { getAdapter } from "../adapters/registry.mjs";
 import {
   buildPersistentTaskThreadName,
@@ -220,6 +221,152 @@ export async function executeTaskRun(request) {
 
     const rawOutput = untilDone
       ? buildAutonomousRawOutput(aggregatedTurnMessages, { stopReason, turnCount, maxTurns, cliLabel: "Cursor" })
+      : (typeof lastResult?.text === "string" ? lastResult.text : "");
+    const failureMessage = formatAdapterError(lastResult?.error);
+    const touchedFiles = untilDone
+      ? [...aggregatedTouchedFiles]
+      : ((lastResult?.fileChanges ?? []).map((fc) => fc.path));
+    // Surface in-protocol errors via the rendered failure message, not a non-zero
+    // exit code — a non-zero exit trips the forwarding subagent's "if Bash fails,
+    // return nothing" rule and silently swallows the result.
+    const exitStatus = 0;
+
+    const rendered = renderTaskResult(
+      {
+        rawOutput,
+        failureMessage,
+        reasoningSummary: []
+      },
+      {
+        title: taskMetadata.title,
+        jobId: request.jobId ?? null,
+        write: Boolean(request.write)
+      }
+    );
+
+    const payload = {
+      status: exitStatus,
+      threadId: sessionId ?? null,
+      rawOutput,
+      touchedFiles,
+      reasoningSummary: [],
+      ...(untilDone ? { autonomous: { turns: turnCount, stopReason, maxTurns } } : {})
+    };
+
+    return {
+      exitStatus,
+      threadId: sessionId ?? null,
+      turnId: null,
+      payload,
+      rendered,
+      summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+      jobTitle: taskMetadata.title,
+      jobClass: "task",
+      write: Boolean(request.write)
+    };
+  }
+
+  // ── OpenCode dispatch path ──────────────────────────────────────────────────
+  // When --cli opencode is used, invoke OpenCode's headless run mode
+  // (`opencode run --format json`) via the adapter. The role
+  // (delegate/research/explore) is forwarded so the adapter can pick the right
+  // flags / oc-* read-only agent. Supports --until-done by looping headless
+  // --session resume turns on the returned sessionID, sharing the autonomous stop
+  // logic with the codex/cursor paths via evaluateAutonomousStop().
+  if (cli === "opencode") {
+    const opencodeAvail = opencode.adapter.isAvailable();
+    if (!opencodeAvail.available) {
+      throw new Error(`OpenCode CLI is not available: ${opencodeAvail.detail ?? "opencode not found"}. Install it via \`npm install -g opencode-ai\` or set OPENCODE_CLI_PATH.`);
+    }
+
+    // Resume the latest OpenCode session for this repo when asked (cli-scoped so
+    // a codex thread or cursor session is never resumed as an opencode session).
+    let resumeSessionId = null;
+    if (request.resumeLast) {
+      const latestThread = await resolveLatestTrackedTaskThread(workspaceRoot, {
+        excludeJobId: request.jobId,
+        cli: "opencode"
+      });
+      if (!latestThread) {
+        throw new Error("No previous OpenCode task session was found for this repository.");
+      }
+      resumeSessionId = latestThread.id;
+    }
+
+    if (!request.prompt && !resumeSessionId) {
+      throw new Error("Provide a prompt for OpenCode tasks, or use --resume-last.");
+    }
+
+    // Read-only roles (research/explore) are single-turn: json output with no
+    // per-turn progress to gauge, so an autonomous loop would self-stop as
+    // "no-progress" on turn 2. Restrict --until-done to write roles (delegate).
+    const untilDone = Boolean(request.untilDone) && !opencode.isReadOnlyRole(request.role);
+    const maxTurns = untilDone ? Math.max(1, request.maxTurns ?? DEFAULT_MAX_TURNS) : 1;
+    const initialPrompt = untilDone && request.prompt
+      ? buildAutonomousInitialPrompt(request.prompt)
+      : (request.prompt?.trim() || (resumeSessionId ? DEFAULT_CONTINUE_PROMPT : ""));
+
+    const streamForwarder = request.onProgress
+      ? (event) => {
+          // Only phase events reach the user; message_chunk (token-granular) is
+          // dropped as noise. The adapter emits a phase per tool-call start so
+          // the user sees "things happening".
+          if (event.type === "phase") {
+            request.onProgress({ message: event.message, phase: event.message });
+          }
+        }
+      : undefined;
+
+    let lastResult = null;
+    let sessionId = resumeSessionId;
+    const aggregatedTurnMessages = [];
+    const aggregatedTouchedFiles = new Set();
+    let stopReason = null;
+    let turnCount = 0;
+
+    while (turnCount < maxTurns) {
+      const isFirstTurn = turnCount === 0;
+      const turnPrompt = isFirstTurn ? initialPrompt : AUTONOMOUS_CONTINUATION_PROMPT;
+      const turnResumeId = isFirstTurn ? resumeSessionId : sessionId;
+
+      if (untilDone && !isFirstTurn && request.onProgress) {
+        request.onProgress({
+          message: `Autonomous turn ${turnCount + 1} of ${maxTurns}: resuming session ${sessionId}.`,
+          phase: "starting"
+        });
+      }
+
+      const turnResult = await opencode.adapter.invoke(workspaceRoot, turnPrompt, {
+        model: request.model ?? undefined,
+        role: request.role ?? "delegate",
+        write: Boolean(request.write),
+        sessionId: turnResumeId,
+        onStream: streamForwarder
+      });
+
+      turnCount += 1;
+      lastResult = turnResult;
+      sessionId = turnResult.sessionId ?? sessionId;
+      for (const fc of turnResult.fileChanges ?? []) {
+        if (fc?.path) aggregatedTouchedFiles.add(fc.path);
+      }
+      const finalMessage = typeof turnResult.text === "string" ? turnResult.text : "";
+      aggregatedTurnMessages.push({ turn: turnCount, message: finalMessage, status: turnResult.status });
+
+      stopReason = evaluateAutonomousStop(
+        {
+          status: turnResult.status,
+          finalMessage,
+          fileChanges: turnResult.fileChanges,
+          commandExecutions: turnResult.commandExecutions
+        },
+        { untilDone, turnCount, maxTurns }
+      );
+      if (stopReason) break;
+    }
+
+    const rawOutput = untilDone
+      ? buildAutonomousRawOutput(aggregatedTurnMessages, { stopReason, turnCount, maxTurns, cliLabel: "OpenCode" })
       : (typeof lastResult?.text === "string" ? lastResult.text : "");
     const failureMessage = formatAdapterError(lastResult?.error);
     const touchedFiles = untilDone
@@ -493,6 +640,7 @@ export function buildTaskRunMetadata({ prompt, resumeLast = false, cli = "codex"
 
   const cliLabel = cli === "cursor" ? "Cursor"
                  : cli === "antigravity" ? "Antigravity"
+                 : cli === "opencode" ? "OpenCode"
                  : "Codex";
   const title = resumeLast ? `${cliLabel} Resume` : `${cliLabel} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";

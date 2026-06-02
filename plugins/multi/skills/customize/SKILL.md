@@ -1,25 +1,29 @@
 ---
 name: customize
-description: Rewire which CLI handles which role in cc-multi-cli-plugin, OR diagnose/work around an upstream CLI quirk via env vars and config files. Use when the user asks to swap CLIs, change a subagent's target CLI, add or disable a subagent or command, restrict a CLI, hardcode a model, or modify a role's prompt template — and also when a CLI is misbehaving (hangs, missing tools, broken release) and the user needs operator escape hatches like CURSOR_AGENT_PATH, ACP_TRACE, or per-CLI MCP config tuning. Works for any CLI in the marketplace — the three default CLIs (Codex, Cursor, Antigravity) and any additional CLIs the user added via the multi-cli-anything skill. Trigger phrases include "swap Codex and Cursor", "make Antigravity the researcher", "disable cursor-explore", "restrict Codex to read-only", "change which CLI handles implementation", "add /<cli>:<command>", "only install the plugins I need", "hardcode a model for <some-role>", "use cursor to research a library", "cursor is hanging / broken / stuck", "pin an older cursor build", "see what ACP traffic the CLI is sending".
+description: Rewire which CLI handles which role in cc-multi-cli-plugin, OR diagnose/work around an upstream CLI quirk via env vars and config files. Use when the user asks to swap CLIs, change a subagent's target CLI, add or disable a subagent or command, restrict a CLI to read-only, hardcode a model, or change how a role frames its prompt — and also when a CLI is misbehaving (hangs, missing tools, broken release) and the user needs operator escape hatches like CURSOR_AGENT_PATH or AGY_CLI_PATH or OPENCODE_CLI_PATH, or per-CLI MCP config tuning. Works for any CLI in the marketplace — the four default CLIs (Codex, Cursor, Antigravity, OpenCode) and any additional CLIs the user added via the multi-cli-anything skill. Trigger phrases include "swap Codex and Cursor", "make Antigravity the researcher", "disable cursor-explore", "restrict Codex to read-only", "change which CLI handles implementation", "add /<cli>:<command>", "only install the plugins I need", "hardcode a model for <some-role>", "change the framing for <role>", "cursor is hanging / broken / stuck", "pin an older cursor build".
 ---
 
 # Customize cc-multi-cli-plugin
 
-cc-multi-cli-plugin is a **multi-plugin marketplace**: one hub plugin (`multi`) plus one thin plugin per AI CLI the user has wired up. Customization is explicit file edits across those plugins. No runtime config layer.
+cc-multi-cli-plugin is a **multi-plugin marketplace**: one hub plugin (`multi`) plus one thin plugin per AI CLI the user has wired up. Customization is explicit file edits across those plugins. **There is no runtime config layer and no `buildPrompt()` function** — a CLI's behavior is assembled from a few small, separate files, and you edit the one that owns the thing you want to change.
 
-**This skill is CLI-agnostic.** Every instruction below works for any CLI in the marketplace — the three shipped defaults (Codex, Cursor, Antigravity) and any CLIs added later via the `multi-cli-anything` skill (OpenCode, Aider, etc.). Concrete examples use specific CLI names for clarity, but apply the same pattern to any CLI.
+**This skill is CLI-agnostic.** Every instruction below works for any CLI in the marketplace — the four shipped defaults (Codex, Cursor, Antigravity, OpenCode) and any CLIs added later via the `multi-cli-anything` skill (Aider, etc.). Concrete examples use specific CLI names for clarity; apply the same pattern to any CLI.
 
-## The shape every customization touches
+## The four moving parts every customization touches
 
-Three file types, consistent across all CLIs:
+A `/<cli>:<action>` invocation flows through four artifacts. Each owns one concern. A customization edits whichever one owns what you're changing — usually one or two.
 
-| File | Pattern | Produces |
-|---|---|---|
-| Slash-command entry point | `plugins/<cli>/commands/<action>.md` | `/<cli>:<action>` |
-| Subagent (thin forwarder to the companion) | `plugins/multi/agents/<cli>-<role>.md` | `subagent_type: "multi:<cli>-<role>"` |
-| Adapter (CLI-specific transport + `buildPrompt` role→prefix map) | `plugins/multi/scripts/lib/adapters/<cli>.mjs` | What the companion actually invokes |
+| Artifact | Path | Owns | Edit it to… |
+|---|---|---|---|
+| **Slash command** | `plugins/<cli>/commands/<action>.md` | The user-facing entry point. Dispatches to the subagent via the `Agent` tool. | add/rename/disable a `/<cli>:<action>` command |
+| **Subagent (forwarder)** | `plugins/multi/agents/<cli>-<role>.md` | The `multi:<cli>-<role>` forwarder. Loads the `multi-cli-runtime` skill, optionally **frames** the prompt, and builds exactly ONE companion `Bash` call. Its `model:` is tuned by role (see below). | change a role's prompt framing, its model, its tools, or which `--cli`/`--role` it forwards to |
+| **Adapter** | `plugins/multi/scripts/lib/adapters/<cli>.mjs` | The CLI's transport, plus the **role→flag/sandbox** mapping (read-only vs write, mode flags). Registered in `registry.mjs`. | change how a role maps to the CLI's own flags/permissions |
+| **Shared contract** | `plugins/multi/skills/multi-cli-runtime/SKILL.md` | The flag-handling, routing, and failure-line contract **every** forwarder obeys (`--model`, `--effort`, `--write`/`--read-only`, `--resume`, `--until-done`, `--plan`, `2>&1`, the `<CLI> <role> failed: …` line). | change behavior shared across all CLIs (rare — it affects everything) |
 
-A customization edits one or more of these. The skill below teaches you which files change for each kind of customization.
+Two facts that the old `buildPrompt()` model got wrong and that you must internalize:
+
+- **Prompt *shape* lives in the subagent `.md`, not the adapter.** Each write-role forwarder (e.g. `cursor-delegate.md`, `codex-execute.md`) contains a fenced **framing block** ("You are Cursor in agent mode…") that it prepends to the user's task. To change how a role frames its prompt, edit that block. Read-only forwarders (`codex-review`, `antigravity-researcher`) usually have little or no framing.
+- **Role *behavior* (read vs write, CLI flags) lives in the adapter** — and is done differently per CLI. Codex switches on a sandbox (`read-only` vs `danger-full-access`) selected by the `--write` flag in `lib/commands/task.mjs`; Cursor maps roles to headless flags in `buildHeadlessArgs()` plus a `READ_ONLY_ROLES` set in `cursor.mjs`; Antigravity is always read-only; OpenCode maps roles in `buildHeadlessArgs()` plus `READ_ONLY_ROLES` in `opencode.mjs` (no `--read-only` flag — enforced via env injection). Verify the specific CLI's mechanism before editing (Step 2).
 
 ## Step 0 — Locate the plugin repo
 
@@ -35,67 +39,54 @@ Record the path you'll edit as `$REPO`. All subsequent file paths are relative t
 
 ## Step 1 — Discover the current inventory (don't rely on memory)
 
-Users may have added CLIs via `multi-cli-anything` that aren't in any documentation. Always run these before planning changes:
+Users may have added CLIs via `multi-cli-anything` that aren't in any documentation, and the shipped roster shifts between versions. Always run these before planning changes:
 
 ```bash
-ls $REPO/plugins/                            # CLI plugins installed
-ls $REPO/plugins/multi/agents/               # subagents
-find $REPO/plugins -name "*.md" -path "*/commands/*"   # commands
-cat $REPO/.claude-plugin/marketplace.json    # marketplace registration
+ls $REPO/plugins/                                       # CLI plugins installed
+ls $REPO/plugins/multi/agents/                          # subagents (forwarders)
+find $REPO/plugins -name "*.md" -path "*/commands/*"    # slash commands
+ls $REPO/plugins/multi/scripts/lib/adapters/            # adapters
+cat $REPO/plugins/multi/scripts/lib/adapters/registry.mjs   # which adapters are registered
+cat $REPO/.claude-plugin/marketplace.json               # marketplace registration
 ```
 
-The output is ground truth for what exists. Planning against it avoids the "subagent not found" class of bug.
+The output is ground truth for what exists. Planning against it avoids the "subagent not found" / "unknown CLI" class of bug. (As shipped: Codex roles `execute`/`rescue`/`review`/`adversarial-review`; Cursor roles `delegate`/`research`/`explore`; Antigravity roles `research`/`explore`; OpenCode roles `delegate`/`research`/`explore`. The Antigravity subagent files are named `antigravity-researcher`/`antigravity-explorer`; OpenCode subagents are named `opencode-delegate`/`opencode-researcher`/`opencode-explorer`. Confirm against your own `ls` — don't assume.)
 
 ## Step 2 — Verify CLI-specific strings BEFORE hardcoding them
 
-Before hardcoding any CLI-specific string (model IDs, effort levels, sandbox modes, flag names, slash commands, mode names) as a default, verify it. Do not ask the user to confirm these — Claude can look them up faster.
+Before hardcoding any CLI-specific string (model IDs, effort levels, sandbox/mode names, flag names) as a default, verify it. Do not ask the user to confirm these — Claude can look them up faster.
 
-**The verification-trap:** CLIs often accept version-qualified IDs (`-preview`, `-beta`, `-exp` suffixes). Dropping the suffix produces a runtime 4xx. For example a model ID like `gpt-5.4` vs `gpt-5.4-mini` is not interchangeable, and Gemini-family IDs (which Antigravity surfaces) have historically used `-preview` suffixes that 404 when dropped. Every CLI has analogous traps.
+**The verification-trap:** CLIs often accept version-qualified IDs (`-preview`, `-beta`, `-exp` suffixes). Dropping the suffix produces a runtime 4xx. A model ID like `gpt-5.3` vs `gpt-5.3-codex` is not interchangeable, and Gemini-family IDs (which Antigravity surfaces) have historically used `-preview` suffixes that 404 when dropped. Every CLI has analogous traps.
 
 ### Pick ONE source proportional to the question. Stop when confident.
 
-Do NOT run every source for every question. The verification sources form a LADDER — start with the cheapest authoritative one for the question at hand and stop as soon as you have a confident answer.
+The verification sources form a LADDER — start with the cheapest authoritative one for the question at hand and stop as soon as you have a confident answer. Do NOT run every source for every question.
 
 **Decision tree:**
 
-- **Yes/no capability check** — "does `<cli>` have a `/<slash-command>` command?" or "does `<cli>` support `--read-only`?" → ONE source. Usually `<cli> --help | grep <term>` in well under a second. Done. Don't escalate.
-
-- **Enumerating what exists** — "what slash commands does `<cli>` have?" or "what models does `<cli>` accept?" → ONE source. Try `<cli> --help` first, or a vendor-docs lookup via context7 if `--help` isn't exhaustive. Escalate to a second source only if the first comes up empty or suspicious.
-
-- **Exact canonical ID with version suffix** (e.g., "what's the current stable model ID for Antigravity's flash tier?") — up to TWO sources when the answer must be typed into code and a wrong suffix bricks the feature. Prefer (a) asking the CLI itself via a natural-language prompt, then cross-check with (b) vendor docs. Only escalate to reading source constants on disagreement.
+- **Yes/no capability check** — "does `<cli>` support `--read-only`?" or "does `<cli>` have an `ask` mode?" → ONE source. Usually `<cli> --help | grep <term>` in well under a second. Done. Don't escalate.
+- **Enumerating what exists** — "what modes does `<cli>` have?" or "what models does `<cli>` accept?" → ONE source. Try `<cli> --help` (or `<cli> models` / `<cli> --list-models`) first, or a vendor-docs lookup via context7 if `--help` isn't exhaustive. Escalate only if the first comes up empty or suspicious.
+- **Exact canonical ID with version suffix** (e.g. "the current stable Cursor model id for the medium tier") — up to TWO sources when a wrong suffix bricks the feature. Prefer the CLI's own listing, then cross-check with vendor docs. Only read source constants on disagreement.
 
 ### The sources, in the order you'd try them
 
-1. **`<cli> --help`, `<cli> models`, `<cli> about`** — fastest. No network. Free. Authoritative for "what does this binary accept right now." **Default choice for most questions.**
-
-2. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names, deprecation context, and slash commands not surfaced by `--help`. Use this as the primary fallback when `--help` doesn't answer.
-
+1. **`<cli> --help`, `<cli> models`, `<cli> about`, `<cli> --list-models`** — fastest. No network. Free. Authoritative for "what does this binary accept right now." **Default choice for most questions.**
+2. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names, deprecation context, and modes not surfaced by `--help`.
 3. **Web search via exa** — for recent changelogs, forum posts, or obscure flags not covered by context7.
-
 4. **CLI source on GitHub** — `config/models.ts` constants, etc. Use when 1–3 disagree or come up empty.
-
-5. **Prompt the CLI itself with `<cli> -p "..."`** — LAST RESORT only. This costs the user API credits and is slow. Don't reach for it for routine customize questions; docs and web search cover 99% of what this skill needs.
+5. **Prompt the CLI itself with `<cli> -p "..."`** — LAST RESORT only. Costs the user API credits and is slow. Don't reach for it for routine customize questions; docs and web search cover 99% of what this skill needs.
 
 ### Hard rules
 
-- **Do not invoke `<cli> -p` as a research step** unless sources 1–4 are all empty. For a customize task (small edit, known CLI, verifiable via docs), you almost never need it.
-- **Never ask one CLI about another CLI's features.** Cross-CLI interrogation hallucinates as badly as guessing. Only use a CLI as a source for ITSELF, and even then only as a last resort.
-- **Record the source you used inline in your response** so the user sees which sources you checked.
-- **Claim "unverified" honestly** if a string is rare or sources didn't surface a confident answer. Don't ship guesses as verified facts.
+- **Do not invoke `<cli> -p` as a research step** unless sources 1–4 are all empty. For a customize task you almost never need it.
+- **Never ask one CLI about another CLI's features.** Cross-CLI interrogation hallucinates as badly as guessing. A CLI is a source only for ITSELF.
+- **`plugins/multi/scripts/lib/adapters/<cli>.mjs` is the source of truth for what flags our companion actually forwards** to the CLI — check it, not just the CLI's `--help`, when a flag is involved.
+- **Record the source you used inline in your response** so the user sees what you checked, and claim "unverified" honestly if sources didn't surface a confident answer.
 
 ### Resolving disagreements (rare — usually only one source is needed)
 
 - **CLI wins** for "will it work right now."
 - **Docs win** for "should I use this" (deprecation, aliasing).
-
-### Also verify per CLI
-
-- **Slash commands and modes** — vary by CLI and by version; new ones land regularly. Enumerate via the three-source check before referencing one.
-- **Runtime flags** (sandbox modes, effort levels, read-only toggles) — check `--help` for exact spelling.
-- **OS quirks** — Windows `.cmd` shims, shell requirements, PATH differences, path-separator handling.
-- **`plugins/multi/scripts/lib/adapters/<cli>.mjs`** is the source of truth for what flags our companion forwards to the CLI.
-
-**Record findings inline in your response** (so the user can double-check), then proceed to file edits without asking for confirmation on verifiable facts.
 
 ## Safety checkpoint before edits
 
@@ -107,44 +98,43 @@ Run this via Bash if the working tree has uncommitted changes. Skip if it's clea
 
 ## Change types (generic, with illustrative examples)
 
-All examples use `<cli>`, `<cli-a>`, `<cli-b>`, `<role>`, `<action>` as placeholders. Substitute the CLI names from your Step 1 inventory.
+All examples use `<cli>`, `<cli-a>`, `<cli-b>`, `<role>`, `<action>` as placeholders. Substitute the CLI/role names from your Step 1 inventory.
 
 ### 1. Swap a role between two CLIs
 
 *User: "make `<cli-a>` handle `<role>` instead of `<cli-b>`."*
 
-**Edit two files to ADD the new mapping:**
+**Add the new mapping (two files):**
 - `plugins/<cli-a>/commands/<action>.md` — copy from `plugins/<cli-b>/commands/<action>.md`; change the dispatch target to `multi:<cli-a>-<role>`.
-- `plugins/multi/agents/<cli-a>-<role>.md` — copy from `plugins/multi/agents/<cli-b>-<role>.md`; update `name:`, description, and the Bash invocation to `--cli <cli-a> --role <role>`.
+- `plugins/multi/agents/<cli-a>-<role>.md` — copy from a forwarder **of the same kind** (see "Pick the right template" below); update `name:`, `description:`, the `model:`, and the Bash invocation's `--cli <cli-a> --role <role>`.
 
-**Optionally REMOVE the old mapping:**
-- Delete or `_disabled-`-rename `plugins/<cli-b>/commands/<action>.md` and `plugins/multi/agents/<cli-b>-<role>.md`.
+**Optionally remove the old mapping:** delete or `_disabled-`-rename `plugins/<cli-b>/commands/<action>.md` and `plugins/multi/agents/<cli-b>-<role>.md`.
 
-**If the new role doesn't exist in the target adapter's `buildPrompt()`**, add it (see change type #7).
+**If the new role implies read-only or write behavior the target adapter doesn't already handle**, set it (change type #5 / #7) — e.g. Cursor needs the role added to `READ_ONLY_ROLES` to be read-only; Codex just needs `--read-only` vs `--write` passed by the forwarder.
 
-**Illustrative:** user says "make Codex the executor instead of Cursor."
-→ Create `plugins/codex/commands/execute.md` (dispatching to `multi:codex-execute`) — if it doesn't already exist.
-→ Create `plugins/multi/agents/codex-execute.md` (forwarding to `--cli codex --role execute`).
-→ Remove or disable the cursor counterparts if Cursor shouldn't execute anymore.
+**Pick the right template (this is what the old `buildPrompt` model hid):**
+- A **write/agentic role** (implement, edit, refactor) → copy a write forwarder like `cursor-delegate.md` or `codex-execute.md`. These carry a **prompt-framing block** and run on **Sonnet**.
+- A **read-only role** (research, explore, review) → copy a read forwarder like `codex-review.md`, `cursor-research.md`, `antigravity-researcher.md`, or `opencode-researcher.md`. These have little/no framing; a pure path-bridge (no framing) can run on **Haiku**.
+
+Every forwarder MUST keep `skills:\n  - multi-cli-runtime` in its frontmatter — that's the shared flag/failure contract. Don't drop it.
 
 ### 2. Add a net-new command for an existing CLI
 
-*User: "add `/<cli>:<action>`."*
+*User: "add `/<cli>:<action>`."* (First confirm it doesn't already exist — run the Step 1 `find`.)
 
-- **Create** `plugins/<cli>/commands/<action>.md` — dispatches via `Agent` tool to `multi:<cli>-<role>`. Copy any existing command file as a template and adjust.
-- **Create** `plugins/multi/agents/<cli>-<role>.md` — thin forwarder. Copy any existing subagent file; update `name:`, description, and the Bash invocation's `--role <role>` field.
-- **If `<role>` is new to this CLI's adapter**, update `plugins/multi/scripts/lib/adapters/<cli>.mjs`'s `buildPrompt()` to map the new role to whatever slash-command prefix the CLI expects (see change type #7).
+- **Create** `plugins/<cli>/commands/<action>.md` — dispatches via the `Agent` tool to `multi:<cli>-<role>`. Copy an existing command of the same kind and adjust.
+- **Create** `plugins/multi/agents/<cli>-<role>.md` — thin forwarder. Copy a same-kind forwarder; update `name:`, `description:`, `model:`, and `--role <role>`. Keep `skills: [multi-cli-runtime]`.
+- **Set the role's behavior in the adapter if needed** (change type #7): for a read-only role on a CLI whose adapter defaults to write (Cursor does), add the role to its read-only set; for Codex, the forwarder simply passes `--read-only`.
 
-**Illustrative:** user says "add `/cursor:research`" and your verification in Step 2 confirmed Cursor can run a read-only research role.
-→ Create `plugins/cursor/commands/research.md` (dispatching to `multi:cursor-researcher`).
-→ Create `plugins/multi/agents/cursor-researcher.md` (forwarding with `--cli cursor --role researcher`).
-→ Edit `plugins/multi/scripts/lib/adapters/cursor.mjs` to add `researcher: ""` (or the appropriate prefix) to the `buildPrompt()` prefix map.
+**Illustrative:** user says "add `/codex:explore`" (a read-only codebase-Q&A role for Codex, paralleling `/cursor:explore`). Step 2 confirms Codex can run read-only (`--read-only` → the companion uses the `read-only` sandbox).
+→ Create `plugins/codex/commands/explore.md` (dispatching to `multi:codex-explore`).
+→ Create `plugins/multi/agents/codex-explore.md` (copy `codex-review.md` as the read-only template; forward with `--cli codex --role explore --read-only`; Haiku is fine since it does no framing).
+→ No adapter edit needed: Codex's read/write is the sandbox toggled by `--read-only`/`--write`, not a per-role map.
 
 ### 3. Disable a command or subagent
 
 **Command (user-facing slash):**
-- Delete `plugins/<cli>/commands/<action>.md` (git preserves history).
-- OR rename to `_disabled-<action>.md` (Claude Code won't load files starting with underscore).
+- Delete `plugins/<cli>/commands/<action>.md` (git preserves history), OR rename to `_disabled-<action>.md` (Claude Code won't load files starting with underscore).
 
 **Subagent (Claude's auto-dispatch target):**
 - Same approach — delete or underscore-rename in `plugins/multi/agents/`.
@@ -159,71 +149,85 @@ claude plugin uninstall <cli>@cc-multi-cli-plugin
 
 `multi` stays installed (the hub is required). CLI plugins are additive and independently installable.
 
-### 5. Restrict a CLI's behavior (read-only, narrower tools, sandboxed)
+### 5. Restrict a CLI's behavior (read-only, narrower tools)
 
-Edit `plugins/multi/agents/<cli>-<role>.md`:
-- **Frontmatter `tools:`** — narrow to a restricted Bash pattern (e.g., `Bash(echo:*)`) to prevent broader tool use.
-- **Body:** ensure the Bash invocation includes the appropriate restriction flag (`--read-only`, `--no-write`, `--sandbox <mode>`, or whatever that CLI's adapter exposes — verify via Step 2).
+Two layers, both in `plugins/multi/agents/<cli>-<role>.md`:
 
-Consult `plugins/multi/scripts/lib/adapters/<cli>.mjs` for the flags that CLI's adapter forwards.
+- **Frontmatter `tools:`** — narrow what the *forwarder itself* may do. Forwarders ship with `tools: Bash` (review additionally `Bash(git:*)`); tightening to e.g. `Bash(node:*)` keeps it from doing anything but call the companion.
+- **Body / Bash invocation** — make the forwarder pass the right read-only flag so the *external CLI* can't write:
+  - **Codex:** ensure the invocation passes `--read-only` (not `--write`). The companion maps that to Codex's `read-only` sandbox.
+  - **Cursor:** read-only is role-driven — `research`/`explore` already run `--mode ask --force` (no writes). To force an otherwise-write role read-only, ensure its role name is in `READ_ONLY_ROLES` in `cursor.mjs` (change type #7), or route it through a read-only role.
+  - **Antigravity:** already read-only on every role; nothing to restrict.
+
+`plugins/multi/scripts/lib/adapters/<cli>.mjs` is the source of truth for which restriction flags that CLI's adapter actually forwards — consult it before writing one in.
 
 ### 6. Hardcode a default model (or other flag) for a subagent
 
-Subagent Bash invocations pass `--model` through from the user's request. To bake in a *default* model that applies when the user doesn't specify one, edit the subagent's Bash line to include `--model <name>` unconditionally, and update the forwarding rules to note user overrides win.
+Forwarder Bash invocations pass `--model` through from the user's request. To bake in a *default* that applies when the user doesn't specify one, edit the forwarder's Bash line to include `--model <name>` unconditionally and note that explicit user overrides win.
 
-**Generic pattern** — edit `plugins/multi/agents/<cli>-<role>.md`'s forwarding rules block. Change:
+**Generic pattern** — in `plugins/multi/agents/<cli>-<role>.md`, change:
 
 ```markdown
-- Use exactly one `Bash` call to invoke:
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> ...`
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> ...`
 - Pass `--model`, `--resume`, `--fresh` as runtime controls.
 ```
 
 to:
 
 ```markdown
-- Use exactly one `Bash` call to invoke:
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> --model <VERIFIED-ID> ...`
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> --model <VERIFIED-ID> ...`
 - If the user's request explicitly specifies a different `--model`, use that value instead of `<VERIFIED-ID>`.
 - Pass `--resume`, `--fresh` as runtime controls.
 ```
 
-**Illustrative:** pinning `/cursor:research` to a specific Cursor model (e.g. `gpt-5.5-medium`). Step 2 verification confirms the exact ID (including any version suffix) before you type it. The edit pins `--model <verified-id>` with override rules preserved. Forgetting a required version suffix is the most common way to ship a broken subagent. (Antigravity is the exception — its headless `agy` path ignores `--model`; see below.)
+**Illustrative:** pinning `/cursor:research` to a specific Cursor model (e.g. `gpt-5.5-medium`). Step 2 verification confirms the exact flat id (Cursor takes flat names like `gpt-5.5-medium`, not bracketed forms) before you type it. Forgetting a required version suffix is the most common way to ship a broken forwarder.
 
-The same pattern works for `--effort`, `--sandbox`, `--reasoning-effort`, or any CLI-specific flag.
+The same pattern works for `--effort` (Codex only), or any CLI-specific flag. **Exception — Antigravity:** its headless `agy` path ignores `--model` (fixed to Gemini 3.5 Flash), so there is no per-forwarder model pin for it.
 
-### 7. Change a role's prompt template (slash-command prefix)
+### 7. Change how a role behaves — its framing, or its read/write flags
 
-Role-specific prompt prefixes live in each adapter's `buildPrompt()` function in `plugins/multi/scripts/lib/adapters/<cli>.mjs`. Generic shape:
+This replaces the old "edit `buildPrompt()`" instruction. There is no `buildPrompt()`. Two distinct things you might mean:
 
-```js
-function buildPrompt(role, userTask) {
-  const prefix = { <role1>: "<cli-slash-command-1> ", <role2>: "<cli-slash-command-2> " }[role] ?? "";
-  return prefix + userTask;
-}
-```
+**(a) Change how a role *frames* the prompt (tone, instructions, output format the CLI is asked for).**
+Edit the **framing block inside the forwarder** `plugins/multi/agents/<cli>-<role>.md`. Write-role forwarders contain a fenced block they prepend to the user's task — e.g. `cursor-delegate.md`'s "You are Cursor in agent mode…" or `codex-execute.md`'s two model-specific blocks. Edit that block. Note the contract the framing must preserve: it is **skipped entirely when `--plan`/`--prompt-file` is used** (the file is the prompt), per `multi-cli-runtime`. Don't add framing to a pure read-only path-bridge that intentionally has none unless you also bump its model.
 
-Edit the mapping to change how a role's prompt gets prefixed, or to add a new role mapping. Only touch `buildPrompt()` — other edits to adapter code risk breaking the transport.
+**(b) Change how a role maps to the CLI's *flags/permissions* (read vs write, mode).**
+Edit the **adapter** `plugins/multi/scripts/lib/adapters/<cli>.mjs` — but the mechanism is CLI-specific, so verify first:
+- **Cursor:** roles map to headless flags in `buildHeadlessArgs()`, and which roles are read-only is the `READ_ONLY_ROLES` set. To make a new role read-only, add it to that set (e.g. add `"reviewer"` so a `cursor-review` role runs `--mode ask`). Touch only these role-mapping pieces — the spawn/parse code is the transport; breaking it breaks the CLI.
+- **Codex:** there is no per-role flag map; read vs write is the sandbox chosen from `--write`/`--read-only` in `lib/commands/task.mjs`. You change a Codex role's behavior by what the forwarder passes, not by editing the adapter.
+- **Antigravity:** read-only only; no role→flag map to change.
+- **OpenCode:** roles map to flags in `buildHeadlessArgs()` and the `READ_ONLY_ROLES` set in `opencode.mjs`. OpenCode has **no `--read-only` flag** — for read-only roles the adapter injects a custom oc-* primary agent via `OPENCODE_CONFIG_CONTENT` with write/edit/bash denied, plus an `OPENCODE_PERMISSION` deny floor. **`--effort` is NOT supported** by OpenCode (it is silently ignored by the adapter). `--until-done` IS supported. To add a new read-only role, add it to `READ_ONLY_ROLES` in `opencode.mjs` — everything else follows automatically.
+
+If you're unsure which of (a)/(b) the user means, the rule of thumb: wording/instructions/output-format → (a), the subagent `.md`; "let it write" / "keep it read-only" / "use ask mode" → (b), the adapter or the forwarder's flags.
 
 ## Operator escape hatches (for diagnosing or working around upstream CLI issues)
 
-When a CLI misbehaves upstream — a broken release, a regression, an obscure config requirement — these env vars and config files give the user direct control without code changes:
+When a CLI misbehaves upstream — a broken release, a regression, an obscure config requirement — these knobs give the user direct control without code changes. The adapter code reads them automatically; surface the relevant one in your answer when an upstream bug is the root cause.
 
-- **`CURSOR_AGENT_PATH=<absolute-path>`** — point our Cursor adapter at a specific binary (e.g. an older cached build at `~/AppData/Local/cursor-agent/versions/<old-version>/index.js`). Useful when a new Cursor release breaks ACP and the user wants to pin a working older one. The `findCursorBinary()` helper checks this before falling back to PATH.
-- **`ACP_TRACE=1`** — turns on `[acp-trace] <- REQ/RES/NOTIF <method>` lines on stderr for any ACP-based CLI invocation. Single most useful diagnostic when an agent silently hangs — tells you exactly what JSON-RPC traffic is or isn't crossing the wire. Off by default. (Antigravity does not use ACP, so this has no effect on `--cli antigravity`.)
-- **`AGY_CLI_PATH=<absolute-path>`** — point our Antigravity adapter at a specific `agy` binary (`findAgyBinary()` checks it before PATH and the Windows fallback `$LOCALAPPDATA/agy/bin/agy.exe`). Note `agy` headless does **not** honor `--model` — the model is whatever `agy` is configured to use (Gemini 3.5 Flash by default), so there is no per-subagent model pin for Antigravity. The operator requirement is that `agy` is installed and signed in (run `agy` once interactively); if it isn't, the adapter reports "not signed in."
-- **Per-CLI MCP config files** (`~/.cursor/mcp.json`) — when a CLI ignores `mcpServers` passed via ACP `session/new` (Cursor in `agent acp` mode does, per Cursor staff), populate the CLI's own config file as a fallback. (Codex uses `~/.codex/config.toml`; Antigravity's `agy` reads MCP servers from its Gemini-CLI config `~/.gemini/settings.json`, not a wizard-managed file.)
+- **`CURSOR_AGENT_PATH=<absolute-path>`** — point the Cursor adapter at a specific `agent` binary (e.g. an older cached build under `~/AppData/Local/cursor-agent/versions/<version>/`). Useful when a new Cursor release regresses and the user wants to pin a known-good one. `findCursorBinary()` checks this before `where`/`which` and the Windows fallback path.
+- **`AGY_CLI_PATH=<absolute-path>`** — point the Antigravity adapter at a specific `agy` binary (`findAgyBinary()` checks it before PATH and the Windows fallback `$LOCALAPPDATA/agy/bin/agy.exe`). The operator requirement is that `agy` is installed and signed in (run `agy` once interactively); if it isn't, the adapter reports "not signed in." `agy` headless does **not** honor `--model` (Gemini 3.5 Flash only).
+- **`OPENCODE_CLI_PATH=<absolute-path>`** — point the OpenCode adapter at a specific `opencode` binary. `findOpencodeBinary()` checks this first; if unset it resolves the bare name `opencode` and lets `process.mjs` `resolveWindowsCommand` pick the `.cmd` shim on Windows. Never resolves to `opencode.exe` (the stale bun build).
+- **`OPENCODE_CLI_DEFAULT_MODEL=<model-id>`** — override the default model for all OpenCode calls (default: `opencode/claude-opus-4-8`). Use a Zen model (`opencode/*`) or an OpenAI/Google/Copilot/Ollama model to get real token offload. **Avoid `anthropic/*` models** — they reuse your Claude Code subscription and provide zero offload.
+- **Per-CLI MCP config files** — when a CLI doesn't pick up MCP servers the way you expect, populate the CLI's own config: Cursor reads `~/.cursor/mcp.json`; Codex reads `~/.codex/config.toml`; Antigravity's `agy` reads MCP servers from its Gemini-CLI config `~/.gemini/settings.json`; **OpenCode reads MCP servers from its own `opencode.json`** (use OpenCode's interactive wizard to configure these — the `/multi:setup` wizard does NOT manage `opencode.json`). Use these as the fallback when a server is "missing."
 
-These are knobs the user can twist; the adapter code reads them automatically. Surface them in the user-facing answer when an upstream CLI bug is the root cause.
+### Diagnosing a CLI that hangs or returns nothing
+
+The shipped CLIs are driven headlessly, so the first diagnostic is always the captured output:
+
+- **`2>&1` on the companion call** (the forwarders already append it) surfaces the CLI's stderr — the single most useful signal. A bad model id, an auth failure, or a sandbox block all print there.
+- **Cursor specifics:** `agent --version` — a few early-2026 builds predate the headless MCP-tools fix; the adapter warns when it detects a known-bad build (`KNOWN_BROKEN_CURSOR_VERSIONS` in `cursor.mjs`). Cursor's **shell tool is slow/unreliable on Windows** (host-PATH/WSL, open upstream), which is why `/cursor:delegate` defers build/test verification to the caller — file writes and web/codebase reads are unaffected. For write roles the adapter parses Cursor's documented `--output-format stream-json` events; a run that emits no `result` event with a non-zero exit is almost always a startup error visible in stderr.
+- **Antigravity specifics:** `agy`'s headless stdout is empty upstream (gemini-cli#27466), so the adapter recovers the answer from the on-disk transcript JSONL. If a run returns nothing, check that `agy --version` works and that `~/.gemini/oauth_creds.json` exists (signed in). A `.tmp→.pb` "Access denied" line in agy's own log is benign on Windows and does not block the transcript.
+- **`ACP_TRACE=1` (legacy):** the plugin retains ACP plumbing (`lib/acp-client.mjs`) but **no shipped CLI uses ACP** anymore — Cursor migrated to headless `agent -p` and Antigravity to headless `agy -p`. `ACP_TRACE=1` only does anything if the user added an ACP-speaking CLI via `multi-cli-anything`; for the shipped CLIs it's a no-op. Don't reach for it to debug Cursor or Antigravity.
 
 ## What NOT to touch (unless adding a new transport)
 
 These are shared infrastructure; `multi-cli-anything` is the skill for extending them.
 
-- `plugins/multi/scripts/lib/job-control.mjs`, `state.mjs`, `render.mjs`, `workspace.mjs`, `tracked-jobs.mjs`
-- `plugins/multi/scripts/lib/acp-client.mjs`, `app-server.mjs`, `acp-diagnostics.mjs`
-- `plugins/multi/scripts/multi-cli-companion.mjs` (unless adding a new adapter — use `multi-cli-anything`)
-- `plugins/multi/hooks/hooks.json` (unless adding a new hook)
+- `plugins/multi/scripts/multi-cli-companion.mjs` (the ~100-line dispatcher) and `plugins/multi/scripts/lib/commands/*.mjs` (`task`, `review`, `jobs`, `setup`, `shared`) — the command handlers.
+- `plugins/multi/scripts/lib/adapters/registry.mjs` — the adapter registry (you edit this only to *add* a CLI, via `multi-cli-anything`).
+- `plugins/multi/scripts/lib/job-control.mjs`, `state.mjs`, `render.mjs`, `workspace.mjs`, `tracked-jobs.mjs`, `acp-client.mjs`, `app-server.mjs`.
+- The existing adapters' transport code (`codex*.mjs`, `cursor.mjs`, `antigravity.mjs`, `opencode.mjs`) — except the role-mapping pieces called out in change type #7.
+- `plugins/multi/hooks/hooks.json` (unless adding a new hook).
 
 ## Verify after edits — YOU (Claude) run the refresh, not the user
 
@@ -235,7 +239,7 @@ These are shared infrastructure; `multi-cli-anything` is the skill for extending
 claude plugin validate $REPO
 ```
 
-Catches JSON/schema errors before any reinstall. Fix errors and re-run before proceeding.
+Catches JSON/schema/frontmatter errors before any reinstall. Fix errors and re-run before proceeding. If you edited an adapter, also `node --check plugins/multi/scripts/lib/adapters/<cli>.mjs` and run `npm test` in `$REPO` (the offline suite, no tokens).
 
 **Then refresh based on what you touched:**
 
@@ -250,11 +254,11 @@ Catches JSON/schema errors before any reinstall. Fix errors and re-run before pr
 ## End-to-end workflow Claude follows
 
 1. Step 0: locate `$REPO`.
-2. Step 1: discover current inventory via `ls` / `find`.
-3. Step 2: verify any CLI-specific strings the user mentioned (model IDs, slash commands, modes).
+2. Step 1: discover current inventory via `ls` / `find` / `registry.mjs`.
+3. Step 2: verify any CLI-specific strings the user mentioned (model IDs, modes, flags).
 4. Safety checkpoint commit.
-5. Make file edits per the relevant change type(s).
-6. Run `claude plugin validate $REPO` via Bash.
+5. Make file edits per the relevant change type(s) — touching the artifact that *owns* the change (command / forwarder / adapter), keeping `skills: [multi-cli-runtime]` on every forwarder.
+6. Run `claude plugin validate $REPO` (and `npm test` / `node --check` if you touched a script).
 7. Run the relevant `claude plugin install ... --force` commands via Bash (one per affected plugin).
 8. Commit the changes via Bash: `cd $REPO && git add -A && git commit -m "customize: <summary>"`.
 9. Report to user:
@@ -263,22 +267,21 @@ Catches JSON/schema errors before any reinstall. Fix errors and re-run before pr
 
 Claude restart is the one thing you can't do — don't pretend you can. Reinstalling, validating, and committing are all yours.
 
-## Illustrative walk-through: swap two CLIs' roles
+## Illustrative walk-through: give one CLI a read-only role another CLI owns
 
-User says: *"Make Codex the executor and Cursor the researcher."*
+User says: *"Make Cursor my reviewer instead of Codex."* (Cursor has no `review` role yet; this exercises all four moving parts.)
 
 1. `claude plugin marketplace list` → confirm `cc-multi-cli-plugin` lives in an editable location.
-2. `ls $REPO/plugins/` → confirm both `codex/` and `cursor/` plugins exist. `ls $REPO/plugins/multi/agents/` → see current subagent set.
-3. No CLI-specific strings mentioned; skip Step 2 verification.
-4. Safety commit if needed.
-5. Create `plugins/multi/agents/codex-execute.md` (copy from `cursor-delegate.md`, change name and `--cli codex --role execute`) — if it doesn't already exist.
-6. Create `plugins/multi/agents/cursor-researcher.md` (copy from an existing read-only forwarder, change to `--cli cursor --role researcher`).
-7. Create `plugins/codex/commands/execute.md` (copy from `plugins/cursor/commands/delegate.md`, change dispatch to `multi:codex-execute`) — if it doesn't already exist.
-8. Create `plugins/cursor/commands/research.md` (copy from an existing command, change dispatch to `multi:cursor-researcher`).
-9. Optionally delete or `_disabled-` the originals.
-10. `claude plugin validate $REPO` via Bash — must pass.
-11. `claude plugin install codex@cc-multi-cli-plugin --force` + cursor + multi, via Bash.
-12. Commit via Bash.
-13. Tell the user: *"Done. Please restart Claude Code — I touched subagent files and the definitions are session-cached. After restart, try `/codex:execute create /tmp/hello.py that prints 'hi'`."*
+2. Step 1: `ls $REPO/plugins/multi/agents/` → see `codex-review` exists, no `cursor-review`. `cat .../adapters/cursor.mjs` → note `review`/`reviewer` is **not** in `READ_ONLY_ROLES`, so a `cursor` review role would default to write mode.
+3. Step 2: confirm Cursor's read-only mode is `--mode ask` (`agent --help`) — it is; the adapter already uses it for `research`/`explore`.
+4. Safety commit if the tree is dirty.
+5. Adapter: add `"reviewer"` (and/or `"review"`) to `READ_ONLY_ROLES` in `cursor.mjs` so the role runs `--mode ask --force` (read-only). `node --check` it.
+6. Forwarder: create `plugins/multi/agents/cursor-review.md` — copy `codex-review.md` (the read-only template), set `name: cursor-review`, keep `skills: [multi-cli-runtime]`, set `model: haiku` (pure bridge, no framing), and forward `task --cli cursor --role reviewer --read-only`.
+7. Command: create `plugins/cursor/commands/review.md` — copy `plugins/codex/commands/review.md`, change the dispatch to `multi:cursor-review`.
+8. Optionally disable Codex's reviewer (delete/underscore `codex-review.md` + `plugins/codex/commands/review.md`) if Codex shouldn't review anymore — or leave it for both.
+9. `npm test` + `claude plugin validate $REPO` via Bash — must pass.
+10. `claude plugin install cursor@cc-multi-cli-plugin --force` + `claude plugin install multi@cc-multi-cli-plugin --force`, via Bash.
+11. Commit via Bash.
+12. Tell the user: *"Done. Please restart Claude Code — I touched a subagent file and the definitions are session-cached. After restart, try `/cursor:review` on a small diff."*
 
-Substitute any other pair of CLIs and the same steps apply.
+Substitute any other CLI/role pair and the same four-part pattern applies — identify which artifact owns the change, edit it, validate, reinstall, restart if a subagent changed.

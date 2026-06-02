@@ -24,7 +24,7 @@ function printUsage() {
     [
       "Usage:",
       "  Global flags:",
-      "    --cli <codex|cursor|antigravity>   Select the CLI adapter (default: codex)",
+      "    --cli <codex|cursor|antigravity|opencode>   Select the CLI adapter (default: codex)",
       "  node scripts/multi-cli-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/multi-cli-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/multi-cli-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",

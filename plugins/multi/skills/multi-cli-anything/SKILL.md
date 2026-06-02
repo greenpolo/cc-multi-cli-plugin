@@ -1,231 +1,265 @@
 ---
 name: multi-cli-anything
-description: Add a new CLI provider to cc-multi-cli-plugin (beyond the built-in Codex/Cursor/Antigravity). Use when the user asks to integrate another AI CLI like OpenCode, Aider, Qwen, or any CLI that speaks ACP, ASP, ConnectRPC, or another structured protocol. Trigger phrases include "add OpenCode to the plugin", "integrate Aider", "hook up my custom CLI", "support another model via ACP".
+description: Add a new CLI provider to cc-multi-cli-plugin (beyond the built-in Codex/Cursor/Antigravity/OpenCode). Use when the user asks to integrate another AI CLI like Aider, Qwen, or any CLI that can be driven headlessly (a `-p`/print mode with JSON output, an app-server/HTTP mode, or any structured transport). Trigger phrases include "add Aider to the plugin", "integrate Qwen", "hook up my custom CLI", "support another model via its CLI".
 ---
 
 # Add a new CLI to cc-multi-cli-plugin
 
-cc-multi-cli-plugin is a **multi-plugin marketplace**. Adding a new CLI means adding a new plugin to the marketplace plus wiring a new adapter into the shared companion runtime in the `multi` plugin.
+cc-multi-cli-plugin is a **multi-plugin marketplace** with four built-in CLIs: Codex, Cursor, Antigravity, and OpenCode. Adding a new CLI beyond these means two things:
+
+1. **A new adapter** in the `multi` hub — `plugins/multi/scripts/lib/adapters/<cli>.mjs` — that conforms to the adapter contract and is registered in `lib/adapters/registry.mjs`, plus a dispatch branch in `lib/commands/task.mjs`.
+2. **A new thin plugin** — `plugins/<cli>/` with command files + a `plugin.json`, registered in the root `marketplace.json` — that forwards `/<cli>:<role>` into the hub via `multi:<cli>-<role>` subagents.
+
+**The adapter interface is transport-agnostic.** The companion consumes only the five-method `adapter` object defined in `plugins/multi/scripts/lib/adapters/CONTRACT.md` (`name`, `isAvailable`, `isAuthenticated`, `invoke`, `cancel`, plus optional `getSession`). *How* the adapter talks to the CLI — headless print mode, spawn-and-read-files, app-server HTTP, or (legacy) ACP — is your choice, driven by what the CLI actually exposes. **Read `CONTRACT.md` first**; it's the source of truth for the result shape.
+
+There is **no `buildPrompt()` function** and no slash-command-prefix layer (an older design that's gone). A role's read/write behavior is expressed as CLI flags/sandbox inside the adapter; a role's prompt framing lives in its subagent `.md`. Don't reintroduce a `buildPrompt`.
 
 ## Step 0 — Research the CLI first
 
-Before writing any code, pull everything you need to know about the CLI so you don't have to guess or ask the user later. Extract:
+Before writing any code, pull everything you need so you don't guess or ask the user later:
 
-- **Install status and binary name** — is the user's machine set up? What's the exact command (`cursor-agent`? `agent`? `qwen`? `aider`?)
-- **Structured transport** — does it support ACP, ASP, or structured stdout? (See prerequisites below.)
-- **Exact model identifiers** the CLI accepts (or `auto` if offered). Hardcoding a wrong model string causes 400 errors at runtime.
-- **Available slash commands and modes** — e.g., `/research`, `/review`, `/plan`, `/debug`, `/ask`, or whatever the CLI exposes. These determine which roles you'll map to slash-command prefixes in `buildPrompt()`.
-- **Runtime flags** — sandbox, read-only, effort, background, resume — what does the CLI's `--help` actually use?
-- **Authentication mechanism** — env var, OAuth, device code, API key header, etc.
-- **Known quirks** (Windows shell requirements, PATH issues, version-specific behavior).
+- **Install status and binary name** — is the user's machine set up? What's the exact command (`agent`? `qwen`? `aider`? `opencode`?).
+- **A drivable headless transport** — see Prerequisites below. This is the make-or-break question.
+- **Exact model identifiers** the CLI accepts (or `auto` if offered). A wrong model string causes a 400/exit-1 at runtime.
+- **Modes / permission flags** — read-only vs write, an `ask`/`plan` mode, a `--force`/`--yolo` auto-approve flag, a sandbox setting. These are what you'll map roles onto inside the adapter.
+- **Runtime flags** — output format (`--output-format json`?), resume/session, background — what does `--help` actually list?
+- **Authentication mechanism** — env var, OAuth keyring, device code, API key header.
+- **Known quirks** (Windows shell requirements, PATH issues, empty-stdout-when-piped bugs, version-specific behavior).
 
-**Pick sources proportional to the question.** Do NOT run every source for every fact. Start cheap and authoritative; escalate only if unclear.
+**Pick sources proportional to the question.** Start cheap and authoritative; escalate only if unclear.
 
-### First: search for an existing Claude Code integration of this CLI
+### First: search for an existing Claude Code (or other) integration of this CLI
 
-Before doing anything else, **search exa for an existing implementation**. The community has wired up many CLIs already (Cursor's ACP adapter, various OpenCode/Aider ports, etc.) — finding one collapses days of trial-and-error into "read their adapter, adapt to our marketplace structure."
+Before anything else, **search exa for an existing implementation**. The community has wired up many CLIs already — finding one collapses days of trial-and-error into "read their adapter, adapt to our marketplace structure."
 
-Useful queries (try in this order, stop when you find a working example):
+Useful queries (try in order, stop when you find a working example):
 
 ```
 <cli-name> claude code plugin
-<cli-name> ACP adapter
+<cli-name> headless print mode json output
+<cli-name> agent SDK / programmatic API
 <cli-name> claude-code marketplace
-<cli-name> agent client protocol
 <cli-name> @anthropic-ai claude
 ```
 
 A reference implementation reveals things probes don't:
 
-- **Spawn quirks** — does the CLI need `shell: true` on Windows? A specific env var to init?
-- **ACP protocol completeness** — many "ACP-supporting" CLIs implement the protocol incompletely; an existing adapter shows what edge cases break.
+- **Spawn quirks** — does the CLI need `shell: true` on Windows? A specific env var to init? Does it want the prompt on stdin vs as an arg?
+- **Output completeness** — does its `-p` mode actually print the answer, or (like `agy`) write nothing to stdout when piped? What's the JSON envelope shape?
 - **Auth flow specifics** — env vars, token paths, OAuth dance details.
-- **Model ID conventions** — version suffixes, deprecated aliases. (The Gemini model family's `-preview` suffix trap — which Antigravity surfaces — is the canonical example.)
-- **Schema-validation pitfalls** — does the CLI's config reject unknown keys? Strict-mode JSON?
+- **Model ID conventions** — version suffixes, deprecated aliases. (The Gemini family's `-preview` suffix trap — which Antigravity surfaces — is the canonical example.)
 
 If you find one:
-1. Read its full adapter implementation. Note any "this CLI is weird about X" comments.
-2. Note any pre-handshake config it requires (extra params in the `initialize` call, custom auth methods, etc.).
-3. Cite the source in your file (NOTICE attribution, plus a comment in the new adapter).
-4. Adapt — don't blindly copy. Our marketplace structure differs from theirs; the principles transfer, the file paths don't.
+1. Read its full implementation. Note any "this CLI is weird about X" comments.
+2. Note pre-flight config it requires (env, config-file entries, auth setup).
+3. Cite the source (NOTICE attribution + a comment in the new adapter).
+4. Adapt — don't blindly copy. Our marketplace structure differs; the principles transfer, the file paths don't.
 
-If you don't find one (or it's stale / not maintained), proceed with the verification ladder below. Looking is cheap; not looking is how you spend 4 hours debugging an ACP handshake that needed one specific param.
+If you don't find one (or it's stale), proceed with the verification ladder below. Looking is cheap.
 
 ### Verification sources, in order of cost/authority
 
-1. **`<cli> --help`, `<cli> models`, `<cli> about`** — fastest, no network, authoritative for "what does this binary accept right now."
-2. **Prompt the CLI itself** (when no listing subcommand exists):
-   ```bash
-   <cli> -p "List the exact <thing> strings this CLI accepts. One per line."
-   ```
-3. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names and deprecation context.
-4. **exa web search** — for changelogs, forum posts, obscure flags context7 doesn't have.
-5. **CLI source on GitHub** — `config/models.ts` constants. Slowest; use only when 1–4 disagree or come up empty.
-
-For a yes/no question ("does this CLI have ACP?") use source 1 or 3 and stop. For a canonical ID that gets hardcoded into files, use 1 plus 3 or 4 to cross-check — two sources is enough.
+1. **`<cli> --help`, `<cli> models`, `<cli> about`, `<cli> --list-models`** — fastest, no network, authoritative for "what does this binary accept right now."
+2. **Vendor docs via context7** — `resolve-library-id` → `query-docs`. Good for canonical names and deprecation context.
+3. **exa web search** — for changelogs, forum posts, obscure flags context7 doesn't have.
+4. **CLI source on GitHub** — config constants. Slowest; use only when 1–3 disagree or come up empty.
+5. **Prompt the CLI itself** (`<cli> -p "List the exact model strings this CLI accepts."`) — only when no listing subcommand exists and docs are empty. Costs credits.
 
 **Hard rules:**
-- **Never ask one CLI about another CLI's features.** It hallucinates as badly as you would. A CLI is a source only for itself.
-- **Preview-suffix trap:** Many CLIs qualify unstable IDs with a suffix (`-preview`, `-beta`, `-exp`). Don't hardcode the unsuffixed variant — it will 404 at runtime. Gemini-family IDs (served via Antigravity) have historically all ended in `-preview`.
+- **Never ask one CLI about another CLI's features.** A CLI is a source only for itself.
+- **Preview-suffix trap:** many CLIs qualify unstable IDs with `-preview`/`-beta`/`-exp`. Don't hardcode the unsuffixed variant — it 404s at runtime.
 - **Resolving disagreements:** CLI wins for "does it work right now"; docs win for "should I use this."
-- **Record the source you used** inline in your response so the user can catch a bad citation.
-- **Check existing adapters** in `plugins/multi/scripts/lib/adapters/` as reference templates for the transport pattern you'll reuse.
+- **Record the source you used** inline so the user can catch a bad citation.
+- **Read the existing adapters** in `plugins/multi/scripts/lib/adapters/` — they're your worked examples (see the transport table at the end).
 
 Proceed without asking the user to confirm facts you can verify yourself.
 
-## Prerequisites — confirm the CLI speaks a structured transport
+## Prerequisites — confirm the CLI can be driven headlessly
 
-Check in this order:
+Check in this order. The first match that fits the CLI is your transport; the earlier ones are simpler.
 
-### 1. Does it support ACP (Agent Client Protocol)?
+### 1. Headless print mode with structured output (the common path)
 
-ACP is a cross-vendor standard. Check the CLI's `--help` output for:
-- `--acp` flag (used by several Gemini/Copilot-style CLIs)
-- `acp` subcommand (used by Cursor)
-- An `--stdio` or `--server` mode that outputs NDJSON/JSON-RPC
+Most modern agent CLIs have a non-interactive mode: `-p`/`--print` with `--output-format json` (single result object) or `--output-format stream-json` (NDJSON events + a final result). The prompt goes in as an arg or on stdin. **This is how Cursor is driven** (`agent -p`), and it's the path most new CLIs will use. If `<cli> --help` shows a print/headless mode with JSON output, **go to "Headless integration"** below — `cursor.mjs` is your template.
 
-If yes, this is the easy path. Skip to "ACP integration" below.
+### 2. The CLI runs headlessly but writes nothing usable to stdout
 
-### 2. Does it support ASP (App Server Protocol)?
+Some CLIs run a prompt but don't print the answer to stdout when piped (a known class of bug — e.g. Antigravity's `agy`, gemini-cli#27466). If the CLI persists results somewhere on disk (a transcript/log/session file), you can still drive it: spawn it, learn the artifact location, and read the answer back. **This is how Antigravity is driven** — `antigravity.mjs` is your template. More work than path 1, but the same five-method `adapter` interface.
 
-ASP is OpenAI's flavor — HTTP + SSE, as used by Codex (`codex --app-server`). If the CLI has a similar flag, you can reuse much of the Codex adapter pattern.
+### 3. App-server / HTTP transport (ASP)
 
-### 3. Does it have a structured headless output mode?
+Some CLIs expose a long-lived server (HTTP + SSE, JSON-RPC over a socket) you connect to and stream turns from. **This is how Codex is driven** (`codex --app-server` behind a broker daemon) — `codex.mjs` + `lib/app-server.mjs` are your template. Reuse this only if the CLI genuinely requires it.
 
-Some CLIs have `-p` or `--print` modes with `--output-format=json` or similar. Not as rich as ACP/ASP but workable — wrap subprocess invocation and parse the JSON stream.
+### 4. ACP (Agent Client Protocol) — legacy/advanced
 
-### 4. None of the above?
+ACP is a cross-vendor stdio JSON-RPC standard. The plugin still ships the ACP client scaffolding (`lib/acp-client.mjs`), but **no current adapter uses it** — Cursor migrated *off* `agent acp` to headless `-p` because, on Windows, ACP MCP tool-calls silently died and cancel was a no-op. Only take the ACP path if a CLI's ACP mode is clearly more capable than its headless mode for your use case. See "Legacy: ACP integration" at the end.
 
-The CLI is probably not a good fit yet. Suggest filing a feature request upstream for ACP support.
+### None of the above?
 
-## ACP integration (easiest path)
+If the CLI has no headless/print mode, no on-disk result artifact, and no server/ACP mode, it can't be driven non-interactively yet. Suggest the user file a feature request upstream for a `-p`/JSON mode.
+
+## The adapter interface (read CONTRACT.md)
+
+Every adapter exports one `adapter` object. The companion consumes only this:
+
+```js
+export const adapter = {
+  name: "<cli>",          // MUST equal the registry key
+  isAvailable,            // sync  (cwd) => { available, detail, version? }   — never throws
+  isAuthenticated,        // async (cwd) => { authenticated, ... }
+  invoke,                 // async (cwd, prompt, options) => result           — see below
+  cancel,                 // async (jobId) => { attempted, interrupted, transport, detail }
+  getSession,             // function | undefined
+};
+```
+
+`invoke`'s `result` carries, by convention: `text` (joined assistant output), `error` (`null` on success, else an object — **set it, don't throw**), `sessionId`/`threadId`, and optionally `fileChanges`, `commandExecutions`, `toolCalls`. `options` may include `model`, `role`, `effort`, `sessionId`, `write`, `onStream`/`onProgress`. Keep the shape uniform so the companion's render/dispatch code stays generic. The conformance test (`test/unit/adapter-contract.test.mjs`) enforces this — `npm test` fails until your adapter matches.
+
+## Headless integration (the common path)
+
+Worked example: `cursor.mjs`. Copy it and adapt.
 
 ### Step 1 — Pick a short CLI name
 
-Use the CLI's brand name, lowercased. E.g., `qwen`, `opencode`, `aider`. This becomes the `--cli <name>` flag value and the slash-command namespace.
+The CLI's brand name, lowercased: `qwen`, `aider` (opencode is already built in). This becomes the `--cli <name>` flag value, the registry key, and the slash-command namespace.
 
 ### Step 2 — Create the adapter inside `multi`
-
-Copy the canonical Cursor adapter as a template:
 
 ```bash
 cp plugins/multi/scripts/lib/adapters/cursor.mjs plugins/multi/scripts/lib/adapters/<new-cli>.mjs
 ```
 
-Edit the new file:
+Edit the new file (these are the real pieces in `cursor.mjs`):
 
-1. **Rename functions** from `*Cursor` to `*<NewCli>` (e.g., `runAcpPromptCursor` → `runAcpPromptOpenCode`).
-2. **Update `buildPrompt(role, userTask)`** — map role names to slash-command prefixes the CLI understands.
-3. **Update the CLI binary name / args.** ACP subcommand: `args: ["acp"]`. ACP flag: `args: ["--acp"]` or `["--acp", "--stdio"]`.
-4. **Update the `adapter` export:**
+1. **Binary resolution** — adapt `findCursorBinary()` → `find<NewCli>Binary()`: an env override (`<NEWCLI>_CLI_PATH`), then `where`/`which`, then a sensible fallback. Keep the env override — it's the operator escape hatch.
+2. **Role → flags** — adapt `isReadOnlyRole()` + the `READ_ONLY_ROLES` set and `buildHeadlessArgs()`. Map your roles to the CLI's real flags: a read-only/`ask` mode for research/explore-style roles, an auto-approve/write mode for delegate/implement-style roles. This is where "role behavior" lives (there is no `buildPrompt`).
+3. **Output parsing** — adapt `parseJsonResult()` / `normalizeHeadlessOutcome()` / the `derive*` helpers to the CLI's JSON envelope. Match the result object's field names (Cursor uses `{type:"result", result, session_id, is_error}` — yours will differ). **Branch on exit code AND the parsed result**, never the result alone: startup errors (bad model, auth) print plain text to stderr with no JSON envelope.
+4. **Availability / auth** — adapt `getCursorAvailability()` (a `--version` probe; never throws) and `getCursorAuthStatus()` (a `status`/login probe).
+5. **The turn** — adapt `runHeadlessCursorTurn()`: spawn `<cli>` with `buildHeadlessArgs(...)`, deliver the prompt (Cursor uses **stdin** — newline-safe, avoids cmd.exe quoting; do the same unless the CLI requires an arg), collect/parse output, resolve the result shape. For stream-json, map events to progress via `onStream`.
+6. **Cancel** — adapt `cancelHeadlessCursor()`. Headless jobs are cancelled by the companion's process-tree kill of the job pid; the adapter's `cancel` just reports the mechanism.
+7. **The `adapter` export** — rename to the new CLI and wire your functions:
    ```js
    export const adapter = {
      name: "<new-cli>",
      isAvailable: get<NewCli>Availability,
      isAuthenticated: get<NewCli>AuthStatus,
-     invoke: runAcpPrompt<NewCli>,
-     cancel: interruptAcpPrompt<NewCli>,
+     invoke: runHeadless<NewCli>Turn,
+     cancel: cancelHeadless<NewCli>,
      getSession: undefined,
    };
    ```
-5. Syntax-check: `node --check plugins/multi/scripts/lib/adapters/<new-cli>.mjs`.
+8. Syntax-check: `node --check plugins/multi/scripts/lib/adapters/<new-cli>.mjs`.
 
-### Step 3 — Register the adapter in the companion
+### Step 3 — Register the adapter and add a dispatch branch
 
-Edit `plugins/multi/scripts/multi-cli-companion.mjs`:
+Three files, post-monolith-split. The `ADAPTERS` map lives in `registry.mjs` — the companion imports it from there via `getAdapter(name)`; **do NOT look for or add an inline `ADAPTERS` map inside `multi-cli-companion.mjs`**.
 
-1. Add import near the other adapter imports:
+1. **`plugins/multi/scripts/lib/adapters/registry.mjs`** — import and register:
    ```js
-   import * as <newCli> from "./lib/adapters/<new-cli>.mjs";
+   import * as <newCli> from "./<new-cli>.mjs";
+   export const ADAPTERS = { codex, cursor, antigravity, opencode, <newCli> };
    ```
-2. Extend `ADAPTERS`:
-   ```js
-   const ADAPTERS = { codex, cursor, antigravity, <newCli> };
-   ```
-3. Extend `executeTaskRun`'s dispatch with an `else if (cli === "<new-cli>")` branch mirroring the cursor branch exactly, substituting `<newCli>.adapter.invoke(...)`.
-4. Extend `buildTaskRunMetadata`'s label map so jobs get a CLI-specific title.
-5. Syntax-check: `node --check plugins/multi/scripts/multi-cli-companion.mjs`.
+   This is the single source of truth the companion and the contract test both read. The contract test (`test/unit/adapter-contract.test.mjs`) checks every registered adapter — adding an adapter here means the test count will increase (one test per registered CLI); bump the expected count in the test if it hardcodes a number.
 
-### Step 3.5 — Verify ACP behavior empirically
+2. **`plugins/multi/scripts/lib/commands/task.mjs`** — `executeTaskRun(request)` dispatches per `cli`. Add an `if (cli === "<new-cli>") { ... }` branch mirroring the **cursor** branch (availability check → build prompt → `await <newCli>.adapter.invoke(workspaceRoot, prompt, { model, role, write, onStream })` → render via `renderTaskResult` → return the standard payload). Add your CLI's label to `buildTaskRunMetadata()`'s `cliLabel` map so jobs get a CLI-specific title. If your CLI can't loop resume turns, mirror the antigravity guard in `handleTask` (`if (untilDone && cli === "<new-cli>") throw …`).
 
-ACP is a standard, but every CLI implements it slightly differently. The contract a CLI advertises in `--help` doesn't always match what its `acp` mode actually does. Before declaring the integration done, run a real prompt that exercises the tools the user will rely on (shell exec, file writes, MCP, web search) and watch the wire.
+3. **`plugins/multi/scripts/multi-cli-companion.mjs`** — add the name to the `--cli <codex|cursor|antigravity|opencode>` usage string in `printUsage()` (cosmetic but expected). The dispatcher itself needs no other change — it resolves the adapter via `getAdapter(cliName)` from the registry.
 
-Set `ACP_TRACE=1` and check a real run end-to-end:
+Syntax-check both scripts and run `npm test` — the contract test will tell you if the adapter shape is off.
+
+### Step 4 — Verify the integration empirically
+
+The CLI's `--help` contract doesn't always match what its headless mode actually does. Before declaring done, run a real prompt that exercises what the user will rely on (file writes, MCP, web/codebase reads) and read the output:
 
 ```bash
-ACP_TRACE=1 node plugins/multi/scripts/multi-cli-companion.mjs task \
-  --cli <new-cli> --role <role> --write \
-  "Run \`echo hello\`, then write a file, then call an MCP tool."
+node plugins/multi/scripts/multi-cli-companion.mjs task \
+  --cli <new-cli> --role <write-role> --write \
+  "Write a file hello.txt containing 'hi', then read it back." 2>&1
 ```
 
-Then look at stderr for incoming JSON-RPC traffic from the agent. The `[acp-trace] <- REQ <method>` lines tell you which client-side ACP methods the agent expects you to provide; `<- NOTIF session/update[<kind>]` lines show streaming progress.
+Check, in whatever order is relevant for what the user wants this CLI to do:
 
-Things to verify (don't have to be in order — just check whichever is relevant for what the user wants this CLI to do):
+- **Result parses.** Does your `normalizeHeadlessOutcome` find the answer? A run that returns empty `text` with a non-zero exit is almost always a startup error sitting in stderr (`2>&1` shows it) — bad model id, not signed in, sandbox block.
+- **Read vs write modes.** Run a read-only role and confirm it *can't* write; run the write role and confirm it *can*. This validates your `READ_ONLY_ROLES`/`buildHeadlessArgs` mapping.
+- **Model pass-through.** Pass a bad `--model` and confirm the CLI's error (often exit 1 + an "Available models: …" list) surfaces through `2>&1`. Then pass a good one. Don't hardcode a model list in the adapter — it drifts; let the CLI validate.
+- **MCP wiring.** If the user needs MCP tools, confirm they fire. Many CLIs read MCP servers from their **own config file** (Cursor: `~/.cursor/mcp.json`; Codex: `~/.codex/config.toml`; Antigravity/agy: `~/.gemini/settings.json`), not from anything we pass. If tools are "missing," populate that file.
+- **Cancel.** Start a long background run (`--background`) and `/multi:cancel <job-id>`; confirm the process tree dies.
 
-- **Permission gate.** Does the agent send `session/request_permission` over ACP, or does it gate tool use through some out-of-band mechanism (a config file, a flag, a pre-approval list)? If you see `tool_call_update` go to `in_progress` and never `completed` with no incoming REQs, it's almost always an out-of-band gate. (Cursor historically gated via `~/.cursor/cli-config.json`'s `permissions.allow` array — that workaround is no longer needed since the 2026.04.17 regression was fixed upstream, but the pattern recurs in other CLIs, so watch for it.)
-- **Terminal handling.** Some agents implement `terminal/*` RPCs themselves (just declare `clientCapabilities.terminal=true` in the handshake and `acp-client.mjs`'s `buildAutoApproveRequestHandler` services them). Others run terminals internally and skip ACP entirely. Watching for `<- REQ terminal/create` tells you which.
-- **MCP wiring.** `session/new` accepts an `mcpServers` array, but some agents silently ignore it in ACP mode (Cursor staff has confirmed this for `agent acp`). If the agent reports your MCP tools as missing, see if the CLI has a per-CLI MCP config file (e.g. `~/.cursor/mcp.json`) you should populate instead.
-- **Mode setting.** `session/set_mode` semantics vary: for Cursor, "agent" gives full tool access while "plan"/"ask" restrict it; other ACP CLIs expose an equivalent (e.g. an `approvalMode: "yolo"`-style param) for max permissions. Try setting and not setting it during testing.
-- **CLI-side flags.** A CLI's interactive `--yolo` / `--force` / `--approve-mcps` flags often **don't apply to ACP mode** — they're for the interactive REPL or `-p` print mode. Don't assume they're a fix; verify on the wire.
-- **Version sensitivity.** The same CLI can change behavior across builds (e.g. Cursor 2026.04.14 → 2026.04.17 broke MCP tool use in ACP). If something works locally and breaks in the field, check version specifics.
+For a clean headless CLI most of this just works. Don't add guards for problems the CLI doesn't have.
 
-**The Cursor adapter is the worked example for everything above.** When in doubt, read `plugins/multi/scripts/lib/adapters/cursor.mjs` end-to-end — it shows the full set of workarounds that actually shipped: handshake capability declaration, mode-setting per role, model selection via `session/set_config_option`, version-specific warnings, and spawn flags. Adapt the patterns that apply to the new CLI; not all of them will.
+### Step 5 — Add subagents (forwarders) for each role
 
-For straightforward CLIs (clean ACP impl, no out-of-band gates), most of the above will be no-ops and the basic adapter scaffold from Step 2 will just work. Don't add guards for problems the CLI doesn't have.
+One file per role: `plugins/multi/agents/<new-cli>-<role>.md`. Match the shape of the shipped forwarders — they are NOT bare one-liners:
 
-### Step 4 — Add subagents for each role
-
-Create one subagent file per role in `plugins/multi/agents/<new-cli>-<role>.md`:
-
-```markdown
+````markdown
 ---
 name: <new-cli>-<role>
-description: Use when the user asks for <role-appropriate tasks> via <NewCli>.
-model: sonnet
+description: <disjoint, role-specific trigger — when to use THIS role, and when not to (point at sibling roles).>
+model: sonnet          # see model-by-role below
 tools: Bash
+skills:
+  - multi-cli-runtime  # REQUIRED — the shared flag/failure contract
 ---
 
-You are a thin forwarding wrapper around the cc-multi-cli-plugin companion runtime for <NewCli>.
+You are a thin forwarding wrapper around the cc-multi-cli-plugin companion runtime for <NewCli>'s <role> role.
 
-Use exactly one `Bash` call:
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <new-cli> --role <role> ...`
+Forward the user's request to the companion via exactly one Bash call. Do not do the work yourself.
+The forwarding contract — flag handling, `--plan`/`--prompt-file`, `2>&1`, the failure line — is in the `multi-cli-runtime` skill. Follow it exactly.
 
-Preserve task text verbatim. Return stdout exactly. No commentary.
+## Prompt framing            ← include ONLY for write/agentic roles; omit for pure read bridges
+**Skip this section entirely if `--plan`/`--prompt-file` is present** (the file is the prompt).
+Otherwise prepend this block, then a blank line, then the user's task verbatim:
+```
+You are <NewCli> in agent mode. Implement the task end-to-end without asking for confirmation.
+End with a structured report: ## Outcome / ## Files touched / ## Verification / ## Notes.
+Task:
+<user task verbatim>
 ```
 
-Subagent names are `<cli>-<role>` (e.g., `opencode-writer`). Invocation path: `subagent_type: "multi:<cli>-<role>"`.
+## Companion invocation
+Use exactly one Bash call:
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <new-cli> --role <role> ... 2>&1`
+- Default `--write` for write roles; pass `--read-only` for read-only roles.
+- Return the companion's stdout verbatim. On Bash failure or empty output, return one line: `<NewCli> <role> failed: <one-line reason>`.
+````
 
-### Step 5 — Create the new plugin directory
+**Model by role** (this mirrors the shipped forwarders and the official `codex-plugin-cc`):
+- **Sonnet** for forwarders that *frame or route* the prompt — write/agentic roles (implement, delegate) and anything choosing model/effort. Better framing materially improves what the external CLI then produces.
+- **Haiku** for pure path-bridges that do *no* framing — a read-only research/review forwarder that just passes flags through. Cheapest correct model.
+
+Use `multi-plan-handoff` (already shipped) on the parent side for execute/delegate roles — no per-CLI work needed; just reference it from the command file (Step 7).
+
+### Step 6 — Create the new plugin directory
 
 ```bash
 mkdir -p plugins/<new-cli>/.claude-plugin plugins/<new-cli>/commands
 ```
 
-Write `plugins/<new-cli>/.claude-plugin/plugin.json`:
+Write `plugins/<new-cli>/.claude-plugin/plugin.json` (match the **current** marketplace version — check `marketplace.json`; the shipped plugins are at `3.0.0`):
 
 ```json
 {
   "name": "<new-cli>",
-  "description": "Delegate <roles> to <NewCli> CLI. Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
+  "description": "Delegate <roles> to <NewCli> CLI (headless). Part of cc-multi-cli-plugin. Requires the `multi` plugin.",
   "version": "3.0.0",
   "author": { "name": "greenpolo", "url": "https://github.com/greenpolo" },
   "license": "Apache-2.0",
-  "keywords": ["claude-code", "<new-cli>", "<role>", "acp"]
+  "keywords": ["claude-code", "<new-cli>", "<role>"]
 }
 ```
 
-### Step 6 — Write command files
+### Step 7 — Write command files
 
-One markdown per role in `plugins/<new-cli>/commands/<role>.md`:
+One markdown per role in `plugins/<new-cli>/commands/<role>.md` (filename becomes the part after the colon — `write.md` → `/<new-cli>:write`):
 
 ```markdown
 ---
 description: <what this does>
-argument-hint: "[--model <model>] <what to do>"
+argument-hint: "[--background|--wait] [--model <model>] <what to do>"
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
-Dispatch to the `multi:<new-cli>-<role>` subagent via the `Agent` tool.
+Invoke the `multi:<new-cli>-<role>` subagent via the `Agent` tool, forwarding the user's request.
 
 Raw user request:
 $ARGUMENTS
@@ -233,11 +267,11 @@ $ARGUMENTS
 Return the subagent's output verbatim.
 ```
 
-Command filename becomes the part after the colon in the slash: `plugins/opencode/commands/write.md` → `/opencode:write`.
+For an execute/delegate (write) role, add a short "plan-by-reference" note like `cursor/commands/delegate.md` has, pointing at the `multi-plan-handoff` skill, so a plan file in context is passed with `--plan <path>` instead of paraphrased.
 
-### Step 7 — Register the new plugin in the marketplace
+### Step 8 — Register the new plugin in the marketplace
 
-Edit `.claude-plugin/marketplace.json` (at the repo root) and add a new entry to the `plugins` array:
+Edit `.claude-plugin/marketplace.json` (repo root) and add to the `plugins` array:
 
 ```json
 {
@@ -249,53 +283,67 @@ Edit `.claude-plugin/marketplace.json` (at the repo root) and add a new entry to
 }
 ```
 
-Validate: `claude plugin validate <repo-root>` should pass.
-
-### Step 8 — Install and test
+### Step 9 — Install and test
 
 ```bash
+claude plugin validate <repo-root>        # must pass — catches JSON/frontmatter errors
+npm test                                   # contract + offline suite, no tokens
 claude plugin marketplace update cc-multi-cli-plugin
 claude plugin install <new-cli>@cc-multi-cli-plugin
 claude plugin install multi@cc-multi-cli-plugin --force   # pick up new subagent files
 ```
 
-Restart Claude Code. Try `/<new-cli>:<role> <prompt>`.
+Restart Claude Code (subagent definitions are session-cached), then try `/<new-cli>:<role> <prompt>`. Add a `CHANGELOG.md` entry under `## Unreleased`.
 
-## ASP integration (medium difficulty)
+## Spawn + read-artifacts integration (no usable stdout)
 
-ASP requires a different transport (HTTP + SSE vs stdio JSON-RPC). If the new CLI uses ASP-style servers:
+Worked example: `antigravity.mjs`. Take this path only when the CLI runs headlessly but doesn't print the answer (path 2 in Prerequisites). The structure differs from the headless-JSON path in one place — `invoke` instead of parsing stdout:
 
-1. Study `plugins/multi/scripts/lib/app-server.mjs` and `plugins/multi/scripts/lib/adapters/codex.mjs`.
-2. Model the new adapter on `codex.mjs` instead of `cursor.mjs`.
-3. Steps 3–8 above still apply — the `ADAPTERS` registration and plugin scaffolding are protocol-agnostic.
+1. Spawn the CLI with whatever makes it persist results (for `agy`: `agy -p "<prompt>" --add-dir <cwd> --log-file <tmp> --print-timeout`).
+2. Learn the result location. `agy` writes a `Created conversation <id>` line to the `--log-file`; the adapter parses it (with a `cache/last_conversations.json[cwd]` fallback) and reads `~/.gemini/antigravity-cli/brain/<id>/.../transcript.jsonl` — the last non-empty `PLANNER_RESPONSE`/`MODEL` step is the answer.
+3. Watchdog: kill the process tree on timeout; clean up the temp log.
+4. Conform to the same five-method `adapter` interface; `isAvailable` is a `--version`/path probe, `isAuthenticated` checks the CLI's own credential file.
 
-This is more code than ACP integration — only take this path if the new CLI genuinely requires it.
+Steps 3 (register + dispatch), 5–9 (subagents, plugin, commands, marketplace, install) are **identical** to the headless path. The lesson `antigravity.mjs` teaches: the `adapter` interface is transport-agnostic — when a CLI has no clean stdout to parse, you implement the same five methods over "spawn the binary and read the files it writes."
 
-## Subprocess + stream-json integration (fallback)
+## ASP integration (HTTP/app-server)
 
-If the CLI lacks ACP/ASP but has a headless JSON-output mode, write an adapter that:
-1. Spawns the CLI with `-p --output-format=json` (or equivalent).
-2. Parses the JSON stream or final output.
-3. Normalizes to the same result shape as other adapters: `{ sessionId, text, fileChanges, error }`.
+Worked example: `codex.mjs` (split into `codex-transport.mjs` / `codex-render-parse.mjs` / `codex-roles-prompts.mjs`) + `lib/app-server.mjs` + the broker daemon (`app-server-broker.mjs`, `lib/broker-lifecycle.mjs`). Take this only if the CLI requires a long-lived server connection. It's substantially more code (session/broker lifecycle, idle reaping). Steps 3, 5–9 still apply — registration, dispatch, and plugin scaffolding are transport-agnostic. Model the new adapter on `codex.mjs` instead of `cursor.mjs`.
 
-The `adapter` export interface (`name`, `isAvailable`, `invoke`, etc.) stays identical — only the transport differs.
+## Legacy: ACP integration (advanced, currently unused)
+
+The plugin retains ACP client scaffolding (`lib/acp-client.mjs`, `acp-diagnostics.mjs`) from when Cursor was driven via `agent acp`. **No shipped adapter uses ACP today** — Cursor migrated to headless `-p` because ACP, on this CLI/OS, silently stopped firing MCP tool-calls (~2026.04.17) and had no working cancel. Reach for ACP only if a specific CLI's ACP mode is clearly better than its headless mode.
+
+If you do, set `ACP_TRACE=1` and watch stderr for `[acp-trace] <- REQ/RES/NOTIF <method>` lines while running a real prompt — that tells you exactly what JSON-RPC traffic crosses the wire. Things that bite ACP integrations specifically (each is why headless turned out simpler):
+
+- **Permission gate.** Does the agent send `session/request_permission` over ACP, or gate tool use out-of-band (a config file, a pre-approval list)? `tool_call_update` going to `in_progress` and never `completed`, with no incoming REQs, means an out-of-band gate.
+- **Terminal handling.** Some agents implement `terminal/*` RPCs (declare `clientCapabilities.terminal=true`); others run terminals internally and skip ACP. `<- REQ terminal/create` tells you which.
+- **MCP wiring.** `session/new` accepts an `mcpServers` array, but some agents ignore it in ACP mode (Cursor staff confirmed this for `agent acp`) — populate the CLI's own MCP config file instead.
+- **Mode setting.** `session/set_mode` semantics vary (agent vs plan/ask, or an `approvalMode:"yolo"`-style param).
+- **CLI flags don't always apply to ACP mode.** Interactive `--yolo`/`--force` flags often don't reach ACP — verify on the wire.
+- **Version sensitivity.** The same CLI can change ACP behavior across builds. `acp-client.mjs` is the worked reference for handshake capability declaration and the auto-approve request handler if you genuinely need this path.
 
 ## Worked examples by transport
 
-The shipped adapters cover three transport shapes — use whichever matches the CLI you're adding:
+The shipped adapters cover the live transport shapes — match the one that fits the CLI you're adding:
 
-- **ACP (stdio JSON-RPC)** — `cursor.mjs` is the canonical worked example. Any CLI exposing an `acp` subcommand or `--acp`/`--stdio` mode follows this pattern. OpenCode, Aider, and similar ACP-capable CLIs are candidates here.
-- **ASP (HTTP + SSE)** — `codex.mjs` is the worked example (`codex --app-server`). Model on it when the CLI uses an app-server style transport.
-- **Non-ACP headless CLI (spawn + read artifacts)** — `antigravity.mjs` is the worked example of a CLI that does **not** speak ACP or any structured stdio/HTTP protocol you can stream. Google's `agy` runs a prompt via `agy -p`, but (as of agy 1.0.3) writes nothing to stdout when piped (upstream bug gemini-cli#27466), so the adapter spawns it, learns the conversation id from a per-invocation `--log-file`, and recovers the answer from `agy`'s on-disk transcript JSONL. It conforms to the same `adapter` export interface (`name`, `isAvailable`, `isAuthenticated`, `invoke`, `cancel`). The lesson it teaches: **the `adapter` interface is transport-agnostic** — when a CLI has no clean protocol to drive headlessly, you can still register it by implementing the same five-method interface over whatever it does expose (here: spawn the binary and parse the files it writes), with detection (`isAvailable`) as a `--version`/path probe.
-
-Any CLI that speaks a structured protocol — stdio, HTTP, or RPC-to-a-running-app — is a candidate.
+| Transport | Worked example | When |
+|---|---|---|
+| **Headless print mode** (prompt on stdin/arg, JSON or stream-json on stdout) | `cursor.mjs`, `opencode.mjs` | The common path. Any CLI with a `-p`/`--print` + `--output-format json` mode. Aider, etc. |
+| **Headless NDJSON** (prompt on stdin, NDJSON event stream on stdout) | `opencode.mjs` | OpenCode's `opencode run --format json` — a NDJSON variant of headless print mode; same five-method interface. |
+| **Spawn + read-artifacts** (CLI runs but stdout is empty/unusable; answer persisted on disk) | `antigravity.mjs` | A CLI with an empty-piped-stdout bug or a transcript/log file as the only result sink. |
+| **ASP / app-server** (HTTP+SSE or socket JSON-RPC to a long-lived server) | `codex.mjs` + `lib/app-server.mjs` | A CLI that only exposes a server mode. |
+| **ACP** (stdio JSON-RPC) — *legacy* | `lib/acp-client.mjs` scaffolding (no current adapter) | Only if a CLI's ACP mode beats its headless mode. Cursor migrated *off* this. |
 
 ## Things NOT to change when adding a new CLI
 
-- `plugins/multi/scripts/lib/acp-client.mjs`, `job-control.mjs`, `state.mjs`, `render.mjs` — shared infrastructure.
-- `plugins/multi/scripts/lib/adapters/codex.mjs`, `cursor.mjs`, `antigravity.mjs` — existing adapters.
+- `plugins/multi/scripts/lib/job-control.mjs`, `state.mjs`, `render.mjs`, `workspace.mjs`, `tracked-jobs.mjs` — shared infrastructure.
+- The existing adapters (`codex*.mjs`, `cursor.mjs`, `antigravity.mjs`, `opencode.mjs`) — read them as templates; don't modify them.
+- `plugins/multi/scripts/multi-cli-companion.mjs` beyond the one-line `--cli` usage string — it's a thin dispatcher.
 - `plugins/multi/hooks/hooks.json` — unless the new CLI specifically needs a hook.
+
+You DO edit, by design: your new `<cli>.mjs`, `registry.mjs`, `lib/commands/task.mjs` (dispatch branch + label), and the new `plugins/<cli>/` plugin.
 
 ## Closing
 
-After adding a new CLI, consider contributing the adapter back upstream. The plugin welcomes new CLIs that demonstrate working adapters — it's part of why the architecture is modular.
+After adding a new CLI, consider contributing the adapter back upstream — the modular adapter interface exists precisely so new CLIs are easy to land. A working adapter + a contract-test pass + a CHANGELOG note is the bar.

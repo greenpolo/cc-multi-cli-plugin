@@ -6,13 +6,13 @@ user-invocable: false
 
 # Multi-CLI Runtime
 
-Use this skill only inside `multi:*` forwarding subagents (`codex-execute`, `cursor-delegate`, `cursor-research`, `cursor-explore`, `antigravity-researcher`, `antigravity-explorer`, etc.).
+Use this skill only inside `multi:*` forwarding subagents (`codex-execute`, `cursor-delegate`, `cursor-research`, `cursor-explore`, `antigravity-researcher`, `antigravity-explorer`, `opencode-delegate`, `opencode-researcher`, `opencode-explorer`, etc.).
 
 ## Primary helper
 
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli <cli> --role <role> [flags] --prompt "<text>"`
 
-Where `<cli>` is one of `codex|cursor|antigravity` (or any CLI added via the `multi-cli-anything` skill) and `<role>` is the subagent's logical role. Cursor uses `delegate` (write/agent), `research` (read-only web), and `explore` (read-only codebase); Codex uses `execute`; other roles in use include `writer`, `debugger`, `researcher`, `reviewer`, `explorer`, `ask`.
+Where `<cli>` is one of `codex|cursor|antigravity|opencode` (or any CLI added via the `multi-cli-anything` skill) and `<role>` is the subagent's logical role. Cursor uses `delegate` (write/agent), `research` (read-only web), and `explore` (read-only codebase); Codex uses `execute`; OpenCode uses `delegate` (write), `research` (read-only web), and `explore` (read-only codebase); other roles in use include `writer`, `debugger`, `researcher`, `reviewer`, `explorer`, `ask`.
 
 ## Execution rules
 
@@ -30,7 +30,8 @@ Treat these as runtime controls — strip them from the task text before forward
 - `--resume` — translate to `--resume-last`.
 - `--fresh` — do not add `--resume-last`, even if the user's text sounds like a follow-up.
 - `--write` — default to `--write` for execute/delegate/writer/debugger/reviewer roles (these need to edit files); for read-only roles (research/explore/planner/researcher/explorer/ask) pass `--read-only` instead (it forces write off even if `--write` is also present). Honor explicit user override either way.
-- `--until-done` — Codex and Cursor. Tells the companion to loop resume turns on the same session (Codex app-server thread / Cursor headless `--resume`) until the model emits `PLAN COMPLETE`, hits a hard error, runs out of turns, or stops making progress. Pass through verbatim when the user opts in. The companion prepends a small protocol header to the first turn automatically; do not add your own. Default off — only set when the user explicitly asked for autonomous run-until-done behavior. Antigravity rejects this flag.
+- `--until-done` — Codex, Cursor, and OpenCode. Tells the companion to loop resume turns on the same session until the model emits `PLAN COMPLETE`, hits a hard error, runs out of turns, or stops making progress. Pass through verbatim when the user opts in. Default off — only set when the user explicitly asked for autonomous run-until-done behavior. Antigravity rejects this flag. **Note: OpenCode does NOT support `--effort`** — pass it only to Codex; OpenCode ignores it.
+- **OpenCode role note:** OpenCode has no `--read-only` flag. For read-only roles (`research`, `explore`) the adapter enforces read-only by injecting a custom oc-* primary agent via `OPENCODE_CONFIG_CONTENT` with write/edit/bash denied, plus an `OPENCODE_PERMISSION` deny floor. Passing `--read-only` to the companion is still correct for the forwarder; the adapter handles the enforcement.
 - `--max-turns <N>` — Codex and Cursor. Sets the autonomous-mode turn ceiling (default 30). Requires `--until-done`. Pass through verbatim if present.
 - `--plan <path>` and `--prompt-file <path>` — both load the prompt body from a file. `--plan` is the user-facing alias; the companion's actual flag is `--prompt-file`. Translate `--plan` to `--prompt-file` on the Bash call. When either flag is present:
   1. The file's bytes ARE the prompt — do NOT paste a framing block in front of them. Skip the role-specific preamble entirely.

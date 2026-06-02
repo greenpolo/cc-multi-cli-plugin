@@ -14,6 +14,7 @@ import {
   getTaskDedupWindowMs,
   normalizeMaxTurns
 } from "../../plugins/multi/scripts/lib/commands/task.mjs";
+import * as opencode from "../../plugins/multi/scripts/lib/adapters/opencode.mjs";
 import { upsertJob } from "../../plugins/multi/scripts/lib/state.mjs";
 
 test("normalizeMaxTurns parses, floors, and validates", () => {
@@ -106,6 +107,11 @@ test("buildAutonomousRawOutput error footer honors a custom cliLabel", () => {
     { stopReason: "error", turnCount: 1, maxTurns: 30, cliLabel: "Cursor" }
   );
   assert.match(cursor, /Cursor returned an error/);
+  const opencode = buildAutonomousRawOutput(
+    [{ turn: 1, message: "x" }],
+    { stopReason: "error", turnCount: 1, maxTurns: 30, cliLabel: "OpenCode" }
+  );
+  assert.match(opencode, /OpenCode returned an error/);
 });
 
 // ── evaluateAutonomousStop (shared codex/cursor stop ladder) ───────────────────
@@ -200,6 +206,37 @@ test("buildTaskRunMetadata labels titles per cli", () => {
   assert.equal(buildTaskRunMetadata({ prompt: "do work", cli: "codex" }).title, "Codex Task");
   assert.equal(buildTaskRunMetadata({ prompt: "do work", cli: "cursor" }).title, "Cursor Task");
   assert.equal(buildTaskRunMetadata({ prompt: "do work", cli: "antigravity" }).title, "Antigravity Task");
+  assert.equal(buildTaskRunMetadata({ prompt: "do work", cli: "opencode" }).title, "OpenCode Task");
+});
+
+test("buildTaskRunMetadata labels an OpenCode resume", () => {
+  const meta = buildTaskRunMetadata({ prompt: "", resumeLast: true, cli: "opencode" });
+  assert.equal(meta.title, "OpenCode Resume");
+});
+
+// ── OpenCode dispatch: --until-done gating mirrors the cursor branch ────────────
+// The opencode branch computes `untilDone = requestedUntilDone && !isReadOnlyRole`,
+// so a delegate (write) role keeps --until-done while a read-only research/explore
+// role is forced to a single turn. Exercise the exact predicate the branch uses.
+
+test("opencode --until-done is honored for the delegate (write) role", () => {
+  const requestedUntilDone = true;
+  const effective = requestedUntilDone && !opencode.isReadOnlyRole("delegate");
+  assert.equal(effective, true, "delegate must keep autonomous --until-done");
+});
+
+test("opencode --until-done collapses to single-turn for read-only roles", () => {
+  for (const role of ["research", "researcher", "explore", "explorer", "ask", "planner", "plan"]) {
+    const effective = true && !opencode.isReadOnlyRole(role);
+    assert.equal(effective, false, `${role} must be forced single-turn`);
+  }
+});
+
+test("opencode delegate read-only/write classification matches the dispatch branch", () => {
+  assert.equal(opencode.isReadOnlyRole("delegate"), false);
+  assert.equal(opencode.isReadOnlyRole("writer"), false);
+  assert.equal(opencode.isReadOnlyRole("research"), true);
+  assert.equal(opencode.isReadOnlyRole("explore"), true);
 });
 
 test("buildTaskRunMetadata falls back to the continue prompt summary on resume", () => {

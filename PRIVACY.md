@@ -4,7 +4,7 @@ _Last updated: 2026-04-26_
 
 ## TL;DR
 
-**The plugin itself collects nothing.** It runs entirely on your machine, has no server, no telemetry, no analytics, and no phone-home. The only data that ever leaves your computer goes to the third-party AI CLIs (Codex, Gemini, Cursor, Copilot, Qwen) and MCP servers (Exa, Context7) **that you explicitly invoke** — and only when you invoke them. Each of those services has its own privacy policy that governs what they do with your prompts.
+**The plugin itself collects nothing.** It runs entirely on your machine, has no server, no telemetry, no analytics, and no phone-home. The only data that ever leaves your computer goes to the third-party AI CLIs (Codex, Cursor, Antigravity, OpenCode) and MCP servers (Exa, Context7) **that you explicitly invoke** — and only when you invoke them. Each of those services has its own privacy policy that governs what they do with your prompts.
 
 ## What the plugin does not do
 
@@ -30,11 +30,10 @@ When you invoke one of the plugin's commands or subagents, your prompt is forwar
 
 | CLI / service | Provider | Their privacy policy |
 |---|---|---|
-| `/codex:execute` | OpenAI | https://openai.com/policies/privacy-policy |
-| `/gemini:research`, `/gemini:explore` | Google | https://policies.google.com/privacy |
+| `/codex:execute`, `/codex:review`, `/codex:adversarial-review`, `/codex:rescue` | OpenAI | https://openai.com/policies/privacy-policy |
 | `/cursor:delegate`, `/cursor:research`, `/cursor:explore` | Cursor (Anysphere) | https://cursor.com/privacy |
-| `/copilot:research`, `/copilot:review`, `/copilot:plan` | GitHub | https://docs.github.com/en/site-policy/privacy-policies |
-| `/qwen:write` | Alibaba | https://qwenlm.com/privacy (or the provider you've configured) |
+| `/antigravity:research`, `/antigravity:explore` | Google | https://policies.google.com/privacy |
+| `/opencode:delegate`, `/opencode:research`, `/opencode:explore` | OpenCode (SST) / configured model provider | https://opencode.ai/docs (and the routed provider's policy) |
 | Exa MCP (web search) | Exa | https://exa.ai/privacy-policy |
 | Context7 MCP (library docs) | Upstash | https://upstash.com/privacy |
 | Claude Code itself | Anthropic | https://www.anthropic.com/legal/privacy |
