@@ -1,6 +1,6 @@
 {
   "name": "cc-multi-cli-plugin",
-  "version": "3.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin that offloads coding work to external CLIs (Codex, Cursor, Antigravity, OpenCode) to reduce Claude token usage.",

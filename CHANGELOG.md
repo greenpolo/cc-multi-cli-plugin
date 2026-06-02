@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-06-02
+
+> **Versioning reset.** The project moved to a pre-1.0 `0.x` scheme to reflect that it is in active development; the earlier `v2.0.0`/`v2.0.1` GitHub releases were removed. Entries under **Pre-reset history** below predate this reset and are kept as a record (their version numbers do not continue the `0.x` line).
 
 ### Added
 
@@ -23,6 +25,12 @@
 - **Repo structure for multi-agent work (no behavior change).** Added `AGENTS.md`/`CLAUDE.md` orientation, `ARCHITECTURE.md`, an explicit adapter `CONTRACT.md`, a zero-dependency offline test suite (`npm test`, Node's built-in runner) with a reusable sandbox fixture, and a gitignored `.agent/` scratch area. Began splitting the companion monolith: extracted the pure task-option normalizers (model alias, reasoning-effort validation, argv splitting) into `lib/task-options.mjs` with characterization tests.
 - **Split the two monoliths into focused modules (no behavior change).** `multi-cli-companion.mjs` (1462 lines) is now a ~100-line dispatcher; its command handlers moved verbatim into `lib/commands/{shared,setup,jobs,review,task}.mjs`. `lib/adapters/codex.mjs` (1110 lines) is now a ~30-line re-export barrel over `codex-{roles-prompts,render-parse,transport}.mjs`, keeping the public import surface and the `adapter` object intact. Every function was moved byte-for-byte; the offline suite grew from 27 to **82** characterization tests (all passing), and the live suite plus an adversarial verbatim diff against the prior revision confirm the CLI surface and behavior are unchanged.
 - **Antigravity transport: replaced the planned desktop Language Server (ConnectRPC live-attach) with the headless `agy` CLI.** The v3.0.0 stub targeted attaching to the running Antigravity 2.0 desktop app's LS; that approach is dropped — driving the Antigravity desktop/OAuth login from third-party software violates Google's ToS, and Google now ships the standalone `agy` CLI (which runs without the desktop app). The `antigravity.mjs` stub is replaced by a real adapter, `handleCancel` gained an antigravity branch, and `/multi:setup` now points users at installing `agy` and signing in (rather than running the desktop app).
+
+---
+
+## Pre-reset history
+
+_The entries below predate the move to `0.x` versioning and are retained for the record._
 
 ## v3.0.0 — 2026-05-24
 

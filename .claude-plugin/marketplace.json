@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Marketplace for cc-multi-cli-plugin — delegation to Codex, Cursor, Antigravity, and OpenCode CLIs from Claude Code.",
-    "version": "3.0.0"
+    "version": "0.1.0"
   },
   "plugins": [
     {
       "name": "multi",
       "description": "Hub — companion runtime, subagents, setup wizard, customization skills. Install first.",
-      "version": "3.0.0",
+      "version": "0.1.0",
       "author": {
         "name": "greenpolo"
       },
@@ -21,7 +21,7 @@
     {
       "name": "codex",
       "description": "Adds /codex:execute, /codex:rescue, /codex:review, /codex:adversarial-review. Requires multi.",
-      "version": "3.0.0",
+      "version": "0.1.0",
       "author": {
         "name": "greenpolo"
       },
@@ -30,7 +30,7 @@
     {
       "name": "cursor",
       "description": "Adds /cursor:delegate, /cursor:research, /cursor:explore. Requires multi.",
-      "version": "3.0.0",
+      "version": "0.1.0",
       "author": {
         "name": "greenpolo"
       },
@@ -39,7 +39,7 @@
     {
       "name": "antigravity",
       "description": "Adds /antigravity:research and /antigravity:explore (read-only; Gemini 3.5 Flash via Google's headless agy CLI). EXPERIMENTAL. Requires multi and the agy CLI installed + signed in.",
-      "version": "3.0.0",
+      "version": "0.1.0",
       "author": {
         "name": "greenpolo"
       },
@@ -48,7 +48,7 @@
     {
       "name": "opencode",
       "description": "Adds /opencode:delegate, /opencode:research, /opencode:explore. Requires multi.",
-      "version": "3.0.0",
+      "version": "0.1.0",
       "author": {
         "name": "greenpolo"
       },
