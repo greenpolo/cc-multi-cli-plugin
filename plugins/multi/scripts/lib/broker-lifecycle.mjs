@@ -112,11 +112,28 @@ async function isBrokerEndpointReady(endpoint) {
 
 export async function ensureBrokerSession(cwd, options = {}) {
   const existing = loadBrokerSession(cwd);
-  if (existing && (await isBrokerEndpointReady(existing.endpoint))) {
-    return existing;
-  }
-
+  // The codex app-server is spawned once, at broker birth, with a fixed set of
+  // `-c` config overrides (codexArgsKey). A broker is detached and reused across
+  // sessions, so without this check a broker spawned with stale config — e.g. a
+  // pre-update broker launched before the win32 -NoProfile hardening, or one
+  // predating an escape-hatch change — would keep serving the old behavior until
+  // it idle-reaped. Treat a config-key mismatch like a dead broker: replace it.
+  const desiredArgsKey = options.codexArgsKey ?? null;
   if (existing) {
+    const ready = await isBrokerEndpointReady(existing.endpoint);
+    const argsMatch = (existing.codexArgsKey ?? null) === desiredArgsKey;
+    if (ready && argsMatch) {
+      return existing;
+    }
+    // A live broker with stale config: ask it to shut down cleanly before we
+    // replace it, so it isn't orphaned for the rest of its idle window.
+    if (ready && !argsMatch) {
+      try {
+        await sendBrokerShutdown(existing.endpoint);
+      } catch {
+        // Best effort; teardown + respawn below proceeds regardless.
+      }
+    }
     teardownBrokerSession({
       endpoint: existing.endpoint ?? null,
       pidFile: existing.pidFile ?? null,
@@ -164,7 +181,8 @@ export async function ensureBrokerSession(cwd, options = {}) {
     pidFile,
     logFile,
     sessionDir,
-    pid: child.pid ?? null
+    pid: child.pid ?? null,
+    codexArgsKey: desiredArgsKey
   };
   saveBrokerSession(cwd, session);
   return session;

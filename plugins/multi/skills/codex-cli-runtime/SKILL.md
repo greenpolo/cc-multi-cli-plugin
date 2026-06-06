@@ -25,7 +25,7 @@ Execution rules:
 
 Command selection:
 - Use exactly one `task` invocation per rescue handoff.
-- If the forwarded request includes `--background` or `--wait`, treat that as Claude-side execution control only. Strip it before calling `task`, and do not treat it as part of the natural-language task text.
+- Run `task` in the FOREGROUND (no `--background`) so the call returns Codex's real result; the parent command handles background scheduling by running this subagent as a harness background task (that is what notifies the main thread). `--background` / `--wait` are Claude-side scheduling controls — strip them from the natural-language task text; only honor an explicit `--background` as user-requested fire-and-forget polled via `/multi:status`.
 - If the forwarded request includes `--model`, normalize `spark` to `gpt-5.3-codex-spark` and pass it through to `task`.
 - If the forwarded request includes `--effort`, pass it through to `task`.
 - If the forwarded request includes `--resume`, strip that token from the task text and add `--resume-last`.

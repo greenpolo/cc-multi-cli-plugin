@@ -13,7 +13,9 @@ import {
   buildResumeParams,
   buildTurnInput,
   buildTaskThreadName,
-  buildPersistentTaskThreadName
+  buildPersistentTaskThreadName,
+  withWindowsShellGuidance,
+  WINDOWS_SHELL_GUIDANCE
 } from "../../plugins/multi/scripts/lib/adapters/codex-roles-prompts.mjs";
 import {
   parseStructuredOutput
@@ -25,8 +27,13 @@ import {
   collectTouchedFiles,
   buildResultStatus,
   extractThreadId,
-  extractTurnId
+  extractTurnId,
+  resolveTurnInactivityMs
 } from "../../plugins/multi/scripts/lib/adapters/codex-transport.mjs";
+import {
+  buildCodexConfigOverrides,
+  buildCodexAppServerArgs
+} from "../../plugins/multi/scripts/lib/app-server.mjs";
 
 // ── parseStructuredOutput ─────────────────────────────────────────────────────
 
@@ -204,4 +211,75 @@ test("extractTurnId: prefers params.turnId then params.turn.id then null", () =>
   assert.equal(extractTurnId({ params: { turn: { id: "u2" } } }), "u2");
   assert.equal(extractTurnId({ params: {} }), null);
   assert.equal(extractTurnId(null), null);
+});
+
+// ── withWindowsShellGuidance ──────────────────────────────────────────────────
+
+test("withWindowsShellGuidance: prepends guidance and preserves prompt on win32", () => {
+  const out = withWindowsShellGuidance("Fix the importer.", "win32");
+  assert.ok(out.startsWith(WINDOWS_SHELL_GUIDANCE), "guidance is prepended");
+  assert.ok(out.endsWith("Fix the importer."), "original prompt is preserved");
+  assert.match(out, /PowerShell/);
+  assert.match(out, /Git Bash/);
+  assert.match(out, /-NoProfile/);
+});
+
+test("withWindowsShellGuidance: no-op off Windows", () => {
+  assert.equal(withWindowsShellGuidance("Fix the importer.", "linux"), "Fix the importer.");
+  assert.equal(withWindowsShellGuidance("Fix the importer.", "darwin"), "Fix the importer.");
+});
+
+test("withWindowsShellGuidance: passes through empty/undefined prompts unchanged", () => {
+  assert.equal(withWindowsShellGuidance("", "win32"), "");
+  assert.equal(withWindowsShellGuidance("   ", "win32"), "   ");
+  assert.equal(withWindowsShellGuidance(undefined, "win32"), undefined);
+  assert.equal(withWindowsShellGuidance(null, "win32"), null);
+});
+
+// ── buildCodexConfigOverrides / buildCodexAppServerArgs ───────────────────────
+
+test("buildCodexConfigOverrides: forces non-login PowerShell on win32", () => {
+  assert.deepEqual(buildCodexConfigOverrides("win32", {}), ["-c", "allow_login_shell=false"]);
+});
+
+test("buildCodexConfigOverrides: no win32 hardening off Windows", () => {
+  assert.deepEqual(buildCodexConfigOverrides("linux", {}), []);
+  assert.deepEqual(buildCodexConfigOverrides("darwin", {}), []);
+});
+
+test("buildCodexConfigOverrides: CODEX_COMPANION_NO_SHELL_HARDENING drops the win32 default", () => {
+  assert.deepEqual(
+    buildCodexConfigOverrides("win32", { CODEX_COMPANION_NO_SHELL_HARDENING: "1" }),
+    []
+  );
+});
+
+test("buildCodexConfigOverrides: appends extra key=value overrides (newline/semicolon separated)", () => {
+  assert.deepEqual(
+    buildCodexConfigOverrides("win32", { CODEX_COMPANION_CODEX_CONFIG: "model=\"gpt-5.4\"; foo.bar=1" }),
+    ["-c", "allow_login_shell=false", "-c", 'model="gpt-5.4"', "-c", "foo.bar=1"]
+  );
+  assert.deepEqual(
+    buildCodexConfigOverrides("linux", { CODEX_COMPANION_CODEX_CONFIG: "a=1\n\nb=2" }),
+    ["-c", "a=1", "-c", "b=2"]
+  );
+});
+
+test("buildCodexAppServerArgs: overrides precede the app-server subcommand", () => {
+  assert.deepEqual(buildCodexAppServerArgs("win32", {}), ["-c", "allow_login_shell=false", "app-server"]);
+  assert.deepEqual(buildCodexAppServerArgs("linux", {}), ["app-server"]);
+});
+
+// ── resolveTurnInactivityMs ───────────────────────────────────────────────────
+
+test("resolveTurnInactivityMs: disabled (0) by default", () => {
+  assert.equal(resolveTurnInactivityMs({}), 0);
+  assert.equal(resolveTurnInactivityMs({ CODEX_COMPANION_TURN_INACTIVITY_MS: "" }), 0);
+});
+
+test("resolveTurnInactivityMs: parses a positive integer; rejects non-positive/garbage", () => {
+  assert.equal(resolveTurnInactivityMs({ CODEX_COMPANION_TURN_INACTIVITY_MS: "900000" }), 900000);
+  assert.equal(resolveTurnInactivityMs({ CODEX_COMPANION_TURN_INACTIVITY_MS: "0" }), 0);
+  assert.equal(resolveTurnInactivityMs({ CODEX_COMPANION_TURN_INACTIVITY_MS: "-5" }), 0);
+  assert.equal(resolveTurnInactivityMs({ CODEX_COMPANION_TURN_INACTIVITY_MS: "abc" }), 0);
 });

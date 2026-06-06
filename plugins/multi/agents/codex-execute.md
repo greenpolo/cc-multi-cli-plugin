@@ -74,7 +74,7 @@ If the user already wrote outcome-style framing themselves, do not re-wrap it �
 
 - Use exactly one `Bash` call to invoke:
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli codex --role execute --model <chosen> --effort <chosen> ...`
-- If the user did not explicitly choose `--background` or `--wait`, prefer foreground for small, clearly bounded tasks (`minimal`/`low` effort) and background for long-running tasks (`high`/`xhigh` effort, or anything you expect to take more than ~3 minutes).
+- Run the companion in the FOREGROUND — do NOT add `--background`. The call blocks until Codex finishes, so your Bash call returns the real result. Background SCHEDULING is the parent command's job: it runs this subagent as a harness background task, which is what notifies the main thread on completion or failure. A detached `--background` worker is invisible to the harness and never notifies. Only pass `--background` if the user explicitly asked for fire-and-forget.
 - Treat `--model`, `--effort`, `--resume`, `--fresh`, `--until-done`, `--max-turns` as runtime controls and pass them through; do not include them in the task text.
 - Treat `--plan <path>` as an alias for `--prompt-file <path>`. When you see either form, pass `--prompt-file <path>` to the companion and SKIP the framing block. Any positional text the user provided after the flag is the addendum and goes through as positional args after `--prompt-file`.
 - Default to `--write` (Codex is writing implementation code) unless the user asks for read-only behavior.
@@ -97,7 +97,7 @@ When NOT to set it:
 - The user did not opt in. Default is OFF.
 
 Pair `--until-done` with:
-- `--background` for plans expected to take >5 minutes — the loop runs in a detached worker the user can poll via `/multi:status`.
+- a FOREGROUND companion run (no `--background`). The parent command runs this subagent as a harness background task, so the multi-turn loop runs to completion and the main thread is notified when it finishes, fails, or the watchdog kills a hang. Only use a detached `--background` worker if the user explicitly wants fire-and-forget polled via `/multi:status`.
 - `--max-turns N` to override the default ceiling (30). Raise for very long plans, lower as a safety bound for early experimentation.
 - `--effort high` or `xhigh` for plans where each step needs careful reasoning. The loop multiplies effort cost across turns, so be deliberate.
 
@@ -112,6 +112,6 @@ The companion automatically prepends a short autonomous-mode protocol header to 
 
 - Do NOT paraphrase or rewrite the companion output, even if it looks like a status update or progress message.
 - Do NOT add sentences like "The task is running in the background", "I will be notified when it completes", "I will report the full output", "The companion is handling all steps", or any other narration. The companion already prints whatever the user needs to see.
-- Do NOT promise to deliver later results. You exit when this Bash call returns; you cannot be re-woken by background jobs finishing. If the companion launched a background task, the user has the job ID — let them poll `/multi:status` themselves.
+- Do NOT promise to deliver later results yourself, and do NOT narrate "I'll be notified when it completes." You run the companion in the FOREGROUND and return its real result when the Bash call returns — you do not launch detached jobs. (The PARENT command may run you as a harness background task; THAT mechanism re-wakes the main thread on completion/failure — not anything you say.)
 - Do NOT invent fabricated output if Bash returned empty or non-zero. Use the failure line above.
 - Do NOT announce your model/effort choice to the user — just make the call. The companion's output already reflects which model ran.

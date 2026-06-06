@@ -34,9 +34,30 @@
  *   onProgress: ProgressReporter | null
  * }} TurnCaptureState
  */
+import process from "node:process";
 import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV, CodexAppServerClient } from "../app-server.mjs";
 import { TASK_THREAD_PREFIX, buildThreadParams, buildResumeParams, buildTurnInput } from "./codex-roles-prompts.mjs";
 import { getCodexAvailability } from "./codex-render-parse.mjs";
+
+/**
+ * Resolve the per-turn inactivity-watchdog window (ms) from the environment.
+ * Disabled (0) unless CODEX_COMPANION_TURN_INACTIVITY_MS is set to a positive
+ * integer. Off by default on purpose: codex runs legitimately long, quiet
+ * commands (builds, headless imports), so a default watchdog would risk
+ * aborting real work. When enabled, a turn that emits no progress events for
+ * the window is treated as hung and fails terminally instead of stalling.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {number}
+ */
+export function resolveTurnInactivityMs(env = process.env) {
+  const raw = env.CODEX_COMPANION_TURN_INACTIVITY_MS;
+  if (raw === undefined || raw === "") {
+    return 0;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
 
 function shorten(text, limit = 72) {
   const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
@@ -514,7 +535,59 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
   const state = createTurnCaptureState(threadId, options);
   const previousHandler = client.notificationHandler;
 
+  // Guard against an unhandledRejection: the watchdog below can reject
+  // state.completion while we are still suspended on `await startRequest()`
+  // (a hang during turn/start, before line `return await state.completion` is
+  // reached). Attaching a no-op catch keeps that rejection from crashing the
+  // worker; the real rejection is still observed wherever the promise is awaited.
+  state.completion.catch(() => {});
+
+  // Inactivity watchdog (opt-in; see resolveTurnInactivityMs). Reset on every
+  // notification; if it elapses with no activity, fail the turn terminally so a
+  // hung codex process surfaces as a failed job instead of an indefinite stall.
+  const inactivityMs = resolveTurnInactivityMs(options.env ?? process.env);
+  let inactivityTimer = null;
+  const clearInactivity = () => {
+    if (inactivityTimer) {
+      clearTimeout(inactivityTimer);
+      inactivityTimer = null;
+    }
+  };
+  const armInactivity = () => {
+    if (!(inactivityMs > 0) || state.completed) {
+      return;
+    }
+    clearInactivity();
+    inactivityTimer = setTimeout(() => {
+      inactivityTimer = null;
+      if (state.completed) {
+        return;
+      }
+      const minutes = Math.max(1, Math.round(inactivityMs / 60000));
+      const timeoutError = new Error(
+        `Codex turn timed out after ${minutes} min of inactivity (no progress events). A shell command likely hung. Re-run, or adjust CODEX_COMPANION_TURN_INACTIVITY_MS.`
+      );
+      state.completed = true;
+      state.error = state.error ?? { message: timeoutError.message };
+      emitProgress(
+        state.onProgress,
+        `Codex turn produced no activity for ${minutes} min; treating it as hung.`,
+        "failed"
+      );
+      // Rejecting completion unblocks the post-turn `await state.completion`.
+      state.rejectCompletion(timeoutError);
+      // But a hang DURING turn/start leaves us suspended on `await startRequest()`,
+      // which only settles when the RPC gets a response or the connection drops.
+      // Closing the client rejects all pending RPCs so startRequest() unblocks too
+      // (and tears down the hung codex process). close() is idempotent — withAppServer
+      // closes again in its finally.
+      Promise.resolve(client.close?.()).catch(() => {});
+    }, inactivityMs);
+    inactivityTimer.unref?.();
+  };
+
   client.setNotificationHandler((message) => {
+    armInactivity();
     if (!state.turnId) {
       state.bufferedNotifications.push(message);
       return;
@@ -536,6 +609,7 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
   });
 
   try {
+    armInactivity();
     const response = await startRequest();
     options.onResponse?.(response, state);
     state.turnId = response.turn?.id ?? null;
@@ -559,6 +633,7 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
 
     return await state.completion;
   } finally {
+    clearInactivity();
     clearCompletionTimer(state);
     client.setNotificationHandler(previousHandler ?? null);
   }

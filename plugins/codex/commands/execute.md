@@ -16,7 +16,8 @@ $ARGUMENTS
 Execution:
 
 - **Plan-by-reference (preferred when applicable):** if a plan file is in conversation context (Plan mode `Plan File Info` block, a path like `~/.claude/plans/*.md`, or a plan you authored this session), pass `--plan <path>` instead of paraphrasing. The subagent translates `--plan` to `--prompt-file` and Codex reads the file's bytes directly. See the `multi-plan-handoff` skill for full detection rules. Trigger phrases like "execute it via codex", "delegate to codex", "send this plan to codex" all qualify.
-- Default to foreground. If the user passes `--background`, launch the subagent in a Claude background task.
+- For a small, clearly bounded step, invoke the subagent in the foreground (blocking).
+- For a long-running or high-effort step (or `--until-done`), invoke the subagent with the `Agent` tool's `run_in_background: true`: the subagent runs Codex to completion in the foreground, so the harness wakes you with a `<task-notification>` when it finishes, fails, or the inactivity watchdog kills a hang — instead of stalling silently. Do NOT add the companion's `--background` flag for this (it detaches a worker the harness can't see); keep `--background` as an explicit fire-and-forget opt-in polled via `/multi:status`.
 - Preserve `--model` and `--effort` flags for the forwarded command — the subagent reads them.
 - If the user passes `--resume`, the subagent will continue the latest Codex execute thread for this repo.
 - If the request includes no prompt text AND no plan file in context, ask what Codex should implement before proceeding.

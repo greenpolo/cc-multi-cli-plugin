@@ -45,5 +45,5 @@ For research, review, or diagnosis output from `multi:antigravity-researcher`, `
 
 ## Background jobs
 
-- If the helper launched a background job, the rendered output already shows the job ID. Do not promise to "check back later" or "report when done" — you cannot be re-woken when background jobs finish.
-- Direct the user to `/multi:status <job-id>` for live progress and `/multi:result <job-id>` for the final output. Stop there.
+- This applies ONLY to a detached `--background` job (explicit fire-and-forget). Its rendered output shows a job ID; you cannot be re-woken when that detached worker finishes, so do not promise to "check back later" — direct the user to `/multi:status <job-id>` for progress and `/multi:result <job-id>` for the final output, then stop.
+- This is NOT the same as running a `multi:*` subagent as a harness background task (`Agent` `run_in_background: true`). That IS harness-tracked: the subagent runs the companion in the foreground and the harness re-wakes the main thread with a `<task-notification>` on completion or failure — that path is how long offloads should normally run, and it is fine to expect that notification.

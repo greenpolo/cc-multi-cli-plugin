@@ -15,9 +15,11 @@ $ARGUMENTS
 
 Execution:
 
-- Default to foreground; the subagent escalates to background for long-running investigations (high/xhigh effort).
+- For a small, clearly bounded rescue, invoke the subagent in the foreground (blocking) — the result comes back inline.
+- For an open-ended, multi-step, or long-running investigation, invoke the subagent with the `Agent` tool's `run_in_background: true`. The subagent runs Codex to completion in the foreground, so the harness wakes you with a `<task-notification>` the moment Codex finishes, errors, OR the inactivity watchdog kills a hang — even after this turn ends. This is the path that surfaces failures instead of stalling silently.
+- Do NOT add the companion's `--background` flag to get this — that detaches a worker the harness cannot see (no notification). Reserve `--background` for explicit fire-and-forget the user wants to poll via `/multi:status`.
 - Preserve `--model`, `--effort`, `--resume`, `--fresh` for the forwarded command — the subagent reads them.
 - If the user passes `--resume`, the subagent continues the latest Codex thread for this repo; otherwise it starts fresh.
 - If the request includes no prompt text, ask what Codex should investigate before proceeding.
 
-Return Codex's output verbatim.
+Return Codex's output verbatim once the subagent completes.

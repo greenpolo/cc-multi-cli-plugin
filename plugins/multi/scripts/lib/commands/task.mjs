@@ -13,7 +13,8 @@ import { getAdapter } from "../adapters/registry.mjs";
 import {
   buildPersistentTaskThreadName,
   DEFAULT_CONTINUE_PROMPT,
-  runAppServerTurn
+  runAppServerTurn,
+  withWindowsShellGuidance
 } from "../adapters/codex.mjs";
 import { readStdinIfPiped } from "../fs.mjs";
 import { renderTaskResult } from "../render.mjs";
@@ -515,7 +516,13 @@ export async function executeTaskRun(request) {
 
   while (turnCount < maxTurns) {
     const isFirstTurn = turnCount === 0;
-    const turnPrompt = isFirstTurn ? initialPrompt : AUTONOMOUS_CONTINUATION_PROMPT;
+    // First turn carries the user's prompt; on Windows prepend shell-hygiene
+    // guidance so codex uses PowerShell (not Git Bash) and writes code to files
+    // rather than detonating it inline. Resume/continuation turns reuse the
+    // established session, so no re-injection.
+    const turnPrompt = isFirstTurn
+      ? withWindowsShellGuidance(initialPrompt)
+      : AUTONOMOUS_CONTINUATION_PROMPT;
     const turnResumeId = isFirstTurn ? resumeThreadId : threadId;
 
     if (untilDone && !isFirstTurn && request.onProgress) {

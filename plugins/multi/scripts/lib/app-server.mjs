@@ -21,6 +21,66 @@ const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, "utf8"))
 export const BROKER_ENDPOINT_ENV = "CODEX_COMPANION_APP_SERVER_ENDPOINT";
 export const BROKER_BUSY_RPC_CODE = -32001;
 
+/**
+ * Parse newline/semicolon-separated `key=value` TOML overrides into codex
+ * `-c key=value` argv pairs. Used for the CODEX_COMPANION_CODEX_CONFIG escape
+ * hatch so operators can inject extra config without code changes.
+ */
+function parseExtraCodexConfig(raw) {
+  if (!raw) {
+    return [];
+  }
+  return String(raw)
+    .split(/[\n;]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .flatMap((entry) => ["-c", entry]);
+}
+
+/**
+ * Build the `-c key=value` config overrides applied when WE spawn `codex
+ * app-server`. Scoped to the companion's own codex runs — never touches the
+ * user's interactive codex or their ~/.codex/config.toml.
+ *
+ * On Windows we force non-login PowerShell. codex resolves a shell command's
+ * `login` flag to `allow_login_shell` when the model leaves it unset (see
+ * codex-rs core/src/tools/handlers/shell.rs `resolve_use_login_shell`), and a
+ * login PowerShell loads the user profile. On hosts whose profile blocks
+ * non-interactively, every command then times out (exit 124). Setting
+ * `allow_login_shell=false` makes `derive_exec_args` emit `-NoProfile`.
+ * Confirmed present in codex 0.136.0. Off-Windows we leave login shells alone
+ * so `.bashrc`/`.zshrc` PATH/tooling still loads as the user expects.
+ *
+ * Escape hatches: CODEX_COMPANION_NO_SHELL_HARDENING=1 drops the win32 default;
+ * CODEX_COMPANION_CODEX_CONFIG appends arbitrary `key=value` overrides (newline-
+ * or semicolon-separated). On Windows prefer unquoted values (e.g. `model=gpt-5.4`):
+ * codex resolves to codex.cmd and the value is re-quoted through cmd.exe, so
+ * embedded double-quotes rely on the native argv splitter. Changing either var
+ * takes effect on the next broker spawn — the broker is keyed by these args
+ * (see ensureBrokerSession codexArgsKey), so a stale broker is replaced.
+ *
+ * @param {NodeJS.Platform} [platform]
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string[]}
+ */
+export function buildCodexConfigOverrides(platform = process.platform, env = process.env) {
+  const args = [];
+  if (platform === "win32" && env.CODEX_COMPANION_NO_SHELL_HARDENING !== "1") {
+    args.push("-c", "allow_login_shell=false");
+  }
+  args.push(...parseExtraCodexConfig(env.CODEX_COMPANION_CODEX_CONFIG));
+  return args;
+}
+
+/**
+ * Full argv for `codex <overrides> app-server`. Overrides precede the
+ * subcommand (both positions are accepted by codex; global-first is the
+ * conventional form).
+ */
+export function buildCodexAppServerArgs(platform = process.platform, env = process.env) {
+  return [...buildCodexConfigOverrides(platform, env), "app-server"];
+}
+
 /** @type {ClientInfo} */
 const DEFAULT_CLIENT_INFO = {
   title: "Codex Plugin",
@@ -185,9 +245,10 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
   }
 
   async initialize() {
-    this.proc = spawnCommand("codex", ["app-server"], {
+    const spawnEnv = this.options.env ?? process.env;
+    this.proc = spawnCommand("codex", buildCodexAppServerArgs(process.platform, spawnEnv), {
       cwd: this.cwd,
-      env: this.options.env ?? process.env,
+      env: spawnEnv,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
     });
@@ -332,7 +393,14 @@ export class CodexAppServerClient {
         brokerEndpoint = loadBrokerSession(cwd)?.endpoint ?? null;
       }
       if (!brokerEndpoint && !options.reuseExistingBroker) {
-        const brokerSession = await ensureBrokerSession(cwd, { env: options.env });
+        // Tag the broker with the codex config args it will be spawned with, so a
+        // broker carrying stale args (e.g. spawned before this fix landed, or
+        // before an escape-hatch change) is replaced rather than silently reused.
+        const brokerEnv = options.env ?? process.env;
+        const brokerSession = await ensureBrokerSession(cwd, {
+          env: options.env,
+          codexArgsKey: buildCodexConfigOverrides(process.platform, brokerEnv).join("\x00")
+        });
         brokerEndpoint = brokerSession?.endpoint ?? null;
       }
     }
