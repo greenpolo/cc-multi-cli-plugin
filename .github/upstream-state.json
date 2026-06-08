@@ -1,23 +1,23 @@
 {
   "_comment": "Last-seen versions of upstream projects this plugin depends on. Updated by .github/workflows/upstream-watch.yml. When a polled upstream's latest tag changes vs. what's recorded here, the workflow opens an issue assigned to copilot-swe-agent and updates this file.",
   "acp-spec": {
-    "latest": "v0.13.5",
-    "checkedAt": "2026-06-01T19:18:49.681Z"
+    "latest": "v0.13.6",
+    "checkedAt": "2026-06-08T17:20:45.024Z"
   },
   "gemini-cli": {
-    "latest": "v0.44.1",
-    "checkedAt": "2026-06-01T19:18:49.875Z"
+    "latest": "v0.45.2",
+    "checkedAt": "2026-06-08T17:20:45.265Z"
   },
   "codex-cli": {
-    "latest": "rust-v0.136.0",
-    "checkedAt": "2026-06-01T19:18:50.186Z"
+    "latest": "rust-v0.137.0",
+    "checkedAt": "2026-06-08T17:20:45.605Z"
   },
   "copilot-cli": {
-    "latest": "v1.0.57",
-    "checkedAt": "2026-06-01T19:18:50.392Z"
+    "latest": "v1.0.60",
+    "checkedAt": "2026-06-08T17:20:45.850Z"
   },
   "qwen-code": {
-    "latest": "v0.17.0",
-    "checkedAt": "2026-06-01T19:18:50.596Z"
+    "latest": "v0.17.1",
+    "checkedAt": "2026-06-08T17:20:46.065Z"
   }
 }
