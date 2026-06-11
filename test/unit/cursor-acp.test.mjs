@@ -262,10 +262,11 @@ test("cancelCursor: headless transport (default) reports process-tree", async ()
   });
 });
 
-test("cancelCursor: acp transport reports acp", async () => {
+test("cancelCursor: acp transport with no in-flight turn reports process-tree (cross-process backstop)", async () => {
   await withTransport("acp", async () => {
     const res = await cancelCursor("job-cur-2");
-    assert.equal(res.transport, "acp");
+    assert.equal(res.transport, "process-tree");
+    assert.equal(res.interrupted, false);
   });
 });
 

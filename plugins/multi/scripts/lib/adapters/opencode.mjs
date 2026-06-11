@@ -764,8 +764,9 @@ export async function runAcpOpencodeTurn(cwd, prompt, options = {}) {
 /**
  * Cancel an in-flight OpenCode ACP turn. Routes to the live turn's in-protocol
  * cancel handle when the job is running in THIS process; otherwise reports the
- * acp transport (the authoritative cross-process cancel is handleCancel's
- * process-tree kill — the ACP child sits inside the worker's tree).
+ * process-tree mechanism (the authoritative cross-process cancel is
+ * handleCancel's process-tree kill — the ACP child sits inside the worker's
+ * tree).
  *
  * @param {string} jobId
  */
@@ -784,11 +785,14 @@ export async function cancelAcpOpencode(jobId) {
       detail: `OpenCode ACP turn cancelled in-protocol (job ${jobId}); process tree killed as backstop.`
     };
   }
+  // No in-flight turn in THIS process (the cross-process cancel case): the
+  // mechanism that actually does the work is the companion's process-tree kill,
+  // so report that honestly — the ACP child sits inside the worker's tree.
   return {
     attempted: true,
     interrupted: false,
-    transport: "acp",
-    detail: `OpenCode ACP jobs are cancelled by in-protocol session/cancel + process-tree kill (job ${jobId}).`
+    transport: "process-tree",
+    detail: `No in-flight ACP turn in this process; OpenCode ACP jobs are cancelled by killing the process tree (job ${jobId}).`
   };
 }
 
