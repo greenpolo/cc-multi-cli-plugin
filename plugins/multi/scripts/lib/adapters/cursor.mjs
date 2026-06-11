@@ -30,6 +30,8 @@ import process from "node:process";
 import { spawnCommand } from "../process.mjs";
 import { buildSpawnEnvironment } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
+import { runAcpTurn } from "../acp/client.mjs";
+import { resolveCursorAcp } from "../acp/resolve.mjs";
 
 // ─── Binary resolution ────────────────────────────────────────────────────────
 //
@@ -521,13 +523,258 @@ export async function cancelHeadlessCursor(jobId) {
   };
 }
 
+// ─── ACP transport (cursor-agent acp) ──────────────────────────────────────────
+//
+// Selected per-turn by MULTI_TRANSPORT_CURSOR=acp (default "headless"). Read at
+// invoke() time, not import time, so tests can flip it per case. The contract,
+// registry, companion, commands, and skills need ZERO changes: this path returns
+// the SAME result shape headless invoke() returns. Roles map to session modes:
+// read-only (research/explore/...) → "ask"; write (delegate) → "agent" + writes.
+// Model: the adapter receives friendly names, but ACP needs the exact composite
+// id from the live configOptions (e.g. "composer-2.5[fast=true]"). Resolution
+// happens via a resolveModel callback into runAcpTurn (it validates AFTER
+// session/new but pre-prompt), so we resolve against the live list without a
+// second session.
+
+/** The transport flag value for Cursor, read at call time. Default "headless". */
+export function cursorTransport(env = process.env) {
+  return String(env.MULTI_TRANSPORT_CURSOR ?? "").trim().toLowerCase() === "acp"
+    ? "acp"
+    : "headless";
+}
+
+// In-flight ACP turn handles, keyed by jobId, so an in-process cancel() can route
+// to the live turn's in-protocol cancel. The authoritative cross-process cancel
+// remains handleCancel's process-tree kill (the ACP child is inside the worker's
+// tree); this map only adds in-protocol grace when cancel runs in the same process.
+const inflightAcpTurns = new Map();
+
+/** The ACP session mode for a role: read-only → "ask"; write/delegate → "agent". */
+export function acpSessionModeForRole(role) {
+  return isReadOnlyRole(role) ? "ask" : "agent";
+}
+
+/**
+ * Resolve a friendly/partial model name against the LIVE composite ids cursor
+ * returns in session/new configOptions. Pure so it is unit-testable in isolation.
+ *
+ *   - exact match (the friendly name IS a composite id) → use it.
+ *   - else unique PREFIX match on the segment before "[" (e.g. "composer-2.5" →
+ *     "composer-2.5[fast=true]"; "gpt-5.5" → "gpt-5.5[context=272k,...]").
+ *   - ambiguous (multiple prefix matches) or no match → { error } listing the
+ *     available ids (no silent fallback — same lesson as the opencode --model pin).
+ *
+ * When `requested` is falsy (no --model), returns { value: undefined } so the
+ * caller leaves the agent on its current/default model (no pin attempted).
+ *
+ * @param {string[]} availableIds  live composite ids from configOptions
+ * @param {string|undefined} requested  the friendly name passed via --model
+ * @returns {{ value: string|undefined } | { error: { code: string, message: string, detail?: string } }}
+ */
+export function resolveCursorModel(availableIds, requested) {
+  const want = requested && String(requested).trim() ? String(requested).trim() : "";
+  // No explicit model → do not pin; let cursor use its current/default model.
+  if (!want) return { value: undefined };
+
+  const ids = Array.isArray(availableIds) ? availableIds.filter((s) => typeof s === "string") : [];
+  if (!ids.length) {
+    // No live list to resolve against — pass the requested value through; the
+    // runner's own validation (empty list) will allow it (best-effort).
+    return { value: want };
+  }
+
+  // Exact match wins.
+  if (ids.includes(want)) return { value: want };
+
+  // Unique prefix match on the segment before "[".
+  const base = (id) => {
+    const i = id.indexOf("[");
+    return i >= 0 ? id.slice(0, i) : id;
+  };
+  const prefixMatches = ids.filter((id) => base(id) === want);
+  if (prefixMatches.length === 1) return { value: prefixMatches[0] };
+
+  if (prefixMatches.length > 1) {
+    return {
+      error: {
+        code: "config",
+        message: `Model "${want}" is ambiguous for Cursor (matches ${prefixMatches.length} variants).`,
+        detail: `Matching ids: ${prefixMatches.join(", ")}. Available: ${ids.join(", ")}`
+      }
+    };
+  }
+
+  return {
+    error: {
+      code: "config",
+      message: `Model "${want}" is not offered by Cursor.`,
+      detail: `Available: ${ids.join(", ")}`
+    }
+  };
+}
+
+/**
+ * Map a Cursor ACP session/update to the SAME progress events the headless
+ * onStream sink consumes (phase / message_chunk), so task.mjs's streamForwarder
+ * is unchanged.
+ *
+ * @returns {{ type: string, [k: string]: any } | null}
+ */
+export function mapAcpUpdateToProgress(update) {
+  if (!update || typeof update !== "object") return null;
+  const kind = update.sessionUpdate;
+  if (kind === "agent_message_chunk") {
+    const block = update.content;
+    const text = block?.type === "text" && typeof block.text === "string" ? block.text : "";
+    if (text) return { type: "message_chunk", text };
+    return null;
+  }
+  if (kind === "tool_call" || kind === "tool_call_update") {
+    const raw = update.title ?? update.kind ?? update.toolCallId ?? "tool";
+    return { type: "phase", message: `Cursor: ${sanitizeDiagnosticMessage(raw) || "tool"}`, phase: kind };
+  }
+  return null;
+}
+
+/**
+ * Run a single prompt through Cursor's ACP transport (`cursor-agent acp`). Maps
+ * the adapter's invoke() options onto runAcpTurn and returns the headless result
+ * shape. Read-only roles set session mode "ask"; write roles set "agent" and
+ * allow writes. The model is resolved against the live composite-id list.
+ *
+ * @param {string} cwd
+ * @param {string} prompt
+ * @param {{ model?: string, role?: string, sessionId?: string|null, env?: NodeJS.ProcessEnv, onStream?: (event: any) => void, jobId?: string|null }} [options]
+ * @returns {Promise<{ sessionId: string|null, text: string, error: object|null, status: number, fileChanges: Array, commandExecutions: Array, toolCalls: Array }>}
+ */
+export async function runAcpCursorTurn(cwd, prompt, options = {}) {
+  const role = options.role ?? "delegate";
+  // Tests inject a {exe, args} for the fake ACP agent here (same role resolve.mjs
+  // env overrides serve in production); production never passes spawnSpec.
+  const resolved = options.spawnSpec ?? resolveCursorAcp({ env: options.env ?? process.env });
+  if (!resolved.exe) {
+    return {
+      sessionId: null,
+      text: "",
+      error: { message: resolved.detail || "Cursor ACP runtime not found." },
+      status: 1,
+      fileChanges: [],
+      commandExecutions: [],
+      toolCalls: []
+    };
+  }
+
+  const readOnly = isReadOnlyRole(role);
+  const onStream = options.onStream;
+  const turn = runAcpTurn({
+    exe: resolved.exe,
+    args: resolved.args,
+    cwd,
+    env: buildSpawnEnvironment(options.env ?? process.env),
+    prompt: prompt ?? "",
+    sessionMode: acpSessionModeForRole(role),
+    allowWrites: !readOnly,
+    // Resolve the friendly model name against the live composite-id list,
+    // pre-prompt, inside the runner (no second session). A miss/ambiguity fails
+    // the turn with a config error rather than silently falling back.
+    resolveModel: (availableIds) => resolveCursorModel(availableIds, options.model),
+    onUpdate: onStream
+      ? (update) => {
+          const progress = mapAcpUpdateToProgress(update);
+          if (progress) {
+            try {
+              onStream(progress);
+            } catch {
+              // Best-effort.
+            }
+          }
+        }
+      : undefined,
+    onDiagnostic: () => {}
+  });
+
+  const jobId = options.jobId ?? null;
+  if (jobId) inflightAcpTurns.set(jobId, turn);
+  let res;
+  try {
+    res = await turn;
+  } finally {
+    if (jobId) inflightAcpTurns.delete(jobId);
+  }
+
+  const text = typeof res.text === "string" ? res.text : "";
+  const error = res.error ? { message: res.error.message + (res.error.detail ? ` ${res.error.detail}` : "") } : null;
+  const status = error ? 1 : 0;
+  return {
+    sessionId: res.sessionId ?? null,
+    text,
+    error,
+    status,
+    // The ACP turn runner does not derive file/command activity. The render layer
+    // tolerates empty arrays.
+    fileChanges: [],
+    commandExecutions: [],
+    toolCalls: []
+  };
+}
+
+/**
+ * Cancel an in-flight Cursor ACP turn. Routes to the live turn's in-protocol
+ * cancel handle when the job runs in THIS process; otherwise reports the acp
+ * transport (the authoritative cross-process cancel is handleCancel's
+ * process-tree kill — the ACP child sits inside the worker's tree).
+ *
+ * @param {string} jobId
+ */
+export async function cancelAcpCursor(jobId) {
+  const turn = jobId ? inflightAcpTurns.get(jobId) : null;
+  if (turn && typeof turn.cancel === "function") {
+    try {
+      turn.cancel();
+    } catch {
+      // Best-effort; the process-tree kill is the backstop.
+    }
+    return {
+      attempted: true,
+      interrupted: true,
+      transport: "acp",
+      detail: `Cursor ACP turn cancelled in-protocol (job ${jobId}); process tree killed as backstop.`
+    };
+  }
+  return {
+    attempted: true,
+    interrupted: false,
+    transport: "acp",
+    detail: `Cursor ACP jobs are cancelled by in-protocol session/cancel + process-tree kill (job ${jobId}).`
+  };
+}
+
 // ─── Generic adapter interface ────────────────────────────────────────────────
+
+/**
+ * Transport-dispatching invoke: ACP when MULTI_TRANSPORT_CURSOR=acp, else the
+ * unchanged headless path. The default (no flag) is byte-identical to today.
+ */
+export async function invokeCursor(cwd, prompt, options = {}) {
+  if (cursorTransport(options.env ?? process.env) === "acp") {
+    return runAcpCursorTurn(cwd, prompt, options);
+  }
+  return runHeadlessCursorTurn(cwd, prompt, options);
+}
+
+/** Transport-dispatching cancel: ACP routing when the flag selects acp. */
+export async function cancelCursor(jobId) {
+  if (cursorTransport(process.env) === "acp") {
+    return cancelAcpCursor(jobId);
+  }
+  return cancelHeadlessCursor(jobId);
+}
 
 export const adapter = {
   name: "cursor",
   isAvailable: getCursorAvailability,
   isAuthenticated: getCursorAuthStatus,
-  invoke: runHeadlessCursorTurn,
-  cancel: cancelHeadlessCursor,
+  invoke: invokeCursor,
+  cancel: cancelCursor,
   getSession: undefined
 };

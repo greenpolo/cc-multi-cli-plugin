@@ -51,6 +51,8 @@ import process from "node:process";
 import { spawnCommand } from "../process.mjs";
 import { buildSpawnEnvironment } from "../acp-client.mjs";
 import { sanitizeDiagnosticMessage } from "../acp-diagnostics.mjs";
+import { runAcpTurn } from "../acp/client.mjs";
+import { resolveOpenCodeAcp } from "../acp/resolve.mjs";
 
 // ─── Binary resolution ────────────────────────────────────────────────────────
 //
@@ -628,13 +630,194 @@ export async function cancelHeadlessOpencode(jobId) {
   };
 }
 
+// ─── ACP transport (opencode acp) ──────────────────────────────────────────────
+//
+// Selected per-turn by MULTI_TRANSPORT_OPENCODE=acp (default "headless"). Read at
+// invoke() time, not import time, so tests can flip it per case. The contract,
+// registry, companion, commands, and skills need ZERO changes: this path returns
+// the SAME result shape headless invoke() returns (text/error/sessionId/status/
+// fileChanges/commandExecutions/toolCalls) and maps role → read-only env / model
+// → set_config_option exactly as the headless path derives them.
+
+/** The transport flag value for OpenCode, read at call time. Default "headless". */
+export function opencodeTransport(env = process.env) {
+  return String(env.MULTI_TRANSPORT_OPENCODE ?? "").trim().toLowerCase() === "acp"
+    ? "acp"
+    : "headless";
+}
+
+// In-flight ACP turn handles, keyed by jobId, so an in-process cancel() can route
+// to the live turn's in-protocol cancel. The authoritative cross-process cancel
+// remains handleCancel's process-tree kill (the ACP child is inside the worker's
+// tree); this map only adds in-protocol grace when cancel runs in the same process.
+const inflightAcpTurns = new Map();
+
+/**
+ * Map an ACP session/update to the SAME progress events the headless onStream
+ * sink already consumes (phase / message_chunk), so task.mjs's streamForwarder is
+ * unchanged. agent_message_chunk → message_chunk; tool_call updates → phase.
+ *
+ * @returns {{ type: string, [k: string]: any } | null}
+ */
+export function mapAcpUpdateToProgress(update) {
+  if (!update || typeof update !== "object") return null;
+  const kind = update.sessionUpdate;
+  if (kind === "agent_message_chunk") {
+    const block = update.content;
+    const text = block?.type === "text" && typeof block.text === "string" ? block.text : "";
+    if (text) return { type: "message_chunk", text };
+    return null;
+  }
+  if (kind === "tool_call" || kind === "tool_call_update") {
+    const raw = update.title ?? update.kind ?? update.toolCallId ?? "tool";
+    return { type: "phase", message: `OpenCode: ${sanitizeDiagnosticMessage(raw) || "tool"}`, phase: kind };
+  }
+  return null;
+}
+
+/**
+ * Run a single prompt through OpenCode's ACP transport (`opencode acp`). Maps the
+ * adapter's invoke() options onto runAcpTurn and returns the headless result shape.
+ *
+ * Read-only roles reuse the EXACT same OPENCODE_PERMISSION deny floor + oc-* agent
+ * config the headless path builds (buildOpencodeSpawnEnv), so the deny preset is
+ * not duplicated. The model is passed straight through (opencode "provider/model"
+ * IDs — the same values headless passes to --model); runAcpTurn validates it
+ * against the live configOptions and fails before prompting on a miss.
+ *
+ * @param {string} cwd
+ * @param {string} prompt
+ * @param {{ model?: string, role?: string, sessionId?: string|null, env?: NodeJS.ProcessEnv, onStream?: (event: any) => void, jobId?: string|null }} [options]
+ * @returns {Promise<{ sessionId: string|null, text: string, error: object|null, status: number, fileChanges: Array, commandExecutions: Array, toolCalls: Array }>}
+ */
+export async function runAcpOpencodeTurn(cwd, prompt, options = {}) {
+  const role = options.role ?? "delegate";
+  // Tests inject a {exe, args} for the fake ACP agent here (same role resolve.mjs
+  // env overrides serve in production); production never passes spawnSpec.
+  const resolved = options.spawnSpec ?? resolveOpenCodeAcp({ env: options.env ?? process.env });
+  if (!resolved.exe) {
+    return {
+      sessionId: null,
+      text: "",
+      error: { message: resolved.detail || "OpenCode ACP executable not found." },
+      status: 1,
+      fileChanges: [],
+      commandExecutions: [],
+      toolCalls: []
+    };
+  }
+
+  // Reuse the headless spawn-env builder verbatim: read-only roles get the oc-*
+  // agent config + the OPENCODE_PERMISSION deny floor; write roles do not.
+  const env = buildOpencodeSpawnEnv(options.env ?? process.env, role);
+  const readOnly = isReadOnlyRole(role);
+
+  const onStream = options.onStream;
+  const turn = runAcpTurn({
+    exe: resolved.exe,
+    args: resolved.args,
+    cwd,
+    env,
+    prompt: prompt ?? "",
+    model: resolveModel(options.model),
+    allowWrites: !readOnly,
+    onUpdate: onStream
+      ? (update) => {
+          const progress = mapAcpUpdateToProgress(update);
+          if (progress) {
+            try {
+              onStream(progress);
+            } catch {
+              // Best-effort.
+            }
+          }
+        }
+      : undefined,
+    onDiagnostic: () => {}
+  });
+
+  const jobId = options.jobId ?? null;
+  if (jobId) inflightAcpTurns.set(jobId, turn);
+  let res;
+  try {
+    res = await turn;
+  } finally {
+    if (jobId) inflightAcpTurns.delete(jobId);
+  }
+
+  const text = typeof res.text === "string" ? res.text : "";
+  const error = res.error ? { message: res.error.message + (res.error.detail ? ` ${res.error.detail}` : "") } : null;
+  const status = error ? 1 : 0;
+  return {
+    sessionId: res.sessionId ?? null,
+    text,
+    error,
+    status,
+    // The ACP turn runner does not derive file/command activity (no tool_use
+    // schema parse like the NDJSON path). The render layer tolerates empty arrays.
+    fileChanges: [],
+    commandExecutions: [],
+    toolCalls: []
+  };
+}
+
+/**
+ * Cancel an in-flight OpenCode ACP turn. Routes to the live turn's in-protocol
+ * cancel handle when the job is running in THIS process; otherwise reports the
+ * acp transport (the authoritative cross-process cancel is handleCancel's
+ * process-tree kill — the ACP child sits inside the worker's tree).
+ *
+ * @param {string} jobId
+ */
+export async function cancelAcpOpencode(jobId) {
+  const turn = jobId ? inflightAcpTurns.get(jobId) : null;
+  if (turn && typeof turn.cancel === "function") {
+    try {
+      turn.cancel();
+    } catch {
+      // Best-effort; the process-tree kill is the backstop.
+    }
+    return {
+      attempted: true,
+      interrupted: true,
+      transport: "acp",
+      detail: `OpenCode ACP turn cancelled in-protocol (job ${jobId}); process tree killed as backstop.`
+    };
+  }
+  return {
+    attempted: true,
+    interrupted: false,
+    transport: "acp",
+    detail: `OpenCode ACP jobs are cancelled by in-protocol session/cancel + process-tree kill (job ${jobId}).`
+  };
+}
+
 // ─── Generic adapter interface ────────────────────────────────────────────────
+
+/**
+ * Transport-dispatching invoke: ACP when MULTI_TRANSPORT_OPENCODE=acp, else the
+ * unchanged headless path. The default (no flag) is byte-identical to today.
+ */
+export async function invokeOpencode(cwd, prompt, options = {}) {
+  if (opencodeTransport(options.env ?? process.env) === "acp") {
+    return runAcpOpencodeTurn(cwd, prompt, options);
+  }
+  return runHeadlessOpencodeTurn(cwd, prompt, options);
+}
+
+/** Transport-dispatching cancel: ACP routing when the flag selects acp. */
+export async function cancelOpencode(jobId) {
+  if (opencodeTransport(process.env) === "acp") {
+    return cancelAcpOpencode(jobId);
+  }
+  return cancelHeadlessOpencode(jobId);
+}
 
 export const adapter = {
   name: "opencode",
   isAvailable: getOpencodeAvailability,
   isAuthenticated: getOpencodeAuthStatus,
-  invoke: runHeadlessOpencodeTurn,
-  cancel: cancelHeadlessOpencode,
+  invoke: invokeOpencode,
+  cancel: cancelOpencode,
   getSession: undefined
 };

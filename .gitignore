@@ -9,6 +9,7 @@ tmp_rp.txt
 # One-off working docs not meant for the public repo
 /docs/release-readiness.md
 /docs/transport-decisions.md
+/docs/ACP_TRANSPORT_BLUEPRINT.md
 
 # --- Tooling ---
 node_modules/
