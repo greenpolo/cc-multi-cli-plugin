@@ -1,7 +1,7 @@
 {
   "name": "multi",
   "description": "Hub plugin for cc-multi-cli-plugin: contains the companion runtime, subagents, setup wizard, and customization skills.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": {
     "name": "greenpolo",
     "url": "https://github.com/greenpolo"
