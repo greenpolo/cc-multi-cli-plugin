@@ -31,6 +31,10 @@
  *                                    to the prompt) → client must tree-kill us.
  *   --silent-after-init   complete the handshake, then go silent forever (never
  *                         answer the prompt) → inactivity watchdog must fire.
+ *   --hang-handshake      spawn fine but never answer ANY request (hang at
+ *                         initialize) → inactivity watchdog must fire pre-prompt.
+ *   --die-mid-turn        handshake + one chunk, then exit(3) without answering
+ *                         the prompt → explicit crash/protocol error required.
  *   --die-early           print a stderr line and exit(1) before any handshake.
  *   --record <file>       append received methods / decisions as JSON lines.
  *   --delay-ms <n>        delay before answering the prompt (default 30).
@@ -158,6 +162,13 @@ function handle(msg) {
 }
 
 function dispatchRequest(msg) {
+  if (flag("hang-handshake")) {
+    // Spawn fine, then never answer ANY request (a CLI stuck on a lock/auth/
+    // network at startup). The client's inactivity watchdog must catch this —
+    // not the 30-minute overall cap.
+    record({ hung_on: msg.method });
+    return;
+  }
   switch (msg.method) {
     case "initialize":
       respond(msg.id, {
@@ -241,6 +252,22 @@ async function runTurn() {
 
   if (flag("silent-after-init")) {
     // Never answer the prompt → client inactivity watchdog should fire.
+    return;
+  }
+
+  if (flag("die-mid-turn")) {
+    // Stream one chunk, then crash without ever answering the prompt request
+    // (a CLI segfault/OOM mid-run). The client must surface an explicit error —
+    // never a success-shaped result — whichever of the exit handler or the
+    // SDK's connection-closed rejection wins the race.
+    sessionUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "partial before crash " },
+    });
+    setTimeout(() => {
+      process.stderr.write("fake-acp-agent: simulated mid-turn crash (exit 3)\n");
+      process.exit(3);
+    }, 150);
     return;
   }
 

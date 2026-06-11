@@ -2,7 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- **`MULTI_ACP_INACTIVITY_MS` / `MULTI_ACP_OVERALL_MS` operator env knobs** for the ACP watchdog windows (same convention as `CODEX_COMPANION_TURN_INACTIVITY_MS`), read from the spawn env at turn start. Live-verified end-to-end: a knob set in Claude Code's settings env reaches the forwarder subagent's companion process and bounds a hanging CLI.
+- **Forwarder-contract directive in the companion's fatal-error output.** Every fatal companion error now ends with a `FORWARDER CONTRACT:` block instructing a forwarding subagent to return the one-line failure format and NOT substitute its own answer — runtime steering at the exact decision moment for the catalogued #319-class failure.
+- **HARD GATE block in all 11 forwarder agent definitions** (unconditional forwarding: no task too trivial, Bash for the companion invocation only, failure line is the entire response on error), plus the same substitution ban in the `multi-cli-runtime` skill. Motivated by live stress tests: with the previous definitions, wrappers sometimes bypassed the companion entirely for trivial-looking questions or "helpfully" did the task themselves after a CLI failure — masking the outage from the caller.
+- **Failure-mode regression tests** (240 → 243): hang-at-handshake caught by the inactivity watchdog (not the 30-minute overall cap), mid-turn agent crash always yields an explicit error with partial text preserved, and the `MULTI_ACP_INACTIVITY_MS` knob bounds a silent agent. New fake-agent fixture flags `--hang-handshake` and `--die-mid-turn`.
+
+### Changed
+
+- **The four read-only forwarder agents (cursor-explore, opencode-explore, antigravity-explorer, codex-review) moved from `model: haiku` to `model: sonnet`.** Live A/B under an injected CLI outage: the haiku wrapper ignored even a point-blank in-band contract directive and substituted its own answer; the sonnet wrapper honored the failure contract. (Consistent with openai/codex-plugin-cc merging its forwarder as sonnet over a haiku proposal in PR #169; haiku's price advantage is also undercut by subagent model-pin reliability issues and subscription-quota weighting.)
+
 ### Fixed
+
+- **ACP inactivity watchdog now covers the HANDSHAKE phase.** Previously it was first armed immediately before `session/prompt`, so a CLI that spawned and hung silently at initialize/session-new (lock, auth, network) was only caught by the 30-minute overall cap — reproduced live, then fixed: the watchdog arms at connection start and re-arms after each completed handshake step. A silent hang now errors out after `inactivityMs` (default 120 s) + the 5 s cancel grace.
+- **Mid-turn agent crash can no longer race to a success-shaped result.** A post-handshake child exit with no stopReason and no cancel now sets an explicit `crash` error (whichever of the exit handler or the SDK's connection-closed rejection wins the race), with the stderr tail as detail and partial streamed text preserved.
 
 - **ACP cancel dispatch now reports `transport: "process-tree"` when there is no in-flight ACP turn in the calling process** (the cross-process cancel case — the mechanism that actually does the work is the companion's process-tree kill; the ACP child sits inside the worker's tree). Previously it reported `"acp"` while doing nothing in-process, which was dishonest and also made the suite sensitive to ambient `MULTI_TRANSPORT_*` env (3 pre-existing headless cancel tests failed when the dogfood flags were set session-wide). `transport: "acp"` is now reported only when a live in-flight handle was actually cancelled in-protocol. Suite verified green both with and without the ambient flags.
 

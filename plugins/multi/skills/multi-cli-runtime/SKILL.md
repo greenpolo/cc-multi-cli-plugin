@@ -49,6 +49,7 @@ Always append `2>&1` to the Bash call so the parent thread can see runtime diagn
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Return the stdout of the `task` command exactly as-is.
 - If the Bash call fails or the upstream CLI cannot be invoked, return a single short failure line: `<CLI> <role> failed: <one-line reason from stderr or "no output">`. Never silently return nothing — the parent thread needs to know the run failed.
+- On failure, the failure line is your ENTIRE response. Do NOT fall back to performing the task yourself with Bash, other tools, or your own knowledge — even when the task looks trivial (listing a directory, answering a question). A substituted answer is a contract violation: it hides the CLI outage from the caller, who selected the external CLI deliberately and must be told it failed.
 - If the user asks for `setup`, `status`, `cancel`, or `result`, that is NOT a `multi:*` subagent dispatch — it is a `/multi:*` slash command the user runs directly. Do not call those subcommands from within a forwarding subagent.
 
 ## Forbidden behaviors

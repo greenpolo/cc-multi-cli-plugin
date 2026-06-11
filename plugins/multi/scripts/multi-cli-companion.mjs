@@ -97,5 +97,18 @@ async function main() {
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${message}\n`);
+  // Steering for forwarder subagents at the exact moment they see a failure:
+  // the catalogued #319-class failure is the wrapper "helpfully" doing the task
+  // itself (or fabricating output) when the companion errors, which masks the
+  // CLI outage from the caller and silently defeats the delegation. Emitting
+  // the contract WITH the error is runtime enforcement of a rule that prompt
+  // text alone has been observed to lose.
+  process.stderr.write(
+    "FORWARDER CONTRACT: if you are a multi:* forwarding subagent, your ENTIRE " +
+      "response must now be one line — `<CLI> <role> failed: <first line of the " +
+      "error above>`. Do NOT retry, do NOT answer the user's question yourself " +
+      "with other tools or your own knowledge: a substituted answer hides this " +
+      "failure from the caller, who chose the external CLI deliberately.\n"
+  );
   process.exitCode = 1;
 });

@@ -556,3 +556,44 @@ test("vendor bundle exists, imports, exports the expected symbols, and records t
     `vendor bundle (sdk ${bundleVersion}) is stale vs package-lock.json (sdk ${lockedVersion}); run \`npm run build:acp-vendor\``
   );
 });
+
+// ── failure-mode hardening (stress-test regressions, 2026-06-11) ──────────────
+
+test("hang-at-handshake: inactivity watchdog fires pre-prompt, not the overall cap", async () => {
+  const t0 = Date.now();
+  const p = runAcpTurn(spawnSpec(["--hang-handshake"], { inactivityMs: 600, overallMs: 60000 }));
+  await new Promise((r) => setTimeout(r, 200));
+  const pid = p.pid;
+  const r = await p;
+  const elapsed = Date.now() - t0;
+  assert.ok(r.error, "an error is set");
+  assert.equal(r.error.code, "timeout");
+  assert.match(r.error.message, /session\/update/);
+  assert.ok(
+    elapsed < 30000,
+    `caught by inactivity (~600ms + cancel grace), not the overall cap (elapsed ${elapsed}ms)`
+  );
+  await new Promise((res) => setTimeout(res, 500));
+  assert.equal(isAlive(pid), false, "child reaped after handshake hang");
+});
+
+test("die-mid-turn: explicit crash/protocol error, never a success-shaped result", async () => {
+  const r = await runAcpTurn(spawnSpec(["--die-mid-turn"], { inactivityMs: 60000 }));
+  assert.ok(r.error, "mid-turn crash must set an error (never a silent success)");
+  assert.ok(
+    ["crash", "protocol"].includes(r.error.code),
+    `error code crash|protocol whichever side wins the race, got ${r.error.code}`
+  );
+  assert.equal(r.stopReason, null);
+  assert.equal(r.cancelled, false);
+  assert.match(r.text, /partial before crash/, "partial streamed text is preserved");
+});
+
+test("MULTI_ACP_INACTIVITY_MS env knob bounds a silent agent without an explicit inactivityMs", async () => {
+  const spec = spawnSpec(["--silent-after-init"]);
+  spec.env = { ...process.env, MULTI_ACP_INACTIVITY_MS: "700" };
+  const t0 = Date.now();
+  const r = await runAcpTurn(spec);
+  assert.equal(r.error?.code, "timeout");
+  assert.ok(Date.now() - t0 < 30000, "the 700ms knob (not the 120s default) bounded the wait");
+});

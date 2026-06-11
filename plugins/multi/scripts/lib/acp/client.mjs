@@ -41,6 +41,23 @@ const CANCEL_GRACE_MS = 5000;
 const DEFAULT_INACTIVITY_MS = 120000;
 const DEFAULT_OVERALL_MS = 1800000;
 
+/**
+ * Operator escape hatches (same convention as CODEX_COMPANION_TURN_INACTIVITY_MS):
+ * MULTI_ACP_INACTIVITY_MS / MULTI_ACP_OVERALL_MS override the watchdog windows
+ * when set to a positive integer. Read from the spawn env so tests and the
+ * companion can scope them.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} name
+ * @param {number} fallback
+ */
+function envWindowMs(env, name, fallback) {
+  const raw = env?.[name];
+  if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /** Client identity advertised to the agent (never carries prompt content). */
 const CLIENT_INFO = {
   name: "cc-multi-cli-plugin",
@@ -138,8 +155,8 @@ export function runAcpTurn(spec) {
     model,
     resolveModel,
     allowWrites = false,
-    inactivityMs = DEFAULT_INACTIVITY_MS,
-    overallMs = DEFAULT_OVERALL_MS,
+    inactivityMs = envWindowMs(spec?.env ?? process.env, "MULTI_ACP_INACTIVITY_MS", DEFAULT_INACTIVITY_MS),
+    overallMs = envWindowMs(spec?.env ?? process.env, "MULTI_ACP_OVERALL_MS", DEFAULT_OVERALL_MS),
     onStream,
     onUpdate,
     onDiagnostic,
@@ -323,7 +340,17 @@ export function runAcpTurn(spec) {
         );
         finish();
       } else {
-        // Post-handshake exit (e.g. after a kill or the agent closing) → end the turn.
+        // Post-handshake exit. If the turn has not settled, no stopReason ever
+        // arrived, and we did not cancel, the agent CRASHED mid-turn. Set an
+        // explicit error: whether this handler or the SDK's connection-closed
+        // rejection wins the race, the result must never look like a success.
+        if (!settled && !cancelRequested && result.stopReason === null) {
+          setError(
+            "crash",
+            `ACP agent exited mid-turn (code ${code ?? "null"}${sig ? `, signal ${sig}` : ""}) without finishing the prompt.`,
+            stderrTail
+          );
+        }
         finish();
       }
     });
@@ -428,6 +455,13 @@ export function runAcpTurn(spec) {
       cancelFlow("overall timeout");
     }, overallMs);
 
+    // Arm the inactivity watchdog from the very start so it covers the HANDSHAKE
+    // phase too (initialize → session/new → set_mode → model pin). A CLI that
+    // spawns and then hangs silently before ever answering must be caught by
+    // inactivityMs, not by the 30-minute overall cap. Handshake steps normally
+    // complete in seconds; cold starts (~15 s) sit far inside the 120 s default.
+    resetInactivity();
+
     // ── main flow ───────────────────────────────────────────────────────────────
     (async () => {
       try {
@@ -440,7 +474,10 @@ export function runAcpTurn(spec) {
           clientInfo: CLIENT_INFO,
         });
 
+        // Each completed handshake step is progress — re-arm the silence window.
+        resetInactivity();
         const session = await connection.newSession({ cwd, mcpServers: [] });
+        resetInactivity();
         result.sessionId = session?.sessionId ?? null;
         result.modes = session?.modes ?? null;
         result.configOptions = Array.isArray(session?.configOptions) ? session.configOptions : [];
