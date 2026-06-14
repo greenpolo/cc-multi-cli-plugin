@@ -210,6 +210,15 @@ When a CLI misbehaves upstream — a broken release, a regression, an obscure co
 - **`OPENCODE_CLI_DEFAULT_MODEL=<model-id>`** — override the default model for all OpenCode calls (default: `opencode/claude-opus-4-8`). Use a Zen model (`opencode/*`) or an OpenAI/Google/Copilot/Ollama model to get real token offload. **Avoid `anthropic/*` models** — they reuse your Claude Code subscription and provide zero offload.
 - **Per-CLI MCP config files** — when a CLI doesn't pick up MCP servers the way you expect, populate the CLI's own config: Cursor reads `~/.cursor/mcp.json`; Codex reads `~/.codex/config.toml`; Antigravity's `agy` reads MCP servers from its Gemini-CLI config `~/.gemini/settings.json`; **OpenCode reads MCP servers from its own `opencode.json`** (use OpenCode's interactive wizard to configure these — the `/multi:setup` wizard does NOT manage `opencode.json`). Use these as the fallback when a server is "missing."
 
+### Switching a CLI's transport (headless ↔ ACP)
+
+Cursor and OpenCode can run over two transports. **Headless** (`agent -p` / `opencode run`) is the default. **ACP** (Agent Client Protocol, structured JSON-RPC over stdio via the official `@agentclientprotocol/sdk`, client at `lib/acp/client.mjs`) is opt-in and adds in-protocol model selection, session modes, and a real `session/cancel`. Select per CLI with an env var — no code edit:
+
+- **`MULTI_TRANSPORT_CURSOR=acp|headless`** (default `headless`)
+- **`MULTI_TRANSPORT_OPENCODE=acp|headless`** (default `headless`)
+
+Read at invoke time, so they can live in `~/.claude/settings.json` `env`, a shell export, or be flipped per session. With no flag set, behavior is identical to the headless default. **Codex and Antigravity have no ACP path** (Codex exposes no native ACP; `agy` doesn't implement it) — leave them on their native transports. ACP-only knobs: `MULTI_ACP_INACTIVITY_MS` / `MULTI_ACP_OVERALL_MS` override the watchdog windows (a CLI that spawns then hangs silently is caught by the inactivity watchdog, which covers the handshake too). When a CLI is on the ACP path, read-only roles are enforced via the agent's own mechanism (Cursor: `session/set_mode` → `ask`; OpenCode: the same `OPENCODE_PERMISSION` deny floor as headless), and model pinning goes through `session/set_config_option` against the live options list — so the per-forwarder model-pin and read-only customizations above work on either transport.
+
 ### Diagnosing a CLI that hangs or returns nothing
 
 The shipped CLIs are driven headlessly, so the first diagnostic is always the captured output:
@@ -217,7 +226,7 @@ The shipped CLIs are driven headlessly, so the first diagnostic is always the ca
 - **`2>&1` on the companion call** (the forwarders already append it) surfaces the CLI's stderr — the single most useful signal. A bad model id, an auth failure, or a sandbox block all print there.
 - **Cursor specifics:** `agent --version` — a few early-2026 builds predate the headless MCP-tools fix; the adapter warns when it detects a known-bad build (`KNOWN_BROKEN_CURSOR_VERSIONS` in `cursor.mjs`). Cursor's **shell tool is slow/unreliable on Windows** (host-PATH/WSL, open upstream), which is why `/cursor:delegate` defers build/test verification to the caller — file writes and web/codebase reads are unaffected. For write roles the adapter parses Cursor's documented `--output-format stream-json` events; a run that emits no `result` event with a non-zero exit is almost always a startup error visible in stderr.
 - **Antigravity specifics:** `agy`'s headless stdout is empty upstream (gemini-cli#27466), so the adapter recovers the answer from the on-disk transcript JSONL. If a run returns nothing, check that `agy --version` works and that `~/.gemini/oauth_creds.json` exists (signed in). A `.tmp→.pb` "Access denied" line in agy's own log is benign on Windows and does not block the transcript.
-- **`ACP_TRACE=1` (legacy):** the plugin retains ACP plumbing (`lib/acp-client.mjs`) but **no shipped CLI uses ACP** anymore — Cursor migrated to headless `agent -p` and Antigravity to headless `agy -p`. `ACP_TRACE=1` only does anything if the user added an ACP-speaking CLI via `multi-cli-anything`; for the shipped CLIs it's a no-op. Don't reach for it to debug Cursor or Antigravity.
+- **`ACP_TRACE=1`:** traces the ACP JSON-RPC wire to stderr. Useful only when a CLI is actually running over ACP — i.e. Cursor or OpenCode with `MULTI_TRANSPORT_<CLI>=acp` set (see the transport-toggle section below), or a user-added ACP CLI. On the default headless path (and for Codex/Antigravity, which have no ACP) it's a no-op.
 
 ## What NOT to touch (unless adding a new transport)
 
@@ -225,7 +234,7 @@ These are shared infrastructure; `multi-cli-anything` is the skill for extending
 
 - `plugins/multi/scripts/multi-cli-companion.mjs` (the ~100-line dispatcher) and `plugins/multi/scripts/lib/commands/*.mjs` (`task`, `review`, `jobs`, `setup`, `shared`) — the command handlers.
 - `plugins/multi/scripts/lib/adapters/registry.mjs` — the adapter registry (you edit this only to *add* a CLI, via `multi-cli-anything`).
-- `plugins/multi/scripts/lib/job-control.mjs`, `state.mjs`, `render.mjs`, `workspace.mjs`, `tracked-jobs.mjs`, `acp-client.mjs`, `app-server.mjs`.
+- `plugins/multi/scripts/lib/job-control.mjs`, `state.mjs`, `render.mjs`, `workspace.mjs`, `tracked-jobs.mjs`, `app-server.mjs`, and the ACP client layer `lib/acp/` (`client.mjs`, `resolve.mjs`, `diagnostics.mjs`). (A legacy `lib/acp-client.mjs` also exists, predating the `lib/acp/` layer and slated for deletion — don't touch or build on it either.)
 - The existing adapters' transport code (`codex*.mjs`, `cursor.mjs`, `antigravity.mjs`, `opencode.mjs`) — except the role-mapping pieces called out in change type #7.
 - `plugins/multi/hooks/hooks.json` (unless adding a new hook).
 

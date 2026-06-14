@@ -11,6 +11,7 @@
 
 ### Changed
 
+- **Docs caught up to the ACP transport.** README gains a **Transports** section documenting the `MULTI_TRANSPORT_CURSOR` / `MULTI_TRANSPORT_OPENCODE` opt-in; the `multi-cli-anything` and `customize` skills and `AGENTS.md` were corrected — they previously asserted "no shipped adapter uses ACP" and pointed at the legacy `lib/acp-client.mjs`. They now describe ACP as a live transport for Cursor + OpenCode on the SDK-based `lib/acp/client.mjs`, with `customize` documenting the transport toggle as a supported change. Also fixed a stale "Haiku forwarders" reference in `AGENTS.md` (all forwarders are `model: sonnet`). `/multi:setup` needed no change (it's transport-agnostic — the ACP path passes no MCP servers in-protocol, so each CLI still reads its own MCP config). Docs only; no code change.
 - **The four read-only forwarder agents (cursor-explore, opencode-explore, antigravity-explorer, codex-review) moved from `model: haiku` to `model: sonnet`.** Live A/B under an injected CLI outage: the haiku wrapper ignored even a point-blank in-band contract directive and substituted its own answer; the sonnet wrapper honored the failure contract. (Consistent with openai/codex-plugin-cc merging its forwarder as sonnet over a haiku proposal in PR #169; haiku's price advantage is also undercut by subagent model-pin reliability issues and subscription-quota weighting.)
 
 ### Fixed

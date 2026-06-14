@@ -80,7 +80,7 @@ Check in this order. The first match that fits the CLI is your transport; the ea
 
 ### 1. Headless print mode with structured output (the common path)
 
-Most modern agent CLIs have a non-interactive mode: `-p`/`--print` with `--output-format json` (single result object) or `--output-format stream-json` (NDJSON events + a final result). The prompt goes in as an arg or on stdin. **This is how Cursor is driven** (`agent -p`), and it's the path most new CLIs will use. If `<cli> --help` shows a print/headless mode with JSON output, **go to "Headless integration"** below — `cursor.mjs` is your template.
+Most modern agent CLIs have a non-interactive mode: `-p`/`--print` with `--output-format json` (single result object) or `--output-format stream-json` (NDJSON events + a final result). The prompt goes in as an arg or on stdin. **This is how Cursor is driven by default** (`agent -p`; it also has an opt-in ACP path — see path 4), and it's the path most new CLIs will use. If `<cli> --help` shows a print/headless mode with JSON output, **go to "Headless integration"** below — `cursor.mjs` is your template.
 
 ### 2. The CLI runs headlessly but writes nothing usable to stdout
 
@@ -90,9 +90,9 @@ Some CLIs run a prompt but don't print the answer to stdout when piped (a known 
 
 Some CLIs expose a long-lived server (HTTP + SSE, JSON-RPC over a socket) you connect to and stream turns from. **This is how Codex is driven** (`codex --app-server` behind a broker daemon) — `codex.mjs` + `lib/app-server.mjs` are your template. Reuse this only if the CLI genuinely requires it.
 
-### 4. ACP (Agent Client Protocol) — legacy/advanced
+### 4. ACP (Agent Client Protocol) — live, opt-in
 
-ACP is a cross-vendor stdio JSON-RPC standard. The plugin still ships the ACP client scaffolding (`lib/acp-client.mjs`), but **no current adapter uses it** — Cursor migrated *off* `agent acp` to headless `-p` because, on Windows, ACP MCP tool-calls silently died and cancel was a no-op. Only take the ACP path if a CLI's ACP mode is clearly more capable than its headless mode for your use case. See "Legacy: ACP integration" at the end.
+ACP is a cross-vendor stdio JSON-RPC standard (newline-delimited JSON-RPC 2.0). The plugin has a **maintained, SDK-based ACP client** at `lib/acp/client.mjs` (built on the official `@agentclientprotocol/sdk`), and **Cursor and OpenCode both ship ACP adapters** behind the `MULTI_TRANSPORT_CURSOR` / `MULTI_TRANSPORT_OPENCODE` env flags (default `headless`, opt-in `acp`). ACP buys in-protocol model selection (`session/set_config_option`), session modes for read-only (`session/set_mode` → `ask`/`plan`), and a real `session/cancel`. Take this path when a CLI's ACP mode is genuinely better than its headless mode, OR when you want those structured controls. See "ACP integration" at the end — `lib/acp/client.mjs` + `lib/acp/resolve.mjs` and the dual-transport pattern in `cursor.mjs`/`opencode.mjs` are your templates. (Note: an older hand-rolled `lib/acp-client.mjs` still exists but is legacy/slated for deletion — do NOT build on it; use `lib/acp/client.mjs`.)
 
 ### None of the above?
 
@@ -310,18 +310,21 @@ Steps 3 (register + dispatch), 5–9 (subagents, plugin, commands, marketplace, 
 
 Worked example: `codex.mjs` (split into `codex-transport.mjs` / `codex-render-parse.mjs` / `codex-roles-prompts.mjs`) + `lib/app-server.mjs` + the broker daemon (`app-server-broker.mjs`, `lib/broker-lifecycle.mjs`). Take this only if the CLI requires a long-lived server connection. It's substantially more code (session/broker lifecycle, idle reaping). Steps 3, 5–9 still apply — registration, dispatch, and plugin scaffolding are transport-agnostic. Model the new adapter on `codex.mjs` instead of `cursor.mjs`.
 
-## Legacy: ACP integration (advanced, currently unused)
+## ACP integration (live transport)
 
-The plugin retains ACP client scaffolding (`lib/acp-client.mjs`, `acp-diagnostics.mjs`) from when Cursor was driven via `agent acp`. **No shipped adapter uses ACP today** — Cursor migrated to headless `-p` because ACP, on this CLI/OS, silently stopped firing MCP tool-calls (~2026.04.17) and had no working cancel. Reach for ACP only if a specific CLI's ACP mode is clearly better than its headless mode.
+The plugin has a maintained ACP client at **`lib/acp/client.mjs`** (the `runAcpTurn(spec)` runner, built on the official `@agentclientprotocol/sdk`) plus **`lib/acp/resolve.mjs`** (win32-first binary resolution). Cursor and OpenCode both run over it when `MULTI_TRANSPORT_CURSOR` / `MULTI_TRANSPORT_OPENCODE` is `acp`. The dual-transport pattern in `cursor.mjs` / `opencode.mjs` — an adapter that picks ACP vs headless per turn from an env flag and maps both to the same result shape — is your template for adding ACP to a new CLI. (An older hand-rolled `lib/acp-client.mjs` / `acp-diagnostics.mjs` predates this and is legacy/slated for deletion — do NOT build on it; `lib/acp/client.mjs` is the live one.)
 
-If you do, set `ACP_TRACE=1` and watch stderr for `[acp-trace] <- REQ/RES/NOTIF <method>` lines while running a real prompt — that tells you exactly what JSON-RPC traffic crosses the wire. Things that bite ACP integrations specifically (each is why headless turned out simpler):
+Reach for ACP when a CLI's ACP mode is clearly better than its headless mode, or when you want the structured controls it gives (in-protocol model select, session modes, real cancel). To wire it: have your adapter call `runAcpTurn({ exe, args, cwd, prompt, sessionMode, model, resolveModel, allowWrites, onStream, ... })` from `lib/acp/client.mjs`, gated behind a `MULTI_TRANSPORT_<CLI>` flag, with a `resolve<Cli>Acp()` helper in the spirit of `lib/acp/resolve.mjs`.
 
-- **Permission gate.** Does the agent send `session/request_permission` over ACP, or gate tool use out-of-band (a config file, a pre-approval list)? `tool_call_update` going to `in_progress` and never `completed`, with no incoming REQs, means an out-of-band gate.
-- **Terminal handling.** Some agents implement `terminal/*` RPCs (declare `clientCapabilities.terminal=true`); others run terminals internally and skip ACP. `<- REQ terminal/create` tells you which.
-- **MCP wiring.** `session/new` accepts an `mcpServers` array, but some agents ignore it in ACP mode (Cursor staff confirmed this for `agent acp`) — populate the CLI's own MCP config file instead.
-- **Mode setting.** `session/set_mode` semantics vary (agent vs plan/ask, or an `approvalMode:"yolo"`-style param).
-- **CLI flags don't always apply to ACP mode.** Interactive `--yolo`/`--force` flags often don't reach ACP — verify on the wire.
-- **Version sensitivity.** The same CLI can change ACP behavior across builds. `acp-client.mjs` is the worked reference for handshake capability declaration and the auto-approve request handler if you genuinely need this path.
+Set `ACP_TRACE=1` and watch stderr for the JSON-RPC traffic while running a real prompt. Things that bite ACP integrations specifically — each is handled in the shipped client, but verify per CLI:
+
+- **Permission gate.** `runAcpTurn` auto-rejects `session/request_permission` by default (read-only) and allows only with `allowWrites`. Some agents gate tool use out-of-band instead (a config file / pre-approval list) and never send the request — e.g. OpenCode enforces read-only via an injected `OPENCODE_PERMISSION` deny floor, not ACP permissions.
+- **Read-only.** Capability-withholding is NOT sufficient (verified: agents still write via internal tools). Use the agent's own mode/permission mechanism — `session/set_mode` → `ask`/`plan` (Cursor) or a deny-config env (OpenCode).
+- **Model selection.** `session/set_config_option` with `{sessionId, configId:"model", value}`, validated against the live `configOptions` from `session/new` (no silent fallback). Cursor needs exact composite ids (`composer-2.5[fast=true]`) — that's what the `resolveModel` callback is for.
+- **Cancel.** `session/cancel` is honored by some CLIs (Cursor) and ignored by others (OpenCode mislabels a cancelled turn as `end_turn`), so `runAcpTurn` treats "cancel requested + turn ended" as cancelled regardless, and tree-kills after a grace window.
+- **Watchdogs.** The inactivity watchdog covers the handshake too (a CLI that spawns and hangs silently is caught by `inactivityMs`, not the 30-min overall cap). `MULTI_ACP_INACTIVITY_MS` / `MULTI_ACP_OVERALL_MS` override the windows.
+- **win32 spawn.** Resolve the real executable, never an npm `.cmd`/`.exe` shim (see `lib/acp/resolve.mjs`: OpenCode's platform exe, Cursor's bundled `node.exe` + `index.js acp`).
+- **MCP wiring.** `runAcpTurn` passes `mcpServers: []` in `session/new`, so the CLI reads its own MCP config file (this is also what Cursor expects in ACP mode) — `/multi:setup` maintains that file.
 
 ## Worked examples by transport
 
@@ -333,7 +336,7 @@ The shipped adapters cover the live transport shapes — match the one that fits
 | **Headless NDJSON** (prompt on stdin, NDJSON event stream on stdout) | `opencode.mjs` | OpenCode's `opencode run --format json` — a NDJSON variant of headless print mode; same five-method interface. |
 | **Spawn + read-artifacts** (CLI runs but stdout is empty/unusable; answer persisted on disk) | `antigravity.mjs` | A CLI with an empty-piped-stdout bug or a transcript/log file as the only result sink. |
 | **ASP / app-server** (HTTP+SSE or socket JSON-RPC to a long-lived server) | `codex.mjs` + `lib/app-server.mjs` | A CLI that only exposes a server mode. |
-| **ACP** (stdio JSON-RPC) — *legacy* | `lib/acp-client.mjs` scaffolding (no current adapter) | Only if a CLI's ACP mode beats its headless mode. Cursor migrated *off* this. |
+| **ACP** (stdio JSON-RPC, official SDK) | `lib/acp/client.mjs` + `lib/acp/resolve.mjs`; dual-transport adapters `cursor.mjs` / `opencode.mjs` | When a CLI's ACP mode beats headless, or you want in-protocol model select / session modes / `session/cancel`. Opt-in per CLI via `MULTI_TRANSPORT_<CLI>=acp`. |
 
 ## Things NOT to change when adding a new CLI
 
