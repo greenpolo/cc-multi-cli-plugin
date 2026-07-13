@@ -5,19 +5,19 @@
     "checkedAt": "2026-07-06T16:49:56.954Z"
   },
   "gemini-cli": {
-    "latest": "v0.49.0",
-    "checkedAt": "2026-06-29T16:54:26.410Z"
+    "latest": "v0.50.0",
+    "checkedAt": "2026-07-13T16:28:41.662Z"
   },
   "codex-cli": {
-    "latest": "rust-v0.142.5",
-    "checkedAt": "2026-07-06T16:49:57.425Z"
+    "latest": "rust-v0.144.3",
+    "checkedAt": "2026-07-13T16:28:41.930Z"
   },
   "copilot-cli": {
-    "latest": "v1.0.68",
-    "checkedAt": "2026-07-06T16:49:57.643Z"
+    "latest": "v1.0.70",
+    "checkedAt": "2026-07-13T16:28:42.153Z"
   },
   "qwen-code": {
-    "latest": "v0.19.6",
-    "checkedAt": "2026-07-06T16:49:57.827Z"
+    "latest": "v0.19.9",
+    "checkedAt": "2026-07-13T16:28:42.327Z"
   }
 }
