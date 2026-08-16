@@ -37,7 +37,7 @@ Use exactly one `Bash` call:
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli opencode --role research --read-only ... 2>&1`
 
 - `--read-only` is required (research never writes files).
-- Default model is opencode/claude-opus-4-8. Do NOT pass `--model` unless the user explicitly specified one.
+- Default model is opencode/claude-opus-5. Do NOT pass `--model` unless the user explicitly specified one.
 - Prefer foreground; pass `--background` only if the user asked for a long/deep investigation.
 - Append `2>&1` so runtime diagnostics surface.
 

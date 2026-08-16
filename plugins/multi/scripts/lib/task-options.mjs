@@ -5,8 +5,10 @@
 
 import { splitRawArgumentString } from "./args.mjs";
 
-export const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-export const MODEL_ALIASES = new Map([["spark", "gpt-5.3-codex-spark"]]);
+export const VALID_REASONING_EFFORTS = new Set([
+  "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"
+]);
+export const MODEL_ALIASES = new Map();
 
 export function normalizeRequestedModel(model) {
   if (model == null) {
@@ -29,10 +31,49 @@ export function normalizeReasoningEffort(effort) {
   }
   if (!VALID_REASONING_EFFORTS.has(normalized)) {
     throw new Error(
-      `Unsupported reasoning effort "${effort}". Use one of: none, minimal, low, medium, high, xhigh.`
+      `Unsupported reasoning effort "${effort}". Use one of: ${[...VALID_REASONING_EFFORTS].join(", ")}.`
     );
   }
   return normalized;
+}
+
+// Codex model/effort routing. The judgment call ("is this a written spec or an
+// open-ended handoff?") stays with the forwarder subagent, which passes it as
+// --task-kind; the kind → model/effort mapping is deterministic and lives here
+// so no model has to evaluate a lookup table at dispatch time.
+export const TASK_KIND_DEFAULTS = new Map([
+  // Rigorous execution of an already-decided shape.
+  ["spec", { model: "gpt-5.6-terra", effort: "medium" }],
+  // Agentic work with latitude to choose the approach.
+  ["open-ended", { model: "gpt-5.6-sol", effort: "medium" }]
+]);
+
+/**
+ * Apply --task-kind defaults for Codex. Explicit --model/--effort always win;
+ * without a kind (or for non-codex CLIs) nothing is defaulted and the upstream
+ * CLI's own defaults apply.
+ *
+ * @returns {{ model: string|null, effort: string|null }}
+ */
+export function resolveTaskRouting({ cli = "codex", kind = null, model = null, effort = null } = {}) {
+  const normalizedKind = kind == null ? null : String(kind).trim().toLowerCase();
+  if (!normalizedKind) {
+    return { model: model ?? null, effort: effort ?? null };
+  }
+  const defaults = TASK_KIND_DEFAULTS.get(normalizedKind);
+  if (!defaults) {
+    throw new Error(
+      `Unsupported --task-kind "${kind}". Use one of: ${[...TASK_KIND_DEFAULTS.keys()].join(", ")}.`
+    );
+  }
+  if (cli !== "codex") {
+    // Only Codex has these model slugs / an --effort knob.
+    return { model: model ?? null, effort: effort ?? null };
+  }
+  return {
+    model: model ?? defaults.model,
+    effort: effort ?? defaults.effort
+  };
 }
 
 export function normalizeArgv(argv) {

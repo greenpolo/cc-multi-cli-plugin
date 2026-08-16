@@ -38,7 +38,7 @@
  * TOKEN-OFFLOAD WARNING: `anthropic/*` models (via the opencode-claude-auth
  * plugin) reuse your Claude Code subscription → ZERO offload. Real offload comes
  * from `opencode/*` (Zen), `openai/*`, `google/*`, `github-copilot/*`, `ollama/*`.
- * The default below is `opencode/claude-opus-4-8` (Zen, billed separately).
+ * The default below is `opencode/claude-opus-5` (Zen, billed separately).
  *
  * TWO-BINARY NOTE: a stale bun `opencode.exe` (older, same SST project) can shadow
  * the npm `opencode.cmd`. findOpencodeBinary never resolves to `opencode.exe`.
@@ -78,11 +78,11 @@ export function findOpencodeBinary() {
 // `--model` is a HARD invariant: with no top-level `model` key in config, a run
 // without --model uses the LAST-USED model — which may be anthropic/* (= zero
 // offload, silently). So we ALWAYS pass --model, resolving:
-//   options.model || OPENCODE_CLI_DEFAULT_MODEL || "opencode/claude-opus-4-8"
+//   options.model || OPENCODE_CLI_DEFAULT_MODEL || "opencode/claude-opus-5"
 // The id form is `provider/model`. Catalog drifts (155+ models) — re-verify the
 // default against `opencode models opencode` rather than hardcoding more here.
 
-const DEFAULT_OPENCODE_MODEL = "opencode/claude-opus-4-8";
+const DEFAULT_OPENCODE_MODEL = "opencode/claude-opus-5";
 
 export function resolveModel(model) {
   if (model && String(model).trim()) return String(model).trim();

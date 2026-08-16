@@ -25,8 +25,9 @@ Where `<cli>` is one of `codex|cursor|antigravity|opencode` (or any CLI added vi
 Treat these as runtime controls — strip them from the task text before forwarding, then re-add them as flags on the companion call:
 
 - `--background` / `--wait` — `--wait`/foreground is the default and is what you should run: the companion blocks until the CLI finishes, so your Bash call returns the real result. For long-running work, the PARENT command schedules background execution by running this subagent as a harness background task (which notifies the main thread on completion/failure) — NOT by passing `--background`. The companion's `--background` detaches a worker the harness can't see (no notification) and is only for explicit user-requested fire-and-forget polled via `/multi:status`.
-- `--model <name>` — pass through verbatim. Leave unset unless the user explicitly asked for a model. (Antigravity ignores `--model`: its headless `agy -p` path is fixed to Gemini 3.5 Flash.)
-- `--effort <level>` — only Codex accepts this (`none|minimal|low|medium|high|xhigh`). Other adapters ignore it. Pass through verbatim if present.
+- `--model <name>` — pass through verbatim. Leave unset unless the user explicitly asked for a model. (Antigravity ignores `--model`: its headless `agy -p` path is fixed to Gemini 3.7 Flash.)
+- `--effort <level>` — only Codex accepts this (`none|minimal|low|medium|high|xhigh|max|ultra`). Other adapters ignore it. Pass through verbatim if present.
+- `--task-kind <spec|open-ended>` — Codex only. The forwarder's judgment of the task shape; the companion maps it to the Codex model + effort defaults (`spec` → `gpt-5.6-terra`, `open-ended` → `gpt-5.6-sol`, both `medium` effort). Explicit `--model`/`--effort` win over it. Other CLIs ignore it.
 - `--resume` — translate to `--resume-last`.
 - `--fresh` — do not add `--resume-last`, even if the user's text sounds like a follow-up.
 - `--write` — default to `--write` for execute/delegate/writer/debugger/reviewer roles (these need to edit files); for read-only roles (research/explore/planner/researcher/explorer/ask) pass `--read-only` instead (it forces write off even if `--write` is also present). Honor explicit user override either way.

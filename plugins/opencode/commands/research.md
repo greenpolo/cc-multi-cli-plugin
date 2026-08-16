@@ -1,5 +1,5 @@
 ---
-description: Delegate read-only external web/documentation research to OpenCode (default model opencode/claude-opus-4-8)
+description: Delegate read-only external web/documentation research to OpenCode (default model opencode/claude-opus-5)
 argument-hint: "[--background|--wait] [--model <model>] <research question>"
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
@@ -12,7 +12,7 @@ Raw user request:
 $ARGUMENTS
 
 - Default foreground; research is usually a single turn. Pass `--background` for a deep/long investigation.
-- Pass `--model` through; default is opencode/claude-opus-4-8.
+- Pass `--model` through; default is opencode/claude-opus-5.
 - If the request has no question, ask what to research.
 
 Return the subagent's output verbatim.

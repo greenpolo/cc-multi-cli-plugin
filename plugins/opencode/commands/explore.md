@@ -1,5 +1,5 @@
 ---
-description: Delegate quick read-only codebase exploration to OpenCode (default model opencode/claude-opus-4-8)
+description: Delegate quick read-only codebase exploration to OpenCode (default model opencode/claude-opus-5)
 argument-hint: "[--background|--wait] [--model <model>] <what to explore>"
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
@@ -12,7 +12,7 @@ Raw user request:
 $ARGUMENTS
 
 - Default foreground; exploration is usually quick. Pass `--background` for a broad survey.
-- Pass `--model` through; default is opencode/claude-opus-4-8.
+- Pass `--model` through; default is opencode/claude-opus-5.
 - If the request has no target, ask what to explore.
 
 Return the subagent's output verbatim.

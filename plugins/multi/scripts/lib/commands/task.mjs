@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { normalizeReasoningEffort, normalizeRequestedModel } from "../task-options.mjs";
+import { normalizeReasoningEffort, normalizeRequestedModel, resolveTaskRouting } from "../task-options.mjs";
 import { firstMeaningfulLine, shorten } from "../text.mjs";
 import * as cursor from "../adapters/cursor.mjs";
 import * as antigravity from "../adapters/antigravity.mjs";
@@ -811,7 +811,7 @@ function enqueueBackgroundTask(cwd, job, request, options = {}) {
 
 export async function handleTask(argv, context = {}) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file", "role", "max-turns"],
+    valueOptions: ["model", "effort", "cwd", "prompt-file", "role", "max-turns", "task-kind"],
     booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background", "read-only", "until-done"],
     aliasMap: {
       m: "model"
@@ -821,8 +821,12 @@ export async function handleTask(argv, context = {}) {
   const cli = context.cli ?? "codex";
   const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
-  const model = normalizeRequestedModel(options.model);
-  const effort = normalizeReasoningEffort(options.effort);
+  const { model, effort } = resolveTaskRouting({
+    cli,
+    kind: options["task-kind"],
+    model: normalizeRequestedModel(options.model),
+    effort: normalizeReasoningEffort(options.effort)
+  });
   const prompt = readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);

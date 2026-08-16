@@ -1,22 +1,21 @@
 ---
 description: Run a Codex code review of your working tree or a branch (read-only)
-argument-hint: "[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] <optional focus>"
-allowed-tools: AskUserQuestion, Agent
+argument-hint: "[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch]"
+allowed-tools: Bash(node:*)
+disable-model-invocation: true
 ---
 
-Invoke the `multi:codex-review` subagent via the `Agent` tool, forwarding the user's request as the prompt.
+Run Codex's reviewer over the current changes with exactly one Bash call:
 
-The subagent runs Codex's reviewer over your changes and returns structured findings. It is read-only — Codex never edits files during a review.
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" review $ARGUMENTS 2>&1`
 
-This is distinct from `/codex:execute` (writes code) and `/codex:rescue` (open-ended investigation). Use `/codex:review` when you want a code review or PR audit.
-
-Raw user request:
-$ARGUMENTS
+This is read-only — Codex never edits files during a review. It is distinct from
+`/codex:execute` (writes code) and `/codex:rescue` (open-ended investigation).
 
 Execution:
 
-- Preserve `--wait`/`--background`/`--base`/`--scope` for the forwarded command — the subagent reads them.
-- Default to foreground for small diffs; the subagent escalates to background for large or unclear scope.
-- If no focus text is given, the subagent reviews the full working-tree diff by default.
-
-Return Codex's review output verbatim.
+- Pass `--wait`/`--background`/`--base`/`--scope` through verbatim; add nothing else. Never pass `--write`.
+- With no `--base`/`--scope`, the companion reviews the full working-tree diff.
+- Small diffs: run in the foreground. Large or unclear scope: run the same call with `run_in_background: true` and report the review when it finishes.
+- Do not review the code yourself, read files, or summarize. Return the companion's stdout verbatim.
+- If the Bash call fails or returns nothing, your entire response is one line: `Codex review failed: <one-line reason>`.

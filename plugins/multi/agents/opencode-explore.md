@@ -26,7 +26,7 @@ Use exactly one `Bash` call:
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/multi-cli-companion.mjs" task --cli opencode --role explore --read-only ... 2>&1`
 
 - `--read-only` is required (explore never writes files).
-- Default model is opencode/claude-opus-4-8. Do NOT pass `--model` unless the user explicitly specified one.
+- Default model is opencode/claude-opus-5. Do NOT pass `--model` unless the user explicitly specified one.
 - Prefer foreground; pass `--background` only if the user asked for a broad survey.
 - Append `2>&1` so runtime diagnostics surface.
 - Do not chain extra Bash calls (no polling, no `sleep`, no `cat`). The companion prints its full result when it returns.

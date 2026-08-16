@@ -251,7 +251,7 @@ test("computeTaskFingerprint is a deterministic 32-hex digest", () => {
     role: "writer",
     write: true,
     resumeLast: false,
-    model: "spark",
+    model: "gpt-5.6-terra",
     effort: "high",
     prompt: "Fix the bug."
   };
@@ -267,7 +267,7 @@ test("computeTaskFingerprint differs when any component changes", () => {
     role: "writer",
     write: true,
     resumeLast: false,
-    model: "spark",
+    model: "gpt-5.6-terra",
     effort: "high",
     prompt: "Fix the bug."
   };

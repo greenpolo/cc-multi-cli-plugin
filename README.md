@@ -47,9 +47,9 @@ Provider commands live under each CLI's namespace; the cross-cutting `/multi:*` 
 | `/cursor:delegate` | Delegate an implementation task or plan step to Cursor (agentic; writes code; supports `--until-done`) |
 | `/cursor:research` | Read-only external web/documentation research via Cursor |
 | `/cursor:explore` | Read-only codebase exploration via Cursor |
-| `/antigravity:research` | Deep external research with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
-| `/antigravity:explore` | Fast codebase exploration with Antigravity (Gemini 3.5 Flash, read-only; experimental) |
-| `/opencode:delegate` | Delegate an implementation task to OpenCode (agentic; writes code; supports `--until-done`; default model: opencode/claude-opus-4-8 via Zen) |
+| `/antigravity:research` | Deep external research with Antigravity (Gemini 3.7 Flash, read-only; experimental) |
+| `/antigravity:explore` | Fast codebase exploration with Antigravity (Gemini 3.7 Flash, read-only; experimental) |
+| `/opencode:delegate` | Delegate an implementation task to OpenCode (agentic; writes code; supports `--until-done`; default model: opencode/claude-opus-5 via Zen) |
 | `/opencode:research` | Read-only external web/documentation research via OpenCode |
 | `/opencode:explore` | Read-only codebase exploration via OpenCode |
 | `/multi:setup` | One-shot wizard — detects CLIs, configures Exa + Context7 MCPs |
@@ -90,11 +90,11 @@ These are upstream CLI quirks and current limitations. If you hit something not 
 
 - **Antigravity runs via the headless `agy` CLI (experimental).** Install the `agy` CLI (https://antigravity.google) and run `agy` once interactively to sign in — the desktop app is **not** required. `/multi:setup` reports whether `agy` is detected.
 
-- **Antigravity reads its answer from a transcript, not stdout.** `agy`'s headless print mode (`agy -p`) currently emits nothing to stdout when piped (an upstream bug, gemini-cli#27466, unfixed as of agy 1.0.3), so the adapter recovers the model's answer from `agy`'s on-disk conversation transcript. Consequences: read-only `research`/`explore` only (no write-`delegate`), the model is fixed to **Gemini 3.5 Flash** (no per-call `--model`), and there are no token-usage metrics on this path. This is a deliberate workaround pending the upstream stdout fix.
+- **Antigravity reads its answer from a transcript, not stdout.** `agy`'s headless print mode (`agy -p`) currently emits nothing to stdout when piped (an upstream bug, google-antigravity/antigravity-cli#318; `--output-format stream-json` (agy >=1.1.8) is the coming workaround), so the adapter recovers the model's answer from `agy`'s on-disk conversation transcript. Consequences: read-only `research`/`explore` only (no write-`delegate`), the model is fixed to **Gemini 3.7 Flash** (no per-call `--model`), and there are no token-usage metrics on this path. This is a deliberate workaround pending the upstream stdout fix.
 
 - **OpenCode has no `--read-only` flag.** For read-only roles (`/opencode:research`, `/opencode:explore`), the adapter enforces read-only by injecting a custom primary agent via `OPENCODE_CONFIG_CONTENT` with write/edit/bash denied, plus an `OPENCODE_PERMISSION` deny floor. A stale bun `opencode.exe` may shadow the npm `.cmd` shim on Windows — the adapter never resolves to `opencode.exe`; set `OPENCODE_CLI_PATH` to force the right binary if needed.
 
-- **OpenCode token offload: `anthropic/*` models = zero offload.** Calling OpenCode with an `anthropic/*` model routes through the same Claude subscription as Claude Code — no cost savings. Use `opencode/*` (Zen), `openai/*`, `google/*`, `github-copilot/*`, or `ollama/*` models for real offload. The adapter default is `opencode/claude-opus-4-8` (Zen, billed separately). Override with `OPENCODE_CLI_DEFAULT_MODEL`.
+- **OpenCode token offload: `anthropic/*` models = zero offload.** Calling OpenCode with an `anthropic/*` model routes through the same Claude subscription as Claude Code — no cost savings. Use `opencode/*` (Zen), `openai/*`, `google/*`, `github-copilot/*`, or `ollama/*` models for real offload. The adapter default is `opencode/claude-opus-5` (Zen, billed separately). Override with `OPENCODE_CLI_DEFAULT_MODEL`.
 
 - **OpenCode `--effort` is not supported.** The `--effort` flag is Codex-only; OpenCode ignores it. `--until-done` is supported.
 

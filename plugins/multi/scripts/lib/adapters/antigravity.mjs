@@ -5,7 +5,7 @@
  * WHY THE TRANSCRIPT, NOT STDOUT (verified live on agy v1.0.3, Windows 11):
  *   `agy -p "<prompt>"` runs a full model turn, but when stdout is NOT a TTY
  *   (i.e. a pipe / subprocess, exactly our case) it writes ZERO bytes to
- *   stdout — an upstream bug (gemini-cli#27466, `text_drip.go` isatty gate),
+ *   stdout — an upstream bug (google-antigravity/antigravity-cli#318, `text_drip.go` isatty gate; `--output-format stream-json` on agy >=1.1.8 is the coming workaround),
  *   still open in 1.0.3. The model's answer IS reliably persisted to disk as
  *   structured JSONL at:
  *     ~/.gemini/antigravity-cli/brain/<conv-id>/.system_generated/logs/transcript.jsonl
@@ -17,7 +17,7 @@
  * SCOPE: read-only `research` / `explore` only (no `--dangerously-skip-permissions`
  *   → the default request-review gate means write tools never auto-run headless).
  *   Write-`delegate`, per-call `--model` (no headless flag — model is the configured
- *   default, Gemini 3.5 Flash), and `--until-done` are intentionally NOT supported.
+ *   default, Gemini 3.7 Flash), and `--until-done` are intentionally NOT supported.
  *
  * EXPERIMENTAL: this depends on `agy`'s undocumented transcript layout + log lines.
  *   Re-verify if `agy` changes. Authenticating/automating via Google's own official
@@ -361,7 +361,7 @@ export async function runHeadlessAgyTurn(cwd, prompt, options = {}) {
   // phase ping for the progress sink that task.mjs forwards to the user.
   if (options.onStream) {
     try {
-      options.onStream({ type: "phase", message: "Antigravity: running agy -p (Gemini 3.5 Flash)", phase: "agy" });
+      options.onStream({ type: "phase", message: "Antigravity: running agy -p (Gemini 3.7 Flash)", phase: "agy" });
     } catch {
       // best-effort
     }

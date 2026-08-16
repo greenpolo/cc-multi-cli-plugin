@@ -84,7 +84,7 @@ Most modern agent CLIs have a non-interactive mode: `-p`/`--print` with `--outpu
 
 ### 2. The CLI runs headlessly but writes nothing usable to stdout
 
-Some CLIs run a prompt but don't print the answer to stdout when piped (a known class of bug — e.g. Antigravity's `agy`, gemini-cli#27466). If the CLI persists results somewhere on disk (a transcript/log/session file), you can still drive it: spawn it, learn the artifact location, and read the answer back. **This is how Antigravity is driven** — `antigravity.mjs` is your template. More work than path 1, but the same five-method `adapter` interface.
+Some CLIs run a prompt but don't print the answer to stdout when piped (a known class of bug — e.g. Antigravity's `agy`, google-antigravity/antigravity-cli#318). If the CLI persists results somewhere on disk (a transcript/log/session file), you can still drive it: spawn it, learn the artifact location, and read the answer back. **This is how Antigravity is driven** — `antigravity.mjs` is your template. More work than path 1, but the same five-method `adapter` interface.
 
 ### 3. App-server / HTTP transport (ASP)
 

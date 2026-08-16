@@ -53,12 +53,12 @@ test("readOnlyAgentName: research family → oc-research, everything else → oc
 
 // ── resolveModel ──────────────────────────────────────────────────────────────
 
-test("resolveModel: override wins, blank/absent → default opencode/claude-opus-4-8", () => {
+test("resolveModel: override wins, blank/absent → default opencode/claude-opus-5", () => {
   assert.equal(resolveModel("openai/gpt-5"), "openai/gpt-5");
   assert.equal(resolveModel("  google/gemini-3  "), "google/gemini-3");
-  assert.equal(resolveModel(""), "opencode/claude-opus-4-8");
-  assert.equal(resolveModel("   "), "opencode/claude-opus-4-8");
-  assert.equal(resolveModel(undefined), "opencode/claude-opus-4-8");
+  assert.equal(resolveModel(""), "opencode/claude-opus-5");
+  assert.equal(resolveModel("   "), "opencode/claude-opus-5");
+  assert.equal(resolveModel(undefined), "opencode/claude-opus-5");
 });
 
 test("resolveModel: OPENCODE_CLI_DEFAULT_MODEL is used when no explicit model", () => {
@@ -80,7 +80,7 @@ test("resolveModel: OPENCODE_CLI_DEFAULT_MODEL is used when no explicit model", 
 test("buildHeadlessArgs: delegate uses --dangerously-skip-permissions, no --agent, json", () => {
   const args = buildHeadlessArgs({ role: "delegate" });
   assert.deepEqual(args, [
-    "run", "--format", "json", "--model", "opencode/claude-opus-4-8", "--dangerously-skip-permissions"
+    "run", "--format", "json", "--model", "opencode/claude-opus-5", "--dangerously-skip-permissions"
   ]);
   assert.ok(!args.includes("--agent"), "delegate must not set --agent");
 });
@@ -109,12 +109,12 @@ test("buildHeadlessArgs: explore → --agent oc-explore, no skip-perms", () => {
 test("buildHeadlessArgs: model default + override + blank → default", () => {
   assert.equal(
     buildHeadlessArgs({ role: "delegate" })[buildHeadlessArgs({ role: "delegate" }).indexOf("--model") + 1],
-    "opencode/claude-opus-4-8"
+    "opencode/claude-opus-5"
   );
   const overridden = buildHeadlessArgs({ role: "delegate", model: "openai/gpt-5" });
   assert.equal(overridden[overridden.indexOf("--model") + 1], "openai/gpt-5");
   const blank = buildHeadlessArgs({ role: "delegate", model: "  " });
-  assert.equal(blank[blank.indexOf("--model") + 1], "opencode/claude-opus-4-8");
+  assert.equal(blank[blank.indexOf("--model") + 1], "opencode/claude-opus-5");
 });
 
 test("buildHeadlessArgs: sessionId appends --session <id> (never --continue); absent when none", () => {

@@ -1,6 +1,6 @@
 {
   "name": "antigravity",
-  "description": "Delegate read-only research and codebase exploration to Google Antigravity via its headless agy CLI (Gemini 3.5 Flash). EXPERIMENTAL. Requires the multi plugin and the agy CLI installed + signed in.",
+  "description": "Delegate read-only research and codebase exploration to Google Antigravity via its headless agy CLI (Gemini 3.7 Flash). EXPERIMENTAL. Requires the multi plugin and the agy CLI installed + signed in.",
   "version": "0.1.2",
   "author": {
     "name": "greenpolo",

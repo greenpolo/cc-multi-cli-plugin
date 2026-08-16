@@ -38,7 +38,7 @@
     },
     {
       "name": "antigravity",
-      "description": "Adds /antigravity:research and /antigravity:explore (read-only; Gemini 3.5 Flash via Google's headless agy CLI). EXPERIMENTAL. Requires multi and the agy CLI installed + signed in.",
+      "description": "Adds /antigravity:research and /antigravity:explore (read-only; Gemini 3.7 Flash via Google's headless agy CLI). EXPERIMENTAL. Requires multi and the agy CLI installed + signed in.",
       "version": "0.1.2",
       "author": {
         "name": "greenpolo"

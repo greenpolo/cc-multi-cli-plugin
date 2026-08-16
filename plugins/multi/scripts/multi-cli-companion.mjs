@@ -28,7 +28,7 @@ function printUsage() {
       "  node scripts/multi-cli-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/multi-cli-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/multi-cli-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/multi-cli-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--until-done [--max-turns N]] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/multi-cli-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--until-done [--max-turns N]] [--model <model>] [--effort <none|minimal|low|medium|high|xhigh|max|ultra>] [prompt]",
       "  node scripts/multi-cli-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/multi-cli-companion.mjs result [job-id] [--json]",
       "  node scripts/multi-cli-companion.mjs cancel [job-id] [--json]"

@@ -1,6 +1,6 @@
 ---
 name: opencode-delegate
-description: Delegate a SPECIFIC, well-defined implementation task or plan step to OpenCode in agent mode on claude-opus-4-8. OpenCode is the fast lane for mechanical writing — long file writes (200+ lines), pattern-following across many files, bulk refactors. Supports autonomous multi-step runs via --until-done. Pair with codex-execute for tasks needing deeper reasoning. Verification is left to the caller.
+description: Delegate a SPECIFIC, well-defined implementation task or plan step to OpenCode in agent mode on claude-opus-5. OpenCode is the fast lane for mechanical writing — long file writes (200+ lines), pattern-following across many files, bulk refactors. Supports autonomous multi-step runs via --until-done. Pair with codex-execute for tasks needing deeper reasoning. Verification is left to the caller.
 model: sonnet
 tools: Bash
 skills:
@@ -59,7 +59,7 @@ Use exactly one `Bash` call:
 Role-specific defaults that override or extend the multi-cli-runtime contract:
 
 - Default to `--write` (agent mode writes code).
-- Default model is opencode/claude-opus-4-8. Do NOT pass `--model` unless the user explicitly specified one.
+- Default model is opencode/claude-opus-5. Do NOT pass `--model` unless the user explicitly specified one.
 - Pass `--resume` / `--fresh` through per the contract (`--resume` → `--resume-last`).
 - **Autonomous mode:** pass `--until-done` (and `--max-turns <n>` if given) through verbatim when the user opts in. The companion loops OpenCode turns on the same session until the model emits `PLAN COMPLETE`, hits the ceiling, errors, or stops making progress. Run the companion in the foreground; the parent command backgrounds this subagent as a harness background task for long autonomous runs, and that is what notifies the main thread. Default off.
 - Run the companion in the FOREGROUND — do NOT add `--background`. Background scheduling is the parent command's job (it runs this subagent as a harness background task, which notifies the main thread on completion/failure). Only pass `--background` if the user explicitly asked for fire-and-forget polled via `/multi:status`.

@@ -9,11 +9,10 @@ How the pieces fit together. Pair this with `AGENTS.md` (conventions) and
 User: /codex:review
   │
   ▼
-plugins/codex/commands/review.md            slash command — forwards to the subagent
-  │
-  ▼
-plugins/multi/agents/codex-review.md        thin forwarder subagent (model: haiku)
-  │  builds exactly one Bash call, per its skill contract; does no reasoning
+plugins/codex/commands/review.md            slash command — no subagent; the main
+  │  loop runs one `Bash(node:*)` call (optionally `run_in_background`) and returns
+  │  the companion's stdout verbatim. Write/investigate commands still go through a
+  │  framing forwarder in plugins/multi/agents/ instead.
   ▼
 multi-cli-companion.mjs review --cli codex --cwd <dir>   CLI entrypoint + dispatcher
   │  parses args, resolves workspace, selects adapter from the registry
@@ -93,7 +92,7 @@ with no in-flight turn and no activity for `CODEX_COMPANION_BROKER_IDLE_MS`
   Cursor's shell tool is slow/unreliable (host-PATH/WSL), so `/cursor:delegate`
   defers build/test verification to the caller.
 - **Antigravity** — headless `agy -p` (`lib/adapters/antigravity.mjs`). `agy`'s
-  headless stdout is empty upstream (gemini-cli#27466), so the adapter learns the
+  headless stdout is empty upstream (google-antigravity/antigravity-cli#318; `--output-format stream-json` on agy >=1.1.8 is the coming workaround), so the adapter learns the
   conversation id from a per-invocation `--log-file` and recovers the answer from
   the on-disk transcript JSONL. Read-only research/explore only (EXPERIMENTAL).
 - **OpenCode** — headless `opencode run --format json` (`lib/adapters/opencode.mjs`),
@@ -101,7 +100,7 @@ with no in-flight turn and no activity for `CODEX_COMPANION_BROKER_IDLE_MS`
   NDJSON event stream (one JSON object per line). Read-only roles (`research`,
   `explore`) run via injected oc-* primary agents with write/edit/bash denied
   (OpenCode has no `--read-only` flag). Write roles use `--dangerously-skip-permissions`.
-  `--until-done` is supported; `--effort` is not. Default model: `opencode/claude-opus-4-8`
+  `--until-done` is supported; `--effort` is not. Default model: `opencode/claude-opus-5`
   (Zen — billed separately). **Token-offload caveat:** `anthropic/*` models reuse the
   Claude Code subscription and provide zero offload; real offload requires `opencode/*`,
   `openai/*`, `google/*`, `github-copilot/*`, or `ollama/*` models.

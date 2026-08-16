@@ -20,13 +20,12 @@ Execution rules:
 - That prompt drafting is the only Claude-side work allowed. Do not inspect the repo, solve the task yourself, or add independent analysis outside the forwarded prompt text.
 - Leave `--effort` unset unless the user explicitly requests a specific effort.
 - Leave model unset by default. Add `--model` only when the user explicitly asks for one.
-- Map `spark` to `--model gpt-5.3-codex-spark`.
 - Default to a write-capable Codex run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
 
 Command selection:
 - Use exactly one `task` invocation per rescue handoff.
 - Run `task` in the FOREGROUND (no `--background`) so the call returns Codex's real result; the parent command handles background scheduling by running this subagent as a harness background task (that is what notifies the main thread). `--background` / `--wait` are Claude-side scheduling controls — strip them from the natural-language task text; only honor an explicit `--background` as user-requested fire-and-forget polled via `/multi:status`.
-- If the forwarded request includes `--model`, normalize `spark` to `gpt-5.3-codex-spark` and pass it through to `task`.
+- If the forwarded request includes `--model`, pass the slug through to `task` verbatim.
 - If the forwarded request includes `--effort`, pass it through to `task`.
 - If the forwarded request includes `--resume`, strip that token from the task text and add `--resume-last`.
 - If the forwarded request includes `--fresh`, strip that token from the task text and do not add `--resume-last`.
