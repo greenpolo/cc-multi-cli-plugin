@@ -99,6 +99,7 @@ async function fixture(t: test.TestContext) {
   let cancelThrows = false;
   let resumeFails = false;
   let recovery: { result: RunResult; status: Run['status']; agentId: string } | undefined;
+  let recoveryGate: Promise<void> | undefined;
   const recoveryReads: string[] = [];
   function agent(id: string) {
     return {
@@ -189,7 +190,10 @@ async function fixture(t: test.TestContext) {
         id,
         agentId: saved.agentId,
         status: saved.status,
-        wait: async () => saved.result,
+        wait: async () => {
+          await recoveryGate;
+          return saved.result;
+        },
         cancel: async () => {},
         async *stream() {},
         conversation: async () => [],
@@ -228,6 +232,9 @@ async function fixture(t: test.TestContext) {
     recoveryReads,
     recover: (result: RunResult, status: Run['status'] = result.status, agentId = 'agent-1') => {
       recovery = { result, status, agentId };
+    },
+    delayRecovery: (promise: Promise<void>) => {
+      recoveryGate = promise;
     },
     failNextResume: () => {
       resumeFails = true;
@@ -984,6 +991,38 @@ test('recovery that cannot produce a terminal result proceeds with the interrupt
   await writeFile(missingId.sessionFile, JSON.stringify(saved));
   await expectInterruptedRetry(missingId);
   assert.equal(missingId.recoveryReads.length, 0, 'no run id means no SDK lookup is attempted');
+});
+
+test('recovery holds the turn, so a second request cannot dispatch a run it would then forget', async (t) => {
+  const f = await fixture(t);
+  await interruptedManifest(f);
+  f.recover({ id: 'run', status: 'finished', result: 'Recovered completed edit' });
+  const gate = Promise.withResolvers<void>();
+  f.delayRecovery(gate.promise);
+  const harness = f.make();
+  const first = harness.handle(body, 'main', signal());
+  await until(() => f.recoveryReads.length === 1, 'recovery to reach the SDK');
+  // A different request on the same agent: without the turn held, it would take
+  // the same idle record, dispatch its own run and have the `pendingRun` of that
+  // in-flight run cleared the moment this recovery finished.
+  const second = harness.handle(
+    { ...body, messages: [{ role: 'user', content: 'typed during recovery' }] },
+    'main',
+    signal(),
+  );
+  await assert.rejects(second, (error: unknown) => {
+    assert(error instanceof CursorProviderError);
+    assert.equal(error.failure.status, 400);
+    assert.match(error.message, /already running/);
+    return true;
+  });
+  assert.equal(f.sends.length, 1, 'no native run is dispatched while recovery owns the turn');
+  gate.resolve();
+  const response = await first;
+  assert.deepEqual(response.content, [{ type: 'text', text: 'Recovered completed edit' }]);
+  const saved = JSON.parse(await readFile(f.sessionFile, 'utf8'));
+  assert.equal(saved.interrupted, false);
+  assert.equal(saved.pendingRun, undefined);
 });
 
 test('a recovered but unfinished SDK run does not block a later retry and keeps native state', async (t) => {

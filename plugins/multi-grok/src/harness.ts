@@ -99,6 +99,7 @@ export class GrokHarness {
     this.checkPermissions = checkPermissions ?? missingPermissions;
     this.store = new HarnessSessionStore<GrokSaved>({
       provider: STORE_PROVIDER,
+      tag: PROVIDER,
       stateDirectory,
       platform,
       version: 1,
@@ -214,7 +215,7 @@ export class GrokHarness {
   }> {
     // Computed only once the record is held, so a continuation error still releases
     // it in `execute`'s `finally` instead of leaving the session busy forever.
-    const messages = session.sessionId ? continuation(body) : (body.messages ?? []);
+    const messages = session.sessionId ? continuation(body, PROVIDER) : (body.messages ?? []);
     const rewound = historyRewound(session, body.messages ?? [], grokHistoryHash);
     const prepared = prepareGrokRequest({ ...body, messages }, selection.model.id);
     // A run policy is always checked, so an unsupported mode fails before the CLI

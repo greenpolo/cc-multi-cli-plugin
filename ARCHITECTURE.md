@@ -126,6 +126,20 @@ instead of queuing: every harness reports this as a 400, so a prompt sent
 while a run is in flight is refused rather than retried against native state
 that has since moved on.
 
+Reading a record takes its lock. Cursor's replay path goes through `loadOnly`
+like every other path, so even a turn answered entirely from disk holds the
+record's lock file until the harness closes; the record it caches is the same
+object the turn would later mutate, so an unlocked shortcut would reintroduce
+the recovery race the lock exists to prevent. Cursor's interrupted-state
+recovery holds the turn with `acquire` for its whole duration, because it both
+awaits the native run and rewrites the record: a second request that slipped in
+between would dispatch a run whose `pendingRun` the finishing recovery then
+cleared. Cursor's agent budget counts records that actually hold a native SDK
+agent, so a cached record that never created one evicts nothing. Replay
+validation is provider-parameterized: Cursor's replies may carry the
+display-only `tool_use` blocks a Claude Mods row produces, while Grok and
+Antigravity stay text-only.
+
 ## Platform layer
 
 The process tree tracks and cancels child processes. Executable resolution selects

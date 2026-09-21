@@ -24,6 +24,7 @@ import {
 } from '../../multi-core/src/gateway/harness-response.ts';
 import {
   atomicJson,
+  type ContentBlockCheck,
   HarnessBusyError,
   type HarnessSessionBase,
   type HarnessSessionRuntime,
@@ -31,6 +32,7 @@ import {
   isHash,
   isRecord,
   readJson,
+  textContentBlock,
 } from '../../multi-core/src/gateway/harness-session.ts';
 import type {
   Emit,
@@ -60,9 +62,9 @@ type PendingRun = {
   inputTokens: number;
 };
 /**
- * The persisted half. Version 3 carries the shared `provider`/`identity` header;
- * a version 2 record is ignored, so the next turn starts a fresh native agent
- * instead of refusing to load.
+ * The persisted half. Version 3 carries the shared `provider`/`identity` header.
+ * A version 2 record is never read: its file and lock file are left in place and
+ * the next turn starts a fresh native agent instead of refusing to load.
  */
 type SavedSession = HarnessSessionBase & {
   version: 3;
@@ -89,6 +91,18 @@ const hash = (value: unknown) =>
     .update(JSON.stringify(value) ?? 'null')
     .digest('hex');
 const runState = (exchange: HarnessExchange) => exchange.meta as RunState;
+
+/**
+ * Cursor is the one harness whose reply is not text alone: a mod display row is
+ * persisted as a `tool_use` block, so a replay that rejected it would fail the
+ * turn forever. The block is display-only and is never executed as a tool.
+ */
+const cursorContentBlock: ContentBlockCheck = (block) =>
+  textContentBlock(block) ||
+  (block.type === 'tool_use' &&
+    typeof block.id === 'string' &&
+    typeof block.name === 'string' &&
+    isRecord(block.input));
 
 const billedUsageTimeoutMs = 5000;
 const maximumAgents = 32;
@@ -198,6 +212,7 @@ export class CursorHarness {
         saved.agentId.length > 0 &&
         validPendingRun(saved.pendingRun),
       transient: ['agent', 'run', 'policy'],
+      validContentBlock: cursorContentBlock,
     });
   }
 
@@ -220,7 +235,11 @@ export class CursorHarness {
     return prepareCursorRequest(body).inputTokens;
   }
 
-  /** The native record key: one agent per working directory and worker scope. */
+  /**
+   * The native record key: one agent per working directory and worker scope. The
+   * array shape is load-bearing, because `sessionScope` reads the scope back out
+   * of it; the store hashes the whole key into the record's file name.
+   */
   private identity(scope: string) {
     return JSON.stringify([this.cwd, scope]);
   }
@@ -371,15 +390,20 @@ export class CursorHarness {
   ): Promise<MessagesResponse> {
     const session = await this.take(scope);
     if (session.interrupted) {
-      if (session.busy) {
-        throw new CursorProviderError(
-          new HarnessBusyError('A different request is already running for this Cursor agent'),
-        );
+      // Recovery awaits the native run and then rewrites the record, so it holds
+      // the turn for its whole duration. Without that, a second request could
+      // take the same idle record, dispatch a run and have its `pendingRun`
+      // cleared by this recovery while that run was still in flight.
+      const held = await this.refuseWhenBusy(() => this.store.acquire(session.identity));
+      try {
+        // Attempted once per request: a readable terminal result is the stronger
+        // path and is persisted as a completed turn; anything else leaves the
+        // session interrupted and this request proceeds with a fresh dispatch.
+        await this.recoverSession(held);
+      } finally {
+        // Released before the replay/execute path re-acquires the same record.
+        this.store.release(held);
       }
-      // Attempted once per request: a readable terminal result is the stronger
-      // path and is persisted as a completed turn; anything else leaves the
-      // session interrupted and this request proceeds with a fresh dispatch.
-      await this.recoverSession(session);
     }
     const cached = await replayPersisted({
       stateDirectory: this.stateDirectory,
@@ -387,6 +411,7 @@ export class CursorHarness {
       saved: session,
       emit,
       provider: 'Cursor',
+      validContentBlock: cursorContentBlock,
     });
     if (cached !== undefined) {
       return cached;
@@ -462,8 +487,11 @@ export class CursorHarness {
   private async take(scope: string): Promise<Session> {
     const identity = this.identity(scope);
     const records = [...this.store.sessions()];
-    if (records.length >= maximumAgents && !records.some((item) => item.identity === identity)) {
-      const idle = records.find((item) => !item.busy);
+    // The budget counts native agents, not cached records: a record that never
+    // reached `ready` holds no Cursor agent and must not evict one that does.
+    const agents = records.filter((item) => item.agentId !== undefined);
+    if (agents.length >= maximumAgents && !records.some((item) => item.identity === identity)) {
+      const idle = agents.find((item) => !item.busy);
       if (!idle) {
         throw new Error('Too many concurrent Cursor agents');
       }
@@ -490,7 +518,7 @@ export class CursorHarness {
     const session = await this.refuseWhenBusy(() => this.store.acquire(loaded.identity));
     try {
       const ready = await this.ready(session, body, context);
-      const messages = ready.response ? continuation(body) : (body.messages ?? []);
+      const messages = ready.response ? continuation(body, 'Cursor') : (body.messages ?? []);
       const rewound = historyRewound(ready, body.messages ?? [], harnessHistoryHash);
       return { session: ready, messages, rewound };
     } catch (error) {

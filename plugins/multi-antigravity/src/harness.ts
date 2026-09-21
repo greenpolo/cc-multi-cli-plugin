@@ -136,6 +136,7 @@ export class AntigravityHarness {
     this.checkPermissions = checkPermissions ?? missingPermissions;
     this.store = new HarnessSessionStore<Saved>({
       provider: PROVIDER,
+      tag: TAG,
       stateDirectory,
       platform,
       version: SESSION_VERSION,
@@ -211,7 +212,14 @@ export class AntigravityHarness {
   }
 
   private async cachedExecute(turn: Turn, exchange: HarnessExchange, emit: Emit) {
-    const saved = await this.store.loadOnly(turn.identity);
+    let saved: Session;
+    try {
+      // A first-load race is a deterministic conflict, so it must leave here as
+      // this provider's own failure: a bare busy error reads as a retryable 502.
+      saved = await this.store.loadOnly(turn.identity);
+    } catch (error) {
+      throw new AntigravityProviderError(error);
+    }
     const replayed = await replayPersisted({
       stateDirectory: this.stateDirectory,
       key: turn.key,
@@ -234,7 +242,7 @@ export class AntigravityHarness {
       // owned from here on, so every exit below releases it.
       session = await this.store.acquire(turn.identity);
       const messages = session.conversationId
-        ? continuation(turn.body)
+        ? continuation(turn.body, TAG)
         : (turn.body.messages ?? []);
       const rewound = historyRewound(session, turn.body.messages ?? [], antigravityHistoryHash);
       return await this.runTurn(turn, { session, messages, rewound }, exchange, emit);

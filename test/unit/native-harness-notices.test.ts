@@ -87,18 +87,22 @@ test('a follow-up forwards only the newest turn', () => {
       { role: 'user', content: 'second' },
     ],
   };
-  assert.deepEqual(continuation(body), [{ role: 'user', content: 'second' }]);
-  assert.throws(
-    () => continuation({ messages: body.messages.slice(0, 2) }),
-    /message after the last assistant turn/,
-  );
-  assert.throws(
-    () =>
-      continuation({
-        messages: [...body.messages.slice(0, 2), { role: 'system', content: 'note' }],
-      }),
-    /requires a new user message/,
-  );
+  assert.deepEqual(continuation(body, 'Cursor'), [{ role: 'user', content: 'second' }]);
+  // The refusal names the provider whose native session could not be continued,
+  // so a multi-provider session says which one refused.
+  for (const tag of ['Cursor', 'Grok', 'Antigravity']) {
+    assert.throws(() => continuation({ messages: body.messages.slice(0, 2) }, tag), {
+      message: `${tag} continuation requires a message after the last assistant turn`,
+    });
+    assert.throws(
+      () =>
+        continuation(
+          { messages: [...body.messages.slice(0, 2), { role: 'system', content: 'note' }] },
+          tag,
+        ),
+      { message: `${tag} continuation requires a new user message` },
+    );
+  }
 });
 
 test('an outer history that dropped the last answer continues on the native record', () => {

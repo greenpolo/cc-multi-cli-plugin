@@ -85,7 +85,7 @@ test('a busy Antigravity agent is answered 400, not a retryable 502', async (t) 
       validate: () => 10,
       handle: async () => {
         throw new AntigravityProviderError(
-          new HarnessBusyError('A different request is already running for this antigravity agent'),
+          new HarnessBusyError('A different request is already running for this Antigravity agent'),
         );
       },
     },

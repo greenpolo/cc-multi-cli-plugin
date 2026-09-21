@@ -35,12 +35,24 @@ export type HarnessSessionRuntime = {
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 /**
+ * Whether one persisted content block may be replayed. The default accepts text
+ * only; a provider whose replies carry other block kinds supplies its own.
+ */
+export type ContentBlockCheck = (block: Record<string, unknown>) => boolean;
+
+export const textContentBlock: ContentBlockCheck = (block) =>
+  block.type === 'text' && typeof block.text === 'string';
+
+/**
  * The only way to reach a native session record. It owns the lock file, the busy
  * flag and the load gate, so a provider cannot re-add queuing without bypassing
  * it: both entry points refuse a busy identity with `HarnessBusyError`.
  */
 export class HarnessSessionStore<S extends HarnessSessionBase> {
   private readonly provider: string;
+  /** The provider's display name, used only in messages the caller reads. */
+  private readonly tag: string;
+  private readonly validContentBlock: ContentBlockCheck;
   private readonly stateDirectory: string;
   private readonly platform: NodeJS.Platform;
   private readonly version: number;
@@ -53,6 +65,8 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
 
   constructor(options: {
     provider: string;
+    /** Display name for messages; defaults to the on-disk `provider` discriminator. */
+    tag?: string;
     stateDirectory: string;
     platform: NodeJS.Platform;
     version: number;
@@ -60,8 +74,12 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     validate: (saved: Partial<S>) => boolean;
     /** Extra live-only keys a provider hangs on its record; never persisted. */
     transient?: readonly string[];
+    /** Accepts the content blocks this provider's replies may carry on replay. */
+    validContentBlock?: ContentBlockCheck;
   }) {
     this.provider = options.provider;
+    this.tag = options.tag ?? options.provider;
+    this.validContentBlock = options.validContentBlock ?? textContentBlock;
     this.stateDirectory = options.stateDirectory;
     this.platform = options.platform;
     this.version = options.version;
@@ -75,7 +93,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     const current = this.records.get(identity);
     if (current?.busy || this.creating.has(identity)) {
       throw new HarnessBusyError(
-        `A different request is already running for this ${this.provider} agent`,
+        `A different request is already running for this ${this.tag} agent`,
       );
     }
     this.creating.add(identity);
@@ -95,9 +113,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
       return current;
     }
     if (this.loading.has(identity)) {
-      throw new HarnessBusyError(
-        `A different request is already loading this ${this.provider} agent`,
-      );
+      throw new HarnessBusyError(`A different request is already loading this ${this.tag} agent`);
     }
     this.loading.add(identity);
     try {
@@ -183,20 +199,23 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
       typeof saved.identity !== 'string' ||
       typeof saved.interrupted !== 'boolean' ||
       (saved.policyIdentity !== undefined && !isHash(saved.policyIdentity)) ||
-      !validSavedResponse(saved) ||
+      !validSavedResponse(saved, this.validContentBlock) ||
       !this.validate(saved)
     ) {
-      throw new Error(`${this.provider} session has invalid state; refusing native replay`);
+      throw new Error(`${this.tag} session has invalid state; refusing native replay`);
     }
     return saved as S;
   }
 }
 
-function validSavedResponse(saved: Partial<HarnessSessionBase>): boolean {
+function validSavedResponse(
+  saved: Partial<HarnessSessionBase>,
+  validContentBlock: ContentBlockCheck,
+): boolean {
   if (saved.response === undefined && saved.replay === undefined) {
     return true;
   }
-  return validMessagesResponse(saved.response) && validReplay(saved.replay);
+  return validMessagesResponse(saved.response, validContentBlock) && validReplay(saved.replay);
 }
 
 export async function readJson(file: string): Promise<unknown> {
@@ -230,7 +249,10 @@ export function optionalCount(value: unknown): boolean {
   return value === undefined || (Number.isSafeInteger(value) && Number(value) >= 0);
 }
 
-export function validMessagesResponse(value: unknown): value is MessagesResponse {
+export function validMessagesResponse(
+  value: unknown,
+  validContentBlock: ContentBlockCheck = textContentBlock,
+): value is MessagesResponse {
   if (!isRecord(value)) {
     return false;
   }
@@ -241,12 +263,7 @@ export function validMessagesResponse(value: unknown): value is MessagesResponse
     response.role === 'assistant' &&
     typeof response.model === 'string' &&
     Array.isArray(response.content) &&
-    response.content.every(
-      (block) =>
-        isRecord(block) &&
-        block.type === 'text' &&
-        typeof (block as { text: unknown }).text === 'string',
-    ) &&
+    response.content.every((block) => isRecord(block) && validContentBlock(block)) &&
     (response.stop_reason === null || response.stop_reason === 'end_turn') &&
     (response.stop_sequence === null || typeof response.stop_sequence === 'string') &&
     validResponseUsage(response.usage)
@@ -269,11 +286,12 @@ function validResponseUsage(value: unknown): value is MessagesResponse['usage'] 
 
 export function validPersistedResponse(
   value: unknown,
+  validContentBlock: ContentBlockCheck = textContentBlock,
 ): value is { response: MessagesResponse; events: HarnessEvent[] } {
   if (!isRecord(value)) {
     return false;
   }
-  return validMessagesResponse(value.response) && validEvents(value.events);
+  return validMessagesResponse(value.response, validContentBlock) && validEvents(value.events);
 }
 
 export function validReplay(value: unknown): value is { key: string; events: HarnessEvent[] } {

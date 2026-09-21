@@ -886,3 +886,41 @@ test('a prompt sent during a run is refused instead of resuming stale history', 
   assert.equal(calls.length, 2);
   assert.equal(calls[1].conversation, 'busy-conversation');
 });
+
+test('a first-load race is refused with 400, not a retryable gateway failure', async (t) => {
+  const { stateDirectory, calls, run } = await setup();
+  t.after(() => removeTemporary(stateDirectory));
+  const harness = new AntigravityHarness([model], {
+    stateDirectory,
+    checkPermissions: policy,
+    run,
+  });
+  t.after(() => harness.close());
+  // Two distinct requests on the same agent, started before either has cached a
+  // record: the second reaches `loadOnly` while the first still holds the load.
+  const requests = [
+    harness.handle(
+      { model: model.model, messages: [{ role: 'user', content: 'first' }] },
+      'race-worker',
+      new AbortController().signal,
+      undefined,
+      context,
+    ),
+    harness.handle(
+      { model: model.model, messages: [{ role: 'user', content: 'second' }] },
+      'race-worker',
+      new AbortController().signal,
+      undefined,
+      context,
+    ),
+  ];
+  const settled = await Promise.allSettled(requests);
+  const refused = settled.filter((outcome) => outcome.status === 'rejected');
+  assert.equal(refused.length, 1, `expected exactly one refusal, got ${JSON.stringify(settled)}`);
+  const error = refused[0].reason;
+  assert(error instanceof AntigravityProviderError);
+  // A bare HarnessBusyError escapes as a retryable 502, which Claude re-sends.
+  assert.equal(error.failure.status, 400);
+  assert.match(error.message, /already (running|loading)/);
+  assert.equal(calls.length, 1, 'the refused request must not start a native run');
+});

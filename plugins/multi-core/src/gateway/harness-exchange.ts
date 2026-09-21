@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readJson, validPersistedResponse } from './harness-session.ts';
+import { type ContentBlockCheck, readJson, validPersistedResponse } from './harness-session.ts';
 import type { Emit, MessagesResponse, StreamEventBody, StreamEventName } from './messages.ts';
 
 /** One recorded Anthropic stream event, replayable verbatim. */
@@ -142,6 +142,8 @@ export async function replayPersisted(args: {
   saved?: { replay?: { key: string; events: HarnessEvent[] }; response?: MessagesResponse };
   emit: Emit;
   provider: string;
+  /** Accepts the content blocks this provider's replies may carry; text-only by default. */
+  validContentBlock?: ContentBlockCheck;
 }): Promise<MessagesResponse | undefined> {
   const { saved, key } = args;
   const persisted =
@@ -151,7 +153,7 @@ export async function replayPersisted(args: {
   if (persisted === undefined) {
     return undefined;
   }
-  if (!validPersistedResponse(persisted)) {
+  if (!validPersistedResponse(persisted, args.validContentBlock)) {
     throw new Error(`Invalid persisted ${args.provider} response`);
   }
   for (const event of persisted.events) {

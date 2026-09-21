@@ -73,15 +73,15 @@ export function stderrDiagnostics(stderr: string): string {
  * The newest turn: everything after the last assistant message. The native session
  * already holds everything before it, so only the delta is sent on resume.
  */
-export function continuation(body: MessagesRequest): RequestMessage[] {
+export function continuation(body: MessagesRequest, tag: string): RequestMessage[] {
   const messages = body.messages ?? [];
   const lastAssistant = messages.findLastIndex((message) => message.role === 'assistant');
   if (lastAssistant === messages.length - 1) {
-    throw new Error('Native continuation requires a message after the last assistant turn');
+    throw new Error(`${tag} continuation requires a message after the last assistant turn`);
   }
   const delta = messages.slice(lastAssistant + 1);
   if (!delta.some((message) => message.role === 'user')) {
-    throw new Error('Native continuation requires a new user message');
+    throw new Error(`${tag} continuation requires a new user message`);
   }
   return delta;
 }

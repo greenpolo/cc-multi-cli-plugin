@@ -110,7 +110,12 @@ export class AntigravityCliError extends NativeCliError {
   constructor(
     message: string,
     code: AntigravityCliCode,
-    details: { exitCode?: number | null; signal?: NodeJS.Signals | null; stderr?: string } = {},
+    details: {
+      exitCode?: number | null;
+      signal?: NodeJS.Signals | null;
+      stderr?: string;
+      systemCode?: string;
+    } = {},
   ) {
     super(message, code, details);
     this.name = 'AntigravityCliError';
@@ -120,6 +125,27 @@ export class AntigravityCliError extends NativeCliError {
 /** A shared-runner failure keeps its own code; anything unknown reads as a parse fault. */
 function cliCode(code: string): AntigravityCliCode {
   return CLI_CODES.includes(code) ? (code as AntigravityCliCode) : 'parse';
+}
+
+/**
+ * `runNativeCli` raises its own generic spawn failures as a bare `NativeCliError`
+ * before any agy parser state exists — a synchronous spawn throw never reaches
+ * `finishValue`. Those are rewrapped so every failure this module reports is an
+ * `AntigravityCliError`.
+ */
+function toAntigravityCliError(error: unknown): AntigravityCliError {
+  if (error instanceof AntigravityCliError) {
+    return error;
+  }
+  if (error instanceof NativeCliError) {
+    return new AntigravityCliError(error.message, cliCode(error.code), {
+      exitCode: error.exitCode,
+      signal: error.signal,
+      stderr: error.stderr,
+      systemCode: error.systemCode,
+    });
+  }
+  throw error;
 }
 
 function antigravityArguments(options: AntigravityRunOptions, promptOnStdin: boolean): string[] {
@@ -156,7 +182,17 @@ function antigravityArguments(options: AntigravityRunOptions, promptOnStdin: boo
   return args;
 }
 
-export function runAntigravity(options: AntigravityRunOptions): Promise<AntigravityRunResult> {
+export async function runAntigravity(
+  options: AntigravityRunOptions,
+): Promise<AntigravityRunResult> {
+  try {
+    return await spawnAntigravity(options);
+  } catch (error) {
+    throw toAntigravityCliError(error);
+  }
+}
+
+function spawnAntigravity(options: AntigravityRunOptions): Promise<AntigravityRunResult> {
   const platform = options.platform ?? process.platform;
   const promptOnStdin = Buffer.byteLength(options.prompt) >= promptArgumentLimitBytes(platform);
   const environment = antigravityEnvironment(options.env);

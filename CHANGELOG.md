@@ -12,7 +12,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   `plugins/multi-core/src/gateway/harness-*.ts`. Each provider still owns its
   event grammar, CLI argument construction, usage accounting, and SDK agent
   lifecycle; only the identical plumbing moved. Net change across the four
-  slices is roughly -800 lines. No behaviour changes except the three listed
+  slices is roughly -800 lines. No behaviour changes except the five listed
   below, which the shared modules made possible.
 
 - **Antigravity and Cursor refuse a prompt sent while a run is in flight.**
@@ -30,6 +30,23 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   is ignored rather than read, so a live agent starts fresh the first time it
   runs after the upgrade; the record's file name also changed, so no old file
   is overwritten or reused.
+
+- **A Grok spawn failure the OS called transient is now retryable.** The shared
+  native runner records the operating system's own `code` for a process it could
+  not create, and Grok's CLI layer now forwards it from a failure delivered on
+  the child's `error` event as well as from a synchronous spawn throw. `EAGAIN`,
+  `EMFILE`, `ENFILE`, `ENOMEM` and `ETXTBSY` therefore take the transient branch
+  and are answered 502 (retryable) where they were previously 400. That was
+  always the intent of the transient list; only the event path had missed it.
+  A missing binary stays a deterministic 400.
+
+- **Cursor replays hold the session record's lock.** Cursor's replay path now
+  reads the record through the shared store's `loadOnly`, which takes the
+  record's lock file and caches the record until the harness closes; the
+  previous replay path read the file without the lock. Holding it is what keeps
+  a replay, an interrupted-state recovery and a dispatch from interleaving on
+  one record. Cursor's 32-agent budget now counts only records that hold a
+  native SDK agent, so the extra cached records cannot evict a live agent.
 
 - **Cursor's token estimate fallback changed.** When the SDK reports no usage
   for a turn, the output token estimate is now `ceil(content length / 4)`,
