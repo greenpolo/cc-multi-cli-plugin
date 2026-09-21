@@ -1,22 +1,7 @@
-import { createHash } from 'node:crypto';
 import type { SDKUserMessage } from '@cursor/sdk';
-import type { ContentBlock, MessagesRequest } from '../../multi-core/src/gateway/messages.ts';
+import type { MessagesRequest } from '../../multi-core/src/gateway/messages.ts';
 import { estimateTextTokens } from '../../multi-core/src/gateway/tokens.ts';
 import { toResponses } from '../../multi-openai/src/responses.ts';
-
-const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-export function cursorHistoryHash(messages: MessagesRequest['messages']): string {
-  // Claude moves ephemeral cache markers as the transcript grows. They are not
-  // conversation edits; only strip block metadata, never fields inside tool args.
-  const blocks = (content: unknown): unknown =>
-    Array.isArray(content)
-      ? content.map((block) => {
-          const { cache_control: _cache, ...rest } = block as ContentBlock;
-          return rest.type === 'tool_result' ? { ...rest, content: blocks(rest.content) } : rest;
-        })
-      : content;
-  return hash(messages?.map((message) => ({ ...message, content: blocks(message.content) })));
-}
 
 function validateControls(body: MessagesRequest) {
   if (
@@ -92,14 +77,4 @@ export function prepareCursorRequest(body: MessagesRequest) {
   // estimate the submitted prompt until SDK exposes context counting.
   const inputTokens = estimateTextTokens(prompt.text ?? '') + images.length * 4096;
   return { prompt, inputTokens };
-}
-
-export function cursorTerminalSuffix(streamed: string, terminal: string) {
-  if (streamed && terminal.startsWith(streamed)) {
-    return terminal.slice(streamed.length);
-  }
-  if (streamed.endsWith(terminal)) {
-    return '';
-  }
-  return terminal;
 }

@@ -46,6 +46,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
   private readonly version: number;
   private readonly fresh: (identity: string) => S;
   private readonly validate: (saved: Partial<S>) => boolean;
+  private readonly transient: readonly string[];
   private readonly records = new Map<string, S & HarnessSessionRuntime>();
   private readonly creating = new Set<string>();
   private readonly loading = new Set<string>();
@@ -57,6 +58,8 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     version: number;
     fresh: (identity: string) => S;
     validate: (saved: Partial<S>) => boolean;
+    /** Extra live-only keys a provider hangs on its record; never persisted. */
+    transient?: readonly string[];
   }) {
     this.provider = options.provider;
     this.stateDirectory = options.stateDirectory;
@@ -64,6 +67,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     this.version = options.version;
     this.fresh = options.fresh;
     this.validate = options.validate;
+    this.transient = options.transient ?? [];
   }
 
   /** One turn at a time per agent: take the record and mark it busy, or refuse. */
@@ -109,7 +113,18 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
 
   save(session: S & HarnessSessionRuntime): Promise<void> {
     const { file: _file, busy: _busy, release: _release, unlock: _unlock, ...saved } = session;
-    return atomicJson(session.file, { ...saved, provider: this.provider }, this.platform);
+    const persisted = Object.fromEntries(
+      Object.entries(saved).filter(([key]) => !this.transient.includes(key)),
+    );
+    return atomicJson(session.file, { ...persisted, provider: this.provider }, this.platform);
+  }
+
+  /**
+   * Drop a cached record without touching its file. The caller owns the lock it
+   * took: release it first to hand the identity on, or keep it to hold the scope.
+   */
+  forget(identity: string): void {
+    this.records.delete(identity);
   }
 
   releaseLock(session: S & HarnessSessionRuntime): Promise<void> {
@@ -128,7 +143,8 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     return this.records.values();
   }
 
-  private sessionFile(identity: string): string {
+  /** The record's file, for the provider reads that must not take the lock. */
+  sessionFile(identity: string): string {
     return path.join(this.stateDirectory, `${digest(identity)}.session.json`);
   }
 

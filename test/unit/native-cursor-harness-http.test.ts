@@ -246,3 +246,86 @@ test('native SSE cancellation stops the SDK run without reporting successful com
   assert.doesNotMatch(await retry.text(), /event: message_stop|tool_use/);
   assert.equal(sends, 1);
 });
+
+test('a prompt that arrives during a native run is answered 400, not a retryable 502', async (t) => {
+  const directory = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), 'cursor-harness-http-busy-')),
+  );
+  const result = Promise.withResolvers<RunResult>();
+  const started = Promise.withResolvers<void>();
+  let sends = 0;
+  const harness = new CursorHarness(options, {
+    cwd: directory,
+    stateDirectory: path.join(directory, 'state'),
+    createAgent: async () => ({
+      agentId: 'busy-agent',
+      close() {},
+      async send(): Promise<Run> {
+        sends++;
+        started.resolve();
+        return {
+          id: 'busy-run',
+          agentId: 'busy-agent',
+          status: 'running',
+          wait: () => result.promise,
+          cancel: async () => {
+            result.resolve({ id: 'busy-run', status: 'cancelled' });
+          },
+          async *stream() {},
+          conversation: async () => [],
+          supports: () => true,
+          unsupportedReason: () => undefined,
+          onDidChangeStatus: () => () => {},
+        };
+      },
+    }),
+  });
+  const permissionModes = new PermissionModes(async () => ({ worker: {} }));
+  await permissionModes.record({
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'session-busy',
+    permission_mode: 'auto',
+  });
+  const server = createNativeGateway({
+    permissionModes,
+    token: 'test-token',
+    authFile: 'unused',
+    cursor: harness,
+  });
+  t.after(async () => {
+    result.resolve({ id: 'busy-run', status: 'cancelled' });
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await harness.close();
+    await removeTemporary(directory);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const request = (prompt: string, stream: boolean) =>
+    fetch(`http://127.0.0.1:${address.port}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-multi-gateway-token': 'test-token',
+        'x-claude-code-session-id': 'session-busy',
+      },
+      body: JSON.stringify({
+        model: options[0].model,
+        messages: [{ role: 'user', content: prompt }],
+        stream,
+      }),
+    });
+  const running = request('Start a long native run.', true);
+  await started.promise;
+  // The refusal is deterministic: a 502 would invite Claude to resend the same
+  // prompt, whose history stops at the still-running turn.
+  const refused = await request('Sent while the first turn is still running.', false);
+  assert.equal(refused.status, 400);
+  assert.match(JSON.stringify(await refused.json()), /already running for this Cursor agent/);
+  assert.equal(sends, 1, 'the refused prompt must never reach the SDK');
+  result.resolve({ id: 'busy-run', status: 'finished', result: 'native result' });
+  const first = await running;
+  assert.equal(first.status, 200);
+  await first.text();
+});
