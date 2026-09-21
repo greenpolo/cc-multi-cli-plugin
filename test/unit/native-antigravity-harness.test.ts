@@ -8,7 +8,10 @@ import type {
   AntigravityRunOptions,
   AntigravityRunResult,
 } from '../../plugins/multi-antigravity/src/cli.ts';
-import { AntigravityHarness } from '../../plugins/multi-antigravity/src/harness.ts';
+import {
+  AntigravityHarness,
+  AntigravityProviderError,
+} from '../../plugins/multi-antigravity/src/harness.ts';
 import {
   checkAntigravityHooks,
   installAntigravityHook,
@@ -793,4 +796,93 @@ test('an unrelated active PreToolUse hook does not block native admission', asyn
   );
   await installAntigravityHook(globalFile);
   await assert.doesNotReject(checkAntigravityHooks({ globalFile, settingsFile }));
+});
+
+test('a prompt sent during a run is refused instead of resuming stale history', async (t) => {
+  const stateDirectory = await mkdtemp(path.join(os.tmpdir(), 'agy-busy-'));
+  t.after(() => removeTemporary(stateDirectory));
+  const calls: AntigravityRunOptions[] = [];
+  const release = Promise.withResolvers<void>();
+  const harness = new AntigravityHarness([model], {
+    stateDirectory,
+    checkPermissions: policy,
+    run: async (options: AntigravityRunOptions): Promise<AntigravityRunResult> => {
+      calls.push(options);
+      options.onEvent?.({ event: 'init', conversation_id: 'busy-conversation', init: {} });
+      if (calls.length === 1) {
+        await release.promise;
+      }
+      return {
+        result: {
+          conversation_id: 'busy-conversation',
+          status: 'SUCCESS' as const,
+          response: 'done',
+        },
+        exitCode: 0,
+        signal: null,
+        stderr: '',
+      };
+    },
+  });
+  t.after(async () => {
+    release.resolve();
+    await harness.close();
+  });
+
+  const first = harness.handle(
+    { model: model.model, messages: [{ role: 'user', content: 'long running' }] },
+    'busy-worker',
+    new AbortController().signal,
+    undefined,
+    context,
+  );
+  await until(() => calls.length === 1, 'the first native run to start');
+
+  // This prompt was written before the answer existed, so its history stops at the
+  // running turn; resuming with it would send that turn to agy a second time.
+  await assert.rejects(
+    harness.handle(
+      {
+        model: model.model,
+        messages: [
+          { role: 'user', content: 'long running' },
+          { role: 'user', content: 'typed while busy' },
+        ],
+      },
+      'busy-worker',
+      new AbortController().signal,
+      undefined,
+      context,
+    ),
+    (error: unknown) => {
+      assert.equal(error instanceof AntigravityProviderError, true);
+      assert.match((error as AntigravityProviderError).message, /already running/);
+      // Deterministic while the run lasts: a retryable status turned one conflict
+      // into ten attempts in a live session.
+      assert.equal((error as AntigravityProviderError).failure.status, 400);
+      return true;
+    },
+  );
+  assert.equal(calls.length, 1, 'the refused prompt must not start a native run');
+
+  release.resolve();
+  const answer = await first;
+
+  // The run in flight is untouched, and the next prompt resumes the conversation it opened.
+  await harness.handle(
+    {
+      model: model.model,
+      messages: [
+        { role: 'user', content: 'long running' },
+        { role: 'assistant', content: answer.content },
+        { role: 'user', content: 'after the refusal' },
+      ],
+    },
+    'busy-worker',
+    new AbortController().signal,
+    undefined,
+    context,
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].conversation, 'busy-conversation');
 });
