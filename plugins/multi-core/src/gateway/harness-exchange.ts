@@ -73,6 +73,25 @@ export class ExchangeRegistry {
     return this.exchanges.get(key);
   }
 
+  get size(): number {
+    return this.exchanges.size;
+  }
+
+  /**
+   * Make room for a new request by dropping one finished exchange. A running
+   * exchange is never dropped, so a second caller can still join it instead of
+   * starting a second paid turn.
+   */
+  evictSettled(): boolean {
+    for (const [key, exchange] of this.exchanges) {
+      if (exchange.settled) {
+        this.exchanges.delete(key);
+        return true;
+      }
+    }
+    return false;
+  }
+
   all(): HarnessExchange[] {
     return [...this.exchanges.values()];
   }

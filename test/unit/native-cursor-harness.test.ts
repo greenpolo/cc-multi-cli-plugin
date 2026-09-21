@@ -13,6 +13,7 @@ import type {
 } from '../../plugins/multi-core/src/gateway/messages.ts';
 import type { PermissionContext } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { lockStateFile } from '../../plugins/multi-core/src/gateway/state-lock.ts';
+import { CursorProviderError } from '../../plugins/multi-cursor/src/errors.ts';
 import {
   type CreateCursorHarnessAgent,
   CursorHarness,
@@ -236,7 +237,7 @@ async function fixture(t: test.TestContext) {
       directory,
       'state',
       `${createHash('sha256')
-        .update(JSON.stringify([directory, 'main']))
+        .update(JSON.stringify(JSON.stringify([directory, 'main'])))
         .digest('hex')}.session.json`,
     ),
     results,
@@ -456,7 +457,7 @@ test('completed requests deduplicate across disk resume and follow-ups use the s
   const first = f.make();
   const response = await first.handle(body, 'main', signal());
   const saved = JSON.parse(await readFile(f.sessionFile, 'utf8'));
-  assert.equal(saved.version, 2);
+  assert.equal(saved.version, 3);
   assert(!('history' in saved));
   assert(!('historyLength' in saved));
   assert.doesNotMatch(JSON.stringify(saved), /first request/);
@@ -487,6 +488,32 @@ test('one disconnected observer does not cancel a shared native run; all disconn
   await tick();
   assert.equal(f.cancellations(), 1);
   await assert.rejects(harness.handle(body, 'main', signal()));
+  assert.equal(f.sends.length, 1);
+});
+
+test('a prompt sent during a run is refused instead of resuming stale history', async (t) => {
+  const f = await fixture(t);
+  f.hold();
+  const harness = f.make();
+  const running = harness.handle(body, 'main', signal());
+  await f.started;
+  // The second prompt was composed before the running turn answered. Resuming
+  // with it would forward that turn again, so it is refused deterministically
+  // (400) rather than answered with a retryable failure.
+  const refused = harness.handle(
+    { ...body, messages: [{ role: 'user', content: 'sent while the first turn runs' }] },
+    'main',
+    signal(),
+  );
+  await assert.rejects(refused, (error: unknown) => {
+    assert(error instanceof CursorProviderError);
+    assert.equal(error.failure.status, 400);
+    assert.match(error.message, /already running for this Cursor agent/);
+    return true;
+  });
+  assert.equal(f.sends.length, 1, 'the refused prompt must not reach the SDK');
+  f.results[0].resolve({ id: 'run', status: 'finished', result: 'done' });
+  await running;
   assert.equal(f.sends.length, 1);
 });
 
@@ -614,10 +641,10 @@ test('repeated session cleanup cannot remove a replacement gateway lock', async 
   const harness = f.make();
   const response = await harness.handle(body, 'main', signal());
   // biome-ignore lint/complexity/useLiteralKeys: test intentionally inspects private session state.
-  const session = harness['sessions'].get('main');
+  const store = harness['store'];
+  const session = [...store.sessions()].find((record) => record.identity.includes('"main"'));
   assert(session);
-  // biome-ignore lint/complexity/useLiteralKeys: test intentionally invokes private cleanup.
-  await harness['releaseLock'](session);
+  await store.releaseLock(session);
   const release = await lockStateFile(`${f.sessionFile}.lock`);
   t.after(release);
   await harness.close();
@@ -901,7 +928,7 @@ test('a manifest with a foreign or missing version starts a fresh native agent',
   await first.handle(body, 'main', signal());
   await first.close();
   const saved = JSON.parse(await readFile(f.sessionFile, 'utf8'));
-  assert.equal(saved.version, 2);
+  assert.equal(saved.version, 3);
   for (const patch of [{ version: 1 }, { version: undefined }]) {
     await writeFile(f.sessionFile, JSON.stringify({ ...saved, ...patch }));
     const harness = f.make();
