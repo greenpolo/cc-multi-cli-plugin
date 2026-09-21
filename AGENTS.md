@@ -21,6 +21,7 @@ and provider details live in [docs/installation.md](docs/installation.md),
 | `plugins/multi-core/src/gateway/cursor-settings.ts`, `mode-hook.ts`, `agent-definitions.ts` | Admits settings and maps prompt and worker permissions. |
 | `plugins/multi-core/src/gateway/approval.ts`, `permission-hook.ts` | Approval protocol and capability checks. |
 | `plugins/multi-core/src/gateway/mod-*.ts`, `tool-observer.ts` | Claude Mods control-plane routes, compaction, policy, and progress observation. |
+| `plugins/multi-core/src/gateway/harness-*.ts` | Shared native-harness session store, exchange registry, response builder, notices, process runner, and prompt preparation used by Cursor, Antigravity, and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
 | `plugins/multi-openai/src/` | Codex authentication, models, Responses translation, instructions, and reviewer. |
 | `plugins/multi-cursor/src/` | Cursor SDK harness, permissions, progress, requests, models, and workspaces. |

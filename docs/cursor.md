@@ -69,6 +69,13 @@ If outer history no longer contains the prior response, Claude receives a notice
 and Cursor continues on its native record. Native state is never rewound.
 Completed identical requests can replay their saved response.
 
+One turn runs at a time per worker and workspace. A prompt sent while a run is
+in flight is refused with a deterministic error rather than queued behind it:
+resuming a prompt whose history stops at the previous assistant message would
+send the running turn to the SDK a second time. Multi never reruns a paid turn
+on a guess; send the prompt again once the answer lands. Antigravity and Grok
+refuse the same way.
+
 ## Compaction
 
 Claude compaction can prepare a bounded summary with native tools disabled. The

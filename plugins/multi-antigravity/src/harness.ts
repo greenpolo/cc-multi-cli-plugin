@@ -200,7 +200,7 @@ export class AntigravityHarness {
     const turn: Turn = { body, context, model, cwd, identity, key };
     let exchange = this.exchanges.get(key);
     if (!exchange) {
-      if (this.exchanges.all().length >= 256) {
+      if (this.exchanges.size >= 256) {
         throw new Error('Too many concurrent Antigravity requests');
       }
       exchange = this.exchanges.start(key, (started, forward) =>

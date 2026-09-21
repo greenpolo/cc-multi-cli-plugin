@@ -60,6 +60,15 @@ with Claude policy enforcement at the prompt boundary. Grok carries the same
 policy in its own run arguments, and each announced toolset is checked against
 it because an unknown removal is accepted and ignored by that CLI.
 
+All three harnesses share their session store, in-flight exchange registry,
+response builder, notice text, native process runner, and prompt preparation
+from `plugins/multi-core/src/gateway/harness-*.ts`. Each provider still owns
+its own event grammar, CLI argument construction, usage accounting, and (for
+Cursor) SDK agent lifecycle; the shared modules hold only plumbing that was
+identical across providers. A prompt sent for an identity with a run already
+in flight is refused with a deterministic 400 on every harness, never queued
+or retried against a native conversation that has moved on.
+
 ## Permissions
 
 Claude's permission mode controls each provider at prompt boundaries through the
@@ -87,7 +96,10 @@ switches.
 Every run isolates Claude session, worker, provider, and workspace identity.
 Provider credentials and review contexts remain separate. Claude subscription
 passthrough remains available; the plugin has no Claude token pool. External
-operations retain external permissions.
+operations retain external permissions. Each harness's `HarnessSessionStore`
+keys its on-disk record on the provider-supplied identity, so session,
+worker, provider, and workspace isolation holds at the shared-module layer as
+well as in each provider's own state.
 
 ## State
 
@@ -101,12 +113,30 @@ only with a matching prompt hash or unique saved-response anchor. Native state i
 never rewound. Compaction summarizes authenticated context while preserving the
 native record. Cache reuse and usage accounting remain provider-owned.
 
+Cursor, Antigravity, and Grok persist and load native session records through
+the shared `HarnessSessionStore` (`gateway/harness-session.ts`), which owns
+the busy/loading gate, the atomic-write lock, and record validation; a
+provider supplies only its own field extensions and a default record. An
+in-flight native turn is tracked by the shared `ExchangeRegistry`
+(`gateway/harness-exchange.ts`), which lets a second identical request join
+the running turn or replay a settled one instead of starting a second paid
+turn. `HarnessSessionStore.acquire` and `.loadOnly` are the only way to reach
+a session record, and both throw `HarnessBusyError` for a busy identity
+instead of queuing: every harness reports this as a 400, so a prompt sent
+while a run is in flight is refused rather than retried against native state
+that has since moved on.
+
 ## Platform layer
 
 The process tree tracks and cancels child processes. Executable resolution selects
 platform-appropriate commands. Managed-policy sources are admitted per platform.
 Atomic writes protect settings and state. Install shims bootstrap the real Claude
-executable and preserve its arguments. Linux, WSL, macOS, and Windows support is
+executable and preserve its arguments. Grok and Antigravity spawn their native
+CLI through the shared `runNativeCli` process runner
+(`gateway/harness-process.ts`), which owns the spawn/kill/timeout cascade,
+stdout/stderr capture, and cancellation plumbing; each provider still supplies
+its own argument construction, event grammar, and environment allowlist.
+Linux, WSL, macOS, and Windows support is
 described in [docs/platform-support.md](docs/platform-support.md).
 
 ## Design rules

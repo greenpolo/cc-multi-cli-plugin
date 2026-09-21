@@ -6,6 +6,36 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Shared harness plumbing.** Grok, Antigravity, and Cursor now share their
+  session store, exchange registry, response builder, notice text, native
+  process runner, and prompt preparation through six new modules under
+  `plugins/multi-core/src/gateway/harness-*.ts`. Each provider still owns its
+  event grammar, CLI argument construction, usage accounting, and SDK agent
+  lifecycle; only the identical plumbing moved. Net change across the four
+  slices is roughly -800 lines. No behaviour changes except the three listed
+  below, which the shared modules made possible.
+
+- **Antigravity and Cursor refuse a prompt sent while a run is in flight.**
+  Both harnesses previously answered a second prompt for the same identity
+  with a bare `Error`, which `server.ts` reported as a retryable 502. A retry
+  could resume the native conversation with stale history and forward a paid
+  turn a second time. They now throw the same `HarnessBusyError` Grok already
+  used, which is reported as a deterministic 400: the prompt is refused
+  outright instead of risking a duplicate paid turn. Grok's behaviour is
+  unchanged.
+
+- **Cursor session record moved to version 3.** The record now carries the
+  shared session header (`provider`, `identity`, `interrupted`, `response`,
+  `replay`, `policyIdentity`) used by every harness. A version 2 file on disk
+  is ignored rather than read, so a live agent starts fresh the first time it
+  runs after the upgrade; the record's file name also changed, so no old file
+  is overwritten or reused.
+
+- **Cursor's token estimate fallback changed.** When the SDK reports no usage
+  for a turn, the output token estimate is now `ceil(content length / 4)`,
+  matching the shared `HarnessResponse` estimate the other harnesses already
+  used, instead of Cursor's previous `o200k_base` tokenizer estimate.
+
 - **Grok on the README banner.** The generated banner lists Grok Build alongside
   the other native harnesses, using the official Grok mark as vector paths from
   grok.com, recolored with `currentColor` like the neighbouring marks and credited

@@ -155,7 +155,7 @@ export class GrokHarness {
     ]);
     let exchange = this.exchanges.get(key);
     if (!exchange) {
-      if (this.exchanges.all().length >= 256) {
+      if (this.exchanges.size >= 256) {
         throw new Error('Too many concurrent Grok requests');
       }
       exchange = this.exchanges.start(key, (startedExchange, forward) =>
