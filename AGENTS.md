@@ -79,6 +79,7 @@ inference. It is separate from `npm run check` and the current CI matrix.
 | `npm run test:live:compaction` | Claude/OpenAI compaction and resume | Claude and Codex login |
 | `npm run test:live:zen` | Zen tools, cache, and resume | Zen API key |
 | `npm run test:live:cursor` | Cursor SDK tools, continuation, and disk resume | Cursor SDK login |
+| `npm run test:live:openai-instructions` | Requested planning/delegation and Plan restrictions (three-request budget) | Codex login |
 | `npm run test:live:auto-mode` | Native Auto mode | Provider login under test |
 | `npm run test:live:provider-approval` | Provider approval | Provider login under test |
 | `npm run test:live:reviewer` | OpenAI reviewer allow/deny and inspection | Codex login |

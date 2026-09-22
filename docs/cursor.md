@@ -19,7 +19,7 @@ rows when available:
 | Picker row | Route | Named worker |
 | --- | --- | --- |
 | Auto | `multi/cursor/default` | `cursor-default` |
-| Grok 4.6 | `multi/cursor/grok-4.6` | `cursor-grok-4-6` |
+| Grok 4.7 | `multi/cursor/grok-4.7` | `cursor-grok-4-7` |
 | Composer 2.5 | `multi/cursor/composer-2.5` | `cursor-composer-2-5` |
 
 Unavailable rows are omitted. `MULTI_CURSOR_EXTRA_MODELS` adds advertised
@@ -70,11 +70,14 @@ and Cursor continues on its native record. Native state is never rewound.
 Completed identical requests can replay their saved response.
 
 Upgrades migrate legacy v2 gateway records without replacing the native Cursor
-agent or losing a pending run ID. Both old and current record locks are held for
-the session lifetime; the original file is preserved. If both records name
-different native agents, Multi refuses the ambiguous state for manual recovery.
-Disk-only replays do not consume the 32-agent SDK budget; pending creations and
-resumes reserve capacity before awaiting the SDK.
+agent or losing a pending run ID, including older records using `pending` instead
+of `interrupted`. Both old and current record locks are held while the gateway
+owns the session; the original file is preserved. Idle capacity eviction releases
+the attachment, in-memory record, and both locks without deleting durable state.
+Disk-only replay releases its record locks when finished and uses no SDK slot.
+Pending creations, resumes, and temporary billed-usage handles share the 32-agent
+SDK budget. Session-wide billing queries cover currently attached worker scopes;
+an individual scope can query its saved native agent without dispatching work.
 
 One turn runs at a time per worker and workspace. An identical in-flight request
 observes the existing exchange. A different request for that busy identity is
@@ -83,6 +86,19 @@ resuming a prompt whose history stops at the previous assistant message would
 send the running turn to the SDK a second time. Multi never reruns a paid turn
 on a guess; send the prompt again once the answer lands. Antigravity and Grok
 refuse the same way.
+
+### Legacy record recovery
+
+If v2 and v3 records name different native agents, Multi refuses the ambiguous
+state and reports both file paths. Neither record is automatically discarded.
+Stop every gateway using that workspace and scope, then back up both files.
+Inspect their `agentId`, response, and pending-run information against the native
+Cursor histories to determine which conversation should continue. Do not guess
+or rerun an uncertain action. If the v3 record is authoritative, move the v2 file
+to a backup location outside the state directory. If the v2 record is
+authoritative, move the v3 file instead; the next request will migrate v2.
+Keep both backups until continuation is verified. If ownership cannot be
+established, leave both records intact and resolve the native histories first.
 
 ## Compaction
 

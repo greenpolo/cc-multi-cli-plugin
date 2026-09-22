@@ -193,6 +193,9 @@ function normalizeMessage<R>(
   message: RequestMessage,
   decodeReasoning: AssistantReasoningDecoder<R>,
 ): NormalizedConversationItem<R>[] {
+  if (!isRecord(message)) {
+    throw new Error('Invalid message');
+  }
   const role = message.role;
   if (role !== 'user' && role !== 'assistant' && role !== 'system') {
     throw new Error('Unsupported message role');

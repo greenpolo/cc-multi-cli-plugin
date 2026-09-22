@@ -32,7 +32,7 @@ export async function restoreCursorSession({
       current.agentId !== legacy.agentId
     ) {
       throw new Error(
-        'Cursor session has ambiguous legacy and current native ownership; refusing replay',
+        `Cursor session has ambiguous legacy and current native ownership; refusing replay. Stop both gateways and follow docs/cursor.md#legacy-record-recovery. Current record: ${files[0]}; legacy record: ${files[1]}`,
       );
     }
     return { saved: current };
@@ -43,5 +43,15 @@ export async function restoreCursorSession({
   if (!isRecord(legacy) || legacy.version !== 2) {
     throw new Error('Cursor legacy session has unsupported state; refusing native replay');
   }
-  return { saved: { ...legacy, version: 3, provider: 'Cursor', identity }, migrated: true };
+  const { pending, ...saved } = legacy;
+  return {
+    saved: {
+      ...saved,
+      version: 3,
+      provider: 'Cursor',
+      identity,
+      interrupted: saved.interrupted === undefined ? pending : saved.interrupted,
+    },
+    migrated: true,
+  };
 }

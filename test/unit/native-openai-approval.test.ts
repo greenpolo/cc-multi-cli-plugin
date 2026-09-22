@@ -29,7 +29,7 @@ const request = (model = 'claude-sonnet-5') => ({
   ],
 });
 const context = {
-  model: 'multi/openai/gpt-5.6-luna',
+  model: 'multi/openai/gpt-6-luna',
   scope: 'worker-one',
   request: { messages: [{ role: 'user', content: 'Run the workspace script.' }] },
 };
@@ -197,7 +197,7 @@ test('investigation enforces filesystem boundary and truncation; discovery never
   assert.equal(data.content.length, 32768);
   assert.equal(data.truncated, true);
   for (const [slug, expected] of [
-    ['gpt-5.6-luna', false],
+    ['gpt-6-luna', false],
     ['codex-auto-review', true],
   ] as const) {
     assert.equal(

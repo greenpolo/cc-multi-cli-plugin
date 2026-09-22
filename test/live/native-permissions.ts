@@ -18,7 +18,7 @@ const { values } = parseArgs({
 const modes = ['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'];
 if (values.help) {
   console.log(
-    'Usage: npm run test:live:permissions -- [--model multi/openai/gpt-5.6-luna] [--mode MODE]\nDefaults to OpenAI and all five non-auto modes. Requires Claude, provider login, Python 3, Node 24; uses temporary files and real provider usage.',
+    'Usage: npm run test:live:permissions -- [--model multi/openai/gpt-6-luna] [--mode MODE]\nDefaults to OpenAI and all five non-auto modes. Requires Claude, provider login, Python 3, Node 24; uses temporary files and real provider usage.',
   );
   process.exit(0);
 }
@@ -34,7 +34,7 @@ assert.equal(spawnSync('python3', ['--version']).status, 0, 'Python 3 required')
 const root = await mkdtemp(path.join(os.tmpdir(), 'native-permissions-'));
 console.log(`Artifacts: ${root}`);
 const reports: Record<string, unknown>[] = [];
-const models = [values.model ?? 'multi/openai/gpt-5.6-luna'];
+const models = [values.model ?? 'multi/openai/gpt-6-luna'];
 for (const model of models) {
   for (const mode of values.mode ? [values.mode] : modes) {
     const cwd = await mkdtemp(path.join(root, `${mode}-`));

@@ -804,7 +804,7 @@ async function initialSelection(args: string[], settings: LaunchSettings, anthro
   const initialModel = retagSelection(requested, options);
   const defaultModel =
     process.env.MULTI_MODELS === undefined
-      ? options.find((option) => option.model === 'multi/openai/gpt-5.6-luna')
+      ? options.find((option) => option.model === 'multi/openai/gpt-6-luna')
       : undefined;
   const fallback = anthropic ? undefined : (defaultModel ?? options[0])?.model;
   const selectedModel = initialModel ?? fallback;

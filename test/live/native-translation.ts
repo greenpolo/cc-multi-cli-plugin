@@ -48,7 +48,7 @@ try {
       signal: AbortSignal.timeout(180000),
       headers: { 'content-type': 'application/json', 'x-multi-gateway-token': token },
       body: JSON.stringify({
-        model: 'multi/openai/gpt-5.6-luna',
+        model: 'multi/openai/gpt-6-luna',
         stream: false,
         system:
           'Return the solid colour of each supplied image as a lowercase English word, and repeat the nonce exactly.',
@@ -130,7 +130,7 @@ try {
     signal: AbortSignal.timeout(180000),
     headers: { 'content-type': 'application/json', 'x-multi-gateway-token': token },
     body: JSON.stringify({
-      model: 'multi/openai/gpt-5.6-luna',
+      model: 'multi/openai/gpt-6-luna',
       stream: false,
       system: 'Read the document and call the provided tool with its document nonce.',
       output_config: { effort: 'low' },

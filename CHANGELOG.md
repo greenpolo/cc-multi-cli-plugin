@@ -6,6 +6,24 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Add the September 2026 model releases to the default pickers.** Codex
+  workers `openai-luna` and `openai-sol` now run `gpt-6-luna` and `gpt-6-sol`,
+  and the no-Claude fallback starts on `gpt-6-luna`; `openai-terra` stays on
+  `gpt-5.6-terra`. The Cursor picker shows Grok 4.7 instead of Grok 4.6, which
+  remains routable through `MULTI_CURSOR_EXTRA_MODELS`; Claude models stay off
+  the Cursor picker because Claude Code already provides them. Zen adds
+  `gpt-6-luna` and `gpt-6-sol` to its catalog; its default picker is unchanged. Grok
+  Build already discovers Grok 4.7 from `grok models`.
+
+- **Preserve Cursor recovery and bound attachment ownership.** A failed completion
+  save retains the pending native run ID even when the subsequent uncertainty
+  write succeeds. Idle eviction releases record locks without deleting native
+  state; disk-only replay retains no idle locks. Temporary billing resumes share
+  the SDK capacity budget. Legacy `pending` records migrate safely, and conflicting
+  native identities report recovery paths. Shared normalization again rejects
+  malformed messages explicitly. The opt-in OpenAI instructions probe now checks
+  active session choices rather than removed workflow defaults.
+
 - **Remove inherited workflow rules and correct maintained documentation.** The
   OpenAI prompt is now a short Claude Code compatibility note; it no longer
   supplies personal assumptions, writing-style bans, or restrictions on planning

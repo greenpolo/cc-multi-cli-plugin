@@ -24,6 +24,13 @@ const body: MessagesRequest = {
   ],
 };
 
+test('malformed message values fail explicitly during shared normalization', () => {
+  for (const message of [null, [], 1, 'invalid']) {
+    const malformed: MessagesRequest = JSON.parse(JSON.stringify({ ...body, messages: [message] }));
+    assert.throws(() => prepareCursorRequest(malformed), /^Error: Invalid message$/);
+  }
+});
+
 test('native Cursor prepares media and counts only the prompt and image allowance', () => {
   const prepared = prepareCursorRequest(body);
   assert.deepEqual(prepared.prompt.images, [{ data: 'cGl4ZWxz', mimeType: 'image/png' }]);

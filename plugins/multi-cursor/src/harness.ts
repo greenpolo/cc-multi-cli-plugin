@@ -84,6 +84,12 @@ type CursorRuntime = {
 type Session = HarnessSession<SavedSession, CursorRuntime>;
 type ReadySession = Session & { runtime: CursorRuntime & { agent: Agent } };
 type TurnLease = HarnessTurnLease<SavedSession, CursorRuntime>;
+
+function assertReady(session: Session): asserts session is ReadySession {
+  if (!session.runtime.agent) {
+    throw new Error('Cursor SDK agent is not attached');
+  }
+}
 /** Run facts the exchange carries for us; the registry never reads them. */
 type RunState = {
   mayHaveRun?: boolean;
@@ -169,6 +175,7 @@ export class CursorHarness {
   private readonly closedAgents = new WeakSet<Agent>();
   private readonly attaching = new Set<Session>();
   private readonly usageReaders = new Map<Agent, number>();
+  private temporarySlots = 0;
 
   constructor(
     options: CursorModelOption[],
@@ -266,29 +273,41 @@ export class CursorHarness {
       runs: AgentUsage['runs'];
     }>
   > {
+    if (this.closed) {
+      throw new Error('Cursor harness is closed');
+    }
     const identity = this.identity(scope);
     const active = [...this.store.sessions()].find((session) => session.identity === identity);
     let agent = active?.runtime.agent;
     let temporary = false;
-    if (!agent) {
-      // A billing query never takes the record lock; it only needs the agent id.
-      const restored = await restoreCursorSession({
-        identity,
-        files: [
-          this.store.sessionFile(identity),
-          legacyCursorSessionFile(this.stateDirectory, identity),
-        ],
-        read: readJson,
-      });
-      const agentId = savedAgentId(restored.saved);
-      if (!agentId) {
-        return [];
-      }
-      agent = await this.resumeAgent(agentId, {});
-      temporary = true;
-    }
-    this.usageReaders.set(agent, (this.usageReaders.get(agent) ?? 0) + 1);
     try {
+      if (!agent || this.closedAgents.has(agent)) {
+        agent = undefined;
+        // A billing query never takes the record lock; it only needs the agent id.
+        const restored = await restoreCursorSession({
+          identity,
+          files: [
+            this.store.sessionFile(identity),
+            legacyCursorSessionFile(this.stateDirectory, identity),
+          ],
+          read: readJson,
+        });
+        const agentId = savedAgentId(restored.saved);
+        if (!agentId) {
+          return [];
+        }
+        const idle = this.reserveCapacity();
+        temporary = true;
+        this.temporarySlots++;
+        if (idle) {
+          await this.store.evictIdle(idle);
+        }
+        agent = await this.resumeAgent(agentId, {});
+        if (this.closed) {
+          throw new Error('Cursor harness is closed');
+        }
+      }
+      this.usageReaders.set(agent, (this.usageReaders.get(agent) ?? 0) + 1);
       if (!agent.getUsage) {
         return [];
       }
@@ -297,15 +316,22 @@ export class CursorHarness {
         { agentId: agent.agentId, scope, usage: usage.usage, cost: usage.cost, runs: usage.runs },
       ];
     } finally {
-      const remaining = (this.usageReaders.get(agent) ?? 1) - 1;
-      if (remaining) {
-        this.usageReaders.set(agent, remaining);
-      } else {
-        this.usageReaders.delete(agent);
+      if (agent) {
+        this.releaseUsageReader(agent);
       }
       if (temporary) {
         this.closeAgent(agent);
+        this.temporarySlots--;
       }
+    }
+  }
+
+  private releaseUsageReader(agent: Agent) {
+    const remaining = (this.usageReaders.get(agent) ?? 1) - 1;
+    if (remaining) {
+      this.usageReaders.set(agent, remaining);
+    } else {
+      this.usageReaders.delete(agent);
     }
   }
 
@@ -438,6 +464,9 @@ export class CursorHarness {
         this.closeAgent(session.runtime.agent);
       }
       await lease.release();
+      if (!session.runtime.agent || this.closedAgents.has(session.runtime.agent)) {
+        await this.store.evictIdle(session);
+      }
     }
   }
 
@@ -485,8 +514,11 @@ export class CursorHarness {
     return { response: finished, events };
   }
 
-  /** Reserve an SDK slot before awaiting creation or resume. Replay uses no slot. */
-  private reserveAgent(session: Session): void {
+  /** Select and detach an idle handle synchronously before reserving its slot. */
+  private reserveCapacity(): Session | undefined {
+    if (this.closed) {
+      throw new Error('Cursor harness is closed');
+    }
     const records = [...this.store.sessions()];
     const agents = records.filter(
       (item) =>
@@ -494,7 +526,7 @@ export class CursorHarness {
         !this.closedAgents.has(item.runtime.agent) &&
         !this.attaching.has(item),
     );
-    if (agents.length + this.attaching.size >= maximumAgents) {
+    if (agents.length + this.attaching.size + this.temporarySlots >= maximumAgents) {
       const idle = agents.find(
         (item) =>
           !item.busy &&
@@ -507,8 +539,18 @@ export class CursorHarness {
       this.closeAgent(idle.runtime.agent);
       idle.runtime.agent = undefined;
       idle.runtime.policy = undefined;
+      return idle;
     }
+    return undefined;
+  }
+
+  /** Reserve before awaiting lock release, creation or resume. Replay uses no slot. */
+  private async reserveAgent(session: Session): Promise<void> {
+    const idle = this.reserveCapacity();
     this.attaching.add(session);
+    if (idle) {
+      await this.store.evictIdle(idle);
+    }
   }
 
   /** One turn at a time per agent: a prompt that arrives during a run is refused. */
@@ -528,12 +570,13 @@ export class CursorHarness {
   ): Promise<ReadySession> {
     const attached = session.runtime.agent;
     if (attached && !this.closedAgents.has(attached)) {
-      return Object.assign(session, { runtime: { ...session.runtime, agent: attached } });
+      assertReady(session);
+      return session;
     }
-    this.reserveAgent(session);
     const previousId = session.saved.agentId;
     let agent: Agent | undefined;
     try {
+      await this.reserveAgent(session);
       const config = {
         ...(await cursorNativePermissions(this.cwd, context)),
         model: this.selection(body),
@@ -549,7 +592,8 @@ export class CursorHarness {
       session.saved.agentId = agent.agentId;
       session.runtime.policy = cursorPermissionPolicy(context).identity;
       await this.store.save(session);
-      return Object.assign(session, { runtime: { ...session.runtime, agent } });
+      assertReady(session);
+      return session;
     } catch (error) {
       if (agent) {
         this.closeAgent(agent);
@@ -575,8 +619,8 @@ export class CursorHarness {
     }
     // Tools are agent-level SDK options. Resume the same conversation with the new policy.
     this.closeAgent(session.runtime.agent);
-    this.reserveAgent(session);
     try {
+      await this.reserveAgent(session);
       session.runtime.agent = await this.resumeAgent(session.runtime.agent.agentId, {
         ...config,
         model: this.selection(body),
@@ -682,13 +726,13 @@ export class CursorHarness {
         cancel();
       }
       const result = await settleOrAbort(session.runtime.run.wait(), signal, 'Cursor native run');
-      // A readable terminal result, success or not, resolves the uncertainty.
-      session.saved.interrupted = false;
-      session.saved.pendingRun = undefined;
-      signal.throwIfAborted();
       if (result.status !== 'finished') {
+        // Known native failure is distinct from failure to persist a success.
+        session.saved.interrupted = false;
+        session.saved.pendingRun = undefined;
         throw cursorRunError(result);
       }
+      signal.throwIfAborted();
       const suffix = terminalSuffix(text, result.result ?? '');
       if (suffix) {
         rowObserver?.({ type: 'text', text: suffix });
@@ -707,7 +751,10 @@ export class CursorHarness {
         exchange,
         key,
         emit,
-        update: () => {},
+        update: (saved) => {
+          saved.interrupted = false;
+          saved.pendingRun = undefined;
+        },
         onCommitted: () => {
           exchange.meta.committed = true;
         },

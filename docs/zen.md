@@ -30,7 +30,7 @@ below lists the full supported catalog; other rows require explicit selection.
 | Model IDs | Protocol | Effort |
 | --- | --- | --- |
 | `deepseek-v4-pro`, `deepseek-v4-flash`, `kimi-k3`, `glm-5.3`, `glm-5.3-flash`, `kimi-k2.7-code`, `glm-5.2`, `minimax-m2.7`, `big-pickle`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`, `nemotron-3-ultra-free`, and `nemotron-3.5-lightning-free` | Chat Completions | Provider-native reasoning |
-| `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `muse-spark-1.2-contributor-free` | Responses | `low`, `medium`, `high`, `xhigh`, and `max` for GPT and `muse-spark-1.3`; `low`, `medium`, `high`, and `xhigh` for contributor-free Muse |
+| `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `muse-spark-1.2-contributor-free` | Responses | `low`, `medium`, `high`, `xhigh`, and `max` for GPT and `muse-spark-1.3`; `low`, `medium`, `high`, and `xhigh` for contributor-free Muse |
 
 Workers use the `zen-<model-id>` name. Models with effort support also have effort-suffixed workers. Chat workers have no effort variants.
 

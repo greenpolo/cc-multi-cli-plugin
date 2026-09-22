@@ -58,7 +58,7 @@ export const textContentBlock: ContentBlockCheck = (block) =>
 /**
  * The only way to reach a native session record. It owns the lock file, the busy
  * flag and the load gate, so a provider cannot re-add queuing without bypassing
- * it: both entry points refuse a busy identity with `HarnessBusyError`.
+ * it: lease acquisition refuses a busy identity with `HarnessBusyError`.
  */
 export class HarnessSessionStore<S extends HarnessSessionBase, R extends object = object> {
   private readonly provider: string;
@@ -151,29 +151,6 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
     }
   }
 
-  /** Read the record without taking the turn, for replay decisions. */
-  async loadOnly(identity: string): Promise<HarnessSession<S, R>> {
-    this.assertOpen();
-    const current = this.records.get(identity);
-    if (current) {
-      if (current.busy) {
-        throw new HarnessBusyError(
-          `A different request is already running for this ${this.tag} agent`,
-        );
-      }
-      return current;
-    }
-    if (this.loading.has(identity)) {
-      throw new HarnessBusyError(`A different request is already loading this ${this.tag} agent`);
-    }
-    this.loading.add(identity);
-    try {
-      return await this.load(identity);
-    } finally {
-      this.loading.delete(identity);
-    }
-  }
-
   async save(session: HarnessSession<S, R>): Promise<void> {
     const owned = this.mustOwn(session);
     if (owned.unlock !== undefined) {
@@ -194,6 +171,24 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
 
   sessions(): IterableIterator<HarnessSession<S, R>> {
     return this.records.values();
+  }
+
+  /** Drop an idle attachment without deleting its durable native identity. */
+  async evictIdle(session: HarnessSession<S, R>): Promise<boolean> {
+    if (session.busy || this.loading.has(session.identity)) {
+      return false;
+    }
+    if (this.records.get(session.identity) !== session) {
+      return false;
+    }
+    this.loading.add(session.identity);
+    this.records.delete(session.identity);
+    try {
+      await this.releaseLock(session);
+      return true;
+    } finally {
+      this.loading.delete(session.identity);
+    }
   }
 
   /** The record's file, for the provider reads that must not take the lock. */
@@ -217,6 +212,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
       const restored = this.restore
         ? await this.restore({ identity, files: uniqueFiles, read: readJson })
         : { saved: await readJson(file) };
+      this.assertOpen();
       const selected = this.validateSaved(restored.saved, identity);
       const saved = selected ?? this.fresh(identity);
       const owned: OwnedSession = { busy: false, releases };

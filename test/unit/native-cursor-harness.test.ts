@@ -6,6 +6,11 @@ import path from 'node:path';
 import test from 'node:test';
 import { setTimeout } from 'node:timers';
 import type { AgentOptions, Run, RunResult, SDKUserMessage, SendOptions } from '@cursor/sdk';
+import {
+  type HarnessSession,
+  type HarnessSessionBase,
+  HarnessSessionStore,
+} from '../../plugins/multi-core/src/gateway/harness-session.ts';
 import type {
   Emit,
   MessagesRequest,
@@ -35,6 +40,82 @@ const signal = () => {
   timer.unref();
   return controller.signal;
 };
+
+for (const platform of ['linux', 'darwin', 'win32'] as const) {
+  test(`failed completion followed by a successful uncertainty write retains recovery on ${platform}`, async (t) => {
+    const f = await fixture(t, platform);
+    const original = HarnessSessionStore.prototype.save;
+    let failed = false;
+    const mock = t.mock.method(
+      HarnessSessionStore.prototype,
+      'save',
+      async function (
+        this: HarnessSessionStore<HarnessSessionBase>,
+        session: HarnessSession<HarnessSessionBase>,
+      ) {
+        if (!failed && session.saved.response) {
+          failed = true;
+          throw new Error('Completion write failed once');
+        }
+        await original.call(this, session);
+      },
+    );
+    const first = f.make();
+    await assert.rejects(first.handle(body, 'main', signal()), /Completion write failed once/);
+    assert.equal(failed, true);
+    const saved = JSON.parse(await readFile(f.sessionFile, 'utf8'));
+    assert.equal(saved.interrupted, true);
+    assert.equal(saved.pendingRun.runId, 'run');
+    assert.equal(saved.response, undefined);
+    await first.close();
+    mock.mock.restore();
+    f.recover({ id: 'run', status: 'finished', result: 'Recovered completed work' });
+    const response = await f.make().handle(body, 'main', signal());
+    assert.deepEqual(response.content, [{ type: 'text', text: 'Recovered completed work' }]);
+    assert.equal(f.sends.length, 1, 'the completed native action must not be dispatched again');
+    assert.deepEqual(f.recoveryReads, ['run']);
+  });
+}
+
+test('evicted scopes release their records and locks without losing durable continuation', async (t) => {
+  const f = await fixture(t);
+  const harness = f.make();
+  const scope = (index: number) => JSON.stringify(['session', `worker-${index}`]);
+  const first = await harness.handle(body, scope(0), signal());
+  for (let index = 1; index < 70; index++) {
+    await harness.handle(body, scope(index), signal());
+  }
+  assert.equal((await harness.billedUsageForSession('session')).length, 32);
+  await f.make().handle(follow(first), scope(0), signal());
+  assert.equal(f.resumed.at(-1), 'agent-1');
+  assert.equal(f.configurations.length, 70, 'another gateway resumes the evicted native agent');
+});
+
+test('temporary billing resumes reserve capacity before awaiting the SDK and release it on failure', async (t) => {
+  const f = await fixture(t);
+  const seed = f.make();
+  await seed.handle(body, 'main', signal());
+  await seed.close();
+  const harness = f.make();
+  const gate = Promise.withResolvers<void>();
+  f.delayResume(gate.promise);
+  t.after(() => gate.resolve());
+  const queries = Array.from({ length: 32 }, () => harness.billedUsage('main'));
+  const completed = Promise.allSettled(queries);
+  await until(() => f.resumed.length === 32, 'all temporary billing reservations');
+  await assert.rejects(harness.billedUsage('main'), /Too many concurrent Cursor agents/);
+  await assert.rejects(
+    harness.handle(body, 'overflow', signal()),
+    /Too many concurrent Cursor agents/,
+  );
+  f.failNextResume();
+  gate.resolve();
+  const results = await completed;
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.equal(f.closes(), 32, 'the seed and every successful temporary handle close');
+  await harness.handle(body, 'overflow', signal());
+  assert.equal(f.configurations.length, 2);
+});
 // Polls sleep instead of spinning: a tight readFile loop keeps a handle open,
 // which on Windows makes the harness's atomic rename fail. Every poll is bounded
 // so a wrong expectation fails with a message instead of hitting the test timeout.
@@ -94,6 +175,7 @@ async function fixture(t: test.TestContext, platform: NodeJS.Platform = process.
   let cancellations = 0;
   let closes = 0;
   let createGate: Promise<void> | undefined;
+  let resumeGate: Promise<void> | undefined;
   let sendGate: Promise<void> | undefined;
   let cancelHangs = false;
   let cancelThrows = false;
@@ -208,6 +290,7 @@ async function fixture(t: test.TestContext, platform: NodeJS.Platform = process.
     resumeAgent: async (id: string, config: AgentOptions) => {
       resumed.push(id);
       resumeConfigurations.push(config);
+      await resumeGate;
       if (resumeFails) {
         resumeFails = false;
         throw new Error('SDK resume failed');
@@ -241,6 +324,9 @@ async function fixture(t: test.TestContext, platform: NodeJS.Platform = process.
     },
     delayUsage: (promise: Promise<void>) => {
       usageGate = promise;
+    },
+    delayResume: (promise: Promise<void>) => {
+      resumeGate = promise;
     },
     failNextResume: () => {
       resumeFails = true;
@@ -1141,7 +1227,8 @@ for (const platform of ['linux', 'darwin', 'win32'] as const) {
     const f = await fixture(t, platform);
     await interruptedManifest(f);
     const saved = JSON.parse(await readFile(f.sessionFile, 'utf8'));
-    const legacy = { ...saved, version: 2 };
+    const legacy = { ...saved, version: 2, pending: saved.interrupted };
+    delete legacy.interrupted;
     delete legacy.provider;
     delete legacy.identity;
     await writeFile(f.legacySessionFile, JSON.stringify(legacy));
@@ -1158,7 +1245,8 @@ for (const platform of ['linux', 'darwin', 'win32'] as const) {
     assert.equal(migrated.agentId, legacy.agentId);
     assert.equal(migrated.interrupted, false);
     assert.deepEqual(JSON.parse(await readFile(f.legacySessionFile, 'utf8')), legacy);
-    await assert.rejects(lockStateFile(`${f.legacySessionFile}.lock`, { platform }), /locked/);
+    const release = await lockStateFile(`${f.legacySessionFile}.lock`, { platform });
+    await release();
   });
 }
 
@@ -1187,9 +1275,44 @@ test('Cursor refuses conflicting legacy and current native ownership', async (t)
     f.legacySessionFile,
     JSON.stringify({ ...saved, version: 2, agentId: 'foreign-agent' }),
   );
-  await assert.rejects(f.make().handle(body, 'main', signal()), /ambiguous|conflict/i);
+  const harness = f.make();
+  await assert.rejects(harness.handle(body, 'main', signal()), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /ambiguous|conflict/i);
+    assert.ok(error.message.includes(f.sessionFile));
+    assert.ok(error.message.includes(f.legacySessionFile));
+    assert.match(error.message, /docs\/cursor.md#legacy-record-recovery/);
+    return true;
+  });
+  const release = await lockStateFile(`${f.legacySessionFile}.lock`);
+  await release();
+  await rename(f.legacySessionFile, `${f.legacySessionFile}.backup`);
+  assert.deepEqual(await harness.handle(body, 'main', signal()), replayedResponse(saved.response));
   assert.equal(f.configurations.length, 1);
   assert.equal(f.resumed.length, 0);
+});
+
+test('legacy pending flags are validated, and a repaired idle record replays without a new agent', async (t) => {
+  const f = await fixture(t);
+  const first = f.make();
+  const response = await first.handle(body, 'main', signal());
+  await first.close();
+  const saved = JSON.parse(await readFile(f.sessionFile, 'utf8'));
+  const legacy = { ...saved, version: 2, pending: 'invalid' };
+  delete legacy.interrupted;
+  delete legacy.provider;
+  delete legacy.identity;
+  await writeFile(f.legacySessionFile, JSON.stringify(legacy));
+  await rm(f.sessionFile);
+  const harness = f.make();
+  await assert.rejects(harness.handle(body, 'main', signal()), /invalid state/);
+  await writeFile(f.legacySessionFile, JSON.stringify({ ...legacy, pending: false }));
+  assert.deepEqual(await harness.handle(body, 'main', signal()), replayedResponse(response));
+  assert.equal(f.sends.length, 1);
+  assert.equal(f.resumed.length, 0);
+  const migrated = JSON.parse(await readFile(f.sessionFile, 'utf8'));
+  assert.equal(migrated.interrupted, false);
+  assert.equal(migrated.pending, undefined);
 });
 
 test('settled exchange eviction replays disk replies without repeating native work', async (t) => {

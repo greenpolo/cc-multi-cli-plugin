@@ -119,7 +119,7 @@ try {
     'Read fixture.txt with Read. Remember its exact contents for later and report them. Do not edit it.',
   );
   assert(first.result?.includes(nonce));
-  await control({ subtype: 'set_model', model: 'multi/openai/gpt-5.6-luna' });
+  await control({ subtype: 'set_model', model: 'multi/openai/gpt-6-luna' });
   const second = await turn(
     'Without rereading fixture.txt, use Edit to replace alpha with beta, preserving the nonce you saw earlier. Report that nonce.',
   );
@@ -139,7 +139,7 @@ try {
   );
   assert(
     events.some(
-      (event) => event.type === 'assistant' && event.message?.model === 'multi/openai/gpt-5.6-luna',
+      (event) => event.type === 'assistant' && event.message?.model === 'multi/openai/gpt-6-luna',
     ),
   );
   assert(diagnostics.includes('"route":"anthropic","status":200'));
