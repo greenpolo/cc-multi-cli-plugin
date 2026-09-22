@@ -1,6 +1,6 @@
 {
   "name": "cc-multi-cli-plugin",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin providing a native model gateway that runs external models inside one Claude Code session.",

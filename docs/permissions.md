@@ -38,6 +38,12 @@ executable Claude tools. The launcher currently disables whole-session agent-vie
 handoff because its gateway and generated worker settings belong to the launcher;
 ordinary background subagent tasks remain supported.
 
+Start Cursor, Antigravity and Grok workers with the Agent tool. Workflow-started
+native workers are unsupported because that engine path does not emit
+`agent.spawn`, and `SubagentStart` alone lacks the parent and model needed to
+admit inherited permissions safely. OpenAI and Zen workers use Claude's tool
+loop and do not require this native harness admission. See [issue #32](https://github.com/greenpolo/cc-multi-cli-plugin/issues/32).
+
 The launcher enables Claude's on-demand tool discovery through the local
 gateway. Direct adapters omit deferred schemas until their names appear in a
 tool reference, previous tool use, or an explicit named choice, and translate

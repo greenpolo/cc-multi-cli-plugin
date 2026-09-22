@@ -6,6 +6,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+## 0.2.1 — 2026-09-22
+
+- Explain missing native worker spawn acknowledgements with the unsupported
+  Workflow path and Agent-tool recovery guidance, while retaining refusal before
+  provider dispatch. Document that limitation and explicitly mark WSL2 as
+  untested pending host verification (#32, #21).
+
 - **Add the September 2026 model releases to the default pickers.** Codex
   workers `openai-luna` and `openai-sol` now run `gpt-6-luna` and `gpt-6-sol`,
   and the no-Claude fallback starts on `gpt-6-luna`; `openai-terra` stays on

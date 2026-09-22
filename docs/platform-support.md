@@ -18,7 +18,9 @@ results. Live provider checks need a real login on the host and are run by hand.
 These are historical reports carried forward from this guide and the
 [changelog](../CHANGELOG.md), not a certification of the current refactor.
 Original run dates and complete logs were not recorded here. WSL uses Linux
-policy and config paths; that does not establish a separate WSL live result.
+policy and config paths; WSL2 remains untested, with no recorded offline or live
+run on a WSL2 host. Its verification is tracked in
+[issue #21](https://github.com/greenpolo/cc-multi-cli-plugin/issues/21).
 Future verification reports should name the tested revision, date, OS, CLI/SDK
 versions, command and result, including skips and a log reference when available.
 
