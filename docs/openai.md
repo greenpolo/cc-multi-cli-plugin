@@ -32,7 +32,12 @@ Ask Claude to use a named worker, such as `openai-luna-high`. Workers appear as 
 
 ## Instruction profile
 
-OpenAI requests append `plugins/multi-openai/src/instructions.md` to Claude's runtime instructions. The profile adapts Codex guidance to Claude Code tool names, terminal formatting, skill discovery, direct work, explicit Plan requests, and authorized delegation. Claude's existing policy blocks stay intact. The profile applies to the OpenAI inference and token-counting route.
+OpenAI requests append a short Claude Code compatibility note from
+`plugins/multi-openai/src/instructions.md`. It identifies the host's tools,
+permission and compaction boundaries without adding personal preferences or
+planning, delegation, or writing-style defaults. Claude's existing instructions
+stay intact. The note applies to OpenAI inference and token counting, not other
+providers or the independent reviewer.
 
 ## Prompt caching and continuation
 

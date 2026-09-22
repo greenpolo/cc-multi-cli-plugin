@@ -52,7 +52,8 @@ real Luna capture above. It adds Grok 4.6 through Cursor and Gemini 3.8 Flash
 through Antigravity alongside two GPT-5.6 Luna workers. The prompt, launch list,
 worker rows, and additional elapsed times are edited to illustrate the combined
 workflow; they are not evidence of a live mixed-provider run. No extra inference
-was used to create this version. The README caption describes the multi-provider workflow.
+was used to create this version. The README caption labels it as an illustration
+and links here for provenance.
 
 Edit the SVG text elements directly. The asset is self-contained, with accessible
 title and description, no scripts, and no external fonts or image requests.

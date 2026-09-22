@@ -8,7 +8,7 @@
   `DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING` and `DISABLE_BUG_COMMAND`.
 - OpenAI: the official Codex CLI (`codex`) and a ChatGPT login.
 - Cursor: the official Cursor SDK login. No separate Cursor CLI is required.
-- OpenCode Zen: an OpenCode account or an `OPENCODE_API_KEY`.
+- OpenCode Zen: a Zen API key in OpenCode's auth store or `OPENCODE_API_KEY`.
 - Antigravity: the official `agy` CLI and its native login.
 - Grok: the official Grok Build CLI (`grok`) and its account login.
 
@@ -44,11 +44,12 @@ re-running setup without them keeps your choices.
 | `--models <selection>` | Curated provider defaults | External rows in `/model` and their workers: `all` for the full connected catalog, `none`, comma-separated full IDs, or `+<ids>` to add models to the saved selection. Claude's own models always stay listed. |
 
 ```text
-/multi-core:setup --command multiclaude --models multi/openai/gpt-6-astra,multi/zen/kimi-k2.5
+/multi-core:setup --command multiclaude --models multi/openai/gpt-6-astra,multi/zen/kimi-k3
 ```
 
-Multi is the real Claude Code binary started behind a local gateway, so only the
-command name differs from a plain launch. Naming the command `claude` is allowed
+Multi starts the real Claude Code binary with gateway, model, worker, and hook
+configuration. `--command` changes the wrapper name, not that configuration.
+Naming the command `claude` is allowed
 but shadows the plain command: every `claude` launch, including scripts, editors
 and agents that call `claude -p`, starts the gateway first. Nested runs inside a
 Multi session pass through to plain Claude. Setup prints a warning when you pick
@@ -99,8 +100,8 @@ then remove the provider and core plugins through `/plugin` if desired.
 1. Check Node, Claude Code, the shell, the platform, and the requested providers.
 2. Install the selected plugins at user scope through Claude's plugin manager.
 3. Ask two optional questions, offering the defaults: what to name the launch
-   command (default `claude-multi`; explain that only the name differs from a
-   plain launch, and that `claude` would shadow the plain command), and which
+   command (default `claude-multi`; explain that `claude` would shadow the plain
+   command), and which
    external models to show in `/model` (curated defaults; full IDs are in the provider
    docs). Run `/multi-core:setup` with `--command` and `--models` as chosen and
    explain the marked PATH change.
@@ -125,3 +126,8 @@ You can still install the plugins from the checkout with `/plugin marketplace ad
 by installing `multi-antigravity`. From a checkout, set `MULTI_ANTIGRAVITY=1` to
 show its models and workers. Run `--antigravity-setup` after the official `agy`
 login to install its scoped permission hook.
+
+Whole-session `--bg`, `--background`, `attach`, and `respawn` are currently
+unsupported: the gateway and generated settings belong to the launcher process.
+Use `--resume <session-id>` for a fresh launch. Ordinary background subagent tasks
+within an attached session remain supported.

@@ -13,7 +13,10 @@ sign in with the official flow:
 
 From a checkout, the equivalent is `grok login` followed by a normal launch.
 `--grok-models` prints the catalog. The gateway uses the CLI's own account
-credential and never reads it. `XAI_API_KEY` is removed from the environment of
+credential for inference. Multi's usage reader loads the native auth file to
+check key and refresh-token presence and access-token expiry, but does not use
+those credentials for direct inference or expose them in usage responses.
+`XAI_API_KEY` is removed from the environment of
 every run: an API key silently outranks the browser login and would move billing
 from the subscription to metered xAI credit.
 
@@ -109,8 +112,9 @@ instead of starting a fresh one. Follow-ups send only the newest turn after the
 last assistant response, and outer history changes produce a notice and continue
 on the native record. Native state is never rewound.
 
-One turn runs at a time per worker and workspace, and a prompt sent while a run
-is in flight is refused with an explicit error rather than queued behind it. Such
+One turn runs at a time per worker and workspace. An identical in-flight request
+observes the existing exchange. A different request for that busy identity is
+refused with an explicit error rather than queued behind it. Such
 a prompt was written before the running turn answered, so its history stops at the
 previous assistant message and resuming with it would send the running turn to the
 CLI a second time. Multi never reruns a paid turn on a guess; send the prompt

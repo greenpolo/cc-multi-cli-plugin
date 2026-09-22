@@ -52,8 +52,8 @@ worker definitions. Settings, plugin policies, tool lists, and managed policy ar
 admitted per operating system; see [docs/permissions.md](permissions.md).
 Unsupported modes, unknown workers, ignored Cursor permission files, ask rules,
 sandbox policy, unsupported argument or path rules, and unsupported managed
-controls fail explicitly. Claude hooks observe native runs but do not enforce
-native SDK tool calls.
+controls fail explicitly. SDK events provide native action observations for Claude
+Mods display; Claude's classic tool hooks do not enforce native SDK tool calls.
 
 ## State and resume
 
@@ -69,8 +69,16 @@ If outer history no longer contains the prior response, Claude receives a notice
 and Cursor continues on its native record. Native state is never rewound.
 Completed identical requests can replay their saved response.
 
-One turn runs at a time per worker and workspace. A prompt sent while a run is
-in flight is refused with a deterministic error rather than queued behind it:
+Upgrades migrate legacy v2 gateway records without replacing the native Cursor
+agent or losing a pending run ID. Both old and current record locks are held for
+the session lifetime; the original file is preserved. If both records name
+different native agents, Multi refuses the ambiguous state for manual recovery.
+Disk-only replays do not consume the 32-agent SDK budget; pending creations and
+resumes reserve capacity before awaiting the SDK.
+
+One turn runs at a time per worker and workspace. An identical in-flight request
+observes the existing exchange. A different request for that busy identity is
+refused with a deterministic error rather than queued behind it:
 resuming a prompt whose history stops at the previous assistant message would
 send the running turn to the SDK a second time. Multi never reruns a paid turn
 on a guess; send the prompt again once the answer lands. Antigravity and Grok

@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-// Adapted from Codex's gpt-6-astra instructions_template, fetched 2026-09-10.
-// Keep this snapshot in the runtime package; never read a user's model cache at runtime.
+// Claude-hosted compatibility only; workflow preferences come from the session.
 const instructions = readFileSync(new URL('./instructions.md', import.meta.url), 'utf8').trim();
 
 export function openaiInstructions(runtime: string): string {

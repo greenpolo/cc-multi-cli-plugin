@@ -1,25 +1,30 @@
 # Platform support
 
-Offline checks run in CI on Linux, macOS and Windows for every commit. Live
-provider checks need a real login on the host and are run by hand.
+The [CI workflow](../.github/workflows/ci.yml) is configured to run offline checks
+on Linux, macOS, and Windows for pushes and pull requests. A configured matrix is
+not evidence that a particular revision passed; consult that revision's workflow
+results. Live provider checks need a real login on the host and are run by hand.
 
-## Support matrix
+## Verification scope (documentation audit: September 22, 2026)
 
-| Provider | Linux | WSL | macOS | Windows |
-| --- | --- | --- | --- | --- |
-| OpenAI | Live-verified | As Linux | CI offline | Live-verified |
-| Cursor SDK | Live-verified | As Linux | CI offline | Live-verified |
-| OpenCode Zen | Live-verified | As Linux | CI offline | CI offline |
-| Antigravity | Live-verified | As Linux | CI offline | Live-verified |
-| Grok | CI offline | As Linux | CI offline | Live-verified |
+| Provider | Earlier Linux live reports | Earlier Windows live reports | macOS live evidence |
+| --- | --- | --- | --- |
+| OpenAI | Inference, reviewer, manual/repeated compaction and resume; automatic compaction still pending | Reviewer and approval-worker checks; broader mode/compaction reruns pending | No recorded run in this guide |
+| Cursor SDK | Tools, continuation and disk resume | Native harness check | No recorded run in this guide |
+| OpenCode Zen | Tools/cache/resume, including revalidation of saved traces | Live rerun pending | No recorded run in this guide |
+| Antigravity | Native harness check | Native harness check from an interactive desktop login | No recorded run in this guide |
+| Grok | No recorded live run in this guide | Native harness reported; exact test/version evidence not recorded here | No recorded run in this guide |
 
-"Live-verified" means the live checks for that provider have passed on that
-platform. "CI offline" means the unit suite passes there and live checks are
-still to run. WSL reads the Linux policy and config paths, so it behaves as Linux.
+These are historical reports carried forward from this guide and the
+[changelog](../CHANGELOG.md), not a certification of the current refactor.
+Original run dates and complete logs were not recorded here. WSL uses Linux
+policy and config paths; that does not establish a separate WSL live result.
+Future verification reports should name the tested revision, date, OS, CLI/SDK
+versions, command and result, including skips and a log reference when available.
 
-Windows results on a real host (Windows 11, PowerShell 7, Node 24, Claude Code
-2.1.273): the unit suite, live install, Cursor, OpenAI reviewer, OpenAI
-approval worker and Antigravity checks pass. The permissions check skips its
+The earlier Windows report used Windows 11, PowerShell 7, Node 24, Claude Code
+2.1.273: the unit suite, live install, Cursor, OpenAI reviewer, OpenAI
+approval worker and Antigravity checks passed. The permissions check skipped its
 PTY cases, and the provider-approval check skips its dialog proof; its direct
 non-PTY path still needs its expectations adapted. The previously reported Zen, auto-mode and compaction failures also reproduced
 on Linux. The fixes cover Zen terminal reasoning reconciliation, native Auto
@@ -27,8 +32,13 @@ policy propagation, and compaction before the first restored prompt. Linux
 validation now covers manual/repeated compaction and fresh-process resume. Saved
 live Zen traces pass the corrected tool, usage, resume, and cache assertions;
 saved OpenAI worker Auto traces pass the corrected allow/deny and handback checks.
-The automatic compaction case and Windows live reruns remain pending; these Linux
-results do not establish Windows live support.
+The automatic compaction case and Windows live reruns were still pending in that
+report; those Linux results do not establish a Windows pass.
+
+The September 22 shared-harness refactor was checked on Linux with offline unit
+tests (including injected Linux/macOS/Windows branches) and local Claude Mods
+tests. No paid provider probes or native macOS/Windows runs were performed for
+that refactor. Injected platform tests do not replace execution on those hosts.
 
 ## Live checklist
 
@@ -60,7 +70,7 @@ registered with the interactive logon type.
 
 ### macOS
 
-1. Install Node 24.12+, Claude Code, Codex CLI, the Cursor SDK, OpenCode, and `agy` as needed. Sign in to the providers used below.
+1. Install Node 24.12+, Claude Code, and the Codex, `agy`, or Grok Build CLIs as needed. `npm ci` installs the Cursor SDK; Zen needs an API key, not the OpenCode executable. Sign in to the providers you will test.
 2. Run:
 
    ```sh
@@ -84,7 +94,7 @@ registered with the interactive logon type.
 
 ### Windows native
 
-1. Install Node 24.12+, Claude Code, Codex CLI, PowerShell or cmd, the Cursor SDK, OpenCode, and `agy` as needed. Sign in to the providers used below.
+1. Install Node 24.12+, Claude Code, PowerShell or cmd, and the Codex, `agy`, or Grok Build CLIs as needed. `npm ci` installs the Cursor SDK; Zen needs an API key, not the OpenCode executable. Sign in to the providers you will test.
 2. In PowerShell or cmd, run the same commands listed for macOS. Use `npm.cmd` when the shell requires it.
 
 Managed Claude policy comes from `/etc/claude-code` on Linux and WSL,

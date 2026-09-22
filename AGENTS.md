@@ -7,6 +7,8 @@ and provider details live in [docs/installation.md](docs/installation.md),
 [docs/openai.md](docs/openai.md), [docs/cursor.md](docs/cursor.md),
 [docs/zen.md](docs/zen.md), [docs/antigravity.md](docs/antigravity.md), [docs/grok.md](docs/grok.md),
 [docs/permissions.md](docs/permissions.md), and [docs/platform-support.md](docs/platform-support.md).
+Claude Code function-hook UI and extensibility rules live in
+[docs/claude-mods.md](docs/claude-mods.md).
 `.agent/` is gitignored scratch space. It is never authoritative.
 
 ## Code map
@@ -21,7 +23,7 @@ and provider details live in [docs/installation.md](docs/installation.md),
 | `plugins/multi-core/src/gateway/cursor-settings.ts`, `mode-hook.ts`, `agent-definitions.ts` | Admits settings and maps prompt and worker permissions. |
 | `plugins/multi-core/src/gateway/approval.ts`, `permission-hook.ts` | Approval protocol and capability checks. |
 | `plugins/multi-core/src/gateway/mod-*.ts`, `tool-observer.ts` | Claude Mods control-plane routes, compaction, policy, and progress observation. |
-| `plugins/multi-core/src/gateway/harness-*.ts` | Shared native-harness session store, exchange registry, response builder, notices, process runner, and prompt preparation used by Cursor, Antigravity, and Grok. |
+| `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, and notices shared by Cursor, Antigravity, and Grok; CLI process runner and text prompt preparation shared by Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
 | `plugins/multi-openai/src/` | Codex authentication, models, Responses translation, instructions, and reviewer. |
 | `plugins/multi-cursor/src/` | Cursor SDK harness, permissions, progress, requests, models, and workspaces. |
@@ -35,11 +37,15 @@ and provider details live in [docs/installation.md](docs/installation.md),
 | `package.json`, `biome.json`, `knip.json` | Scripts, lint rules, and entry/project analysis. |
 
 Keep provider authentication and catalogs in provider folders. Keep shared protocol
-types and cross-provider helpers in `plugins/multi-core/src/gateway/`. Import
-concrete modules directly. Do not add barrel re-exports. Platform-dependent code
+types and cross-provider helpers in `plugins/multi-core/src/gateway/`. Prefer
+direct module imports, the existing repository convention. Platform-dependent code
 accepts an explicit `platform` option so every branch is unit-testable on Linux.
 
-## Product rules
+## Current execution contracts
+
+These describe the implemented provider boundaries to preserve during ordinary
+changes. Provider limitations are not permanent bans on requested new features;
+changes to those boundaries need corresponding implementation and verification.
 
 - Claude's permission mode controls every provider at prompt boundaries.
 - Each provider owns its login, reviewer, execution state, and credentials.
@@ -50,7 +56,13 @@ accepts an explicit `platform` option so every branch is unit-testable on Linux.
 - New bridges isolate session, worker, provider, and workspace state.
 - Do not use Cursor Fast in development or live tests; set `fast:false` explicitly.
 - Keep paid probes bounded and reuse existing usage records when possible.
-- Do not spawn fleets of Claude agents for implementation or validation.
+
+## Claude Code extensibility requirement
+
+Use Claude Mods function hooks for Claude Code harness UI or extensibility changes,
+as explicitly requested by the maintainer. Read [docs/claude-mods.md](docs/claude-mods.md)
+before changing that surface. Reuse the authenticated `/multi/mod/*` control plane
+when gateway data or actions are needed; local rendering changes need no new route.
 
 ## Verification
 
@@ -58,14 +70,18 @@ Run `npm run check`. It checks the generated banner, Biome lint, Knip, strict
 type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
 test suite. Use Node 24.12 or newer and avoid `DEP0190` warnings.
 
+For Claude Mods hook or surface changes, also run `npm run test:mod`. It runs
+`claude plugin test` with the installed Claude executable, without provider
+inference. It is separate from `npm run check` and the current CI matrix.
+
 | Command | Check | Login needed |
 | --- | --- | --- |
-| `npm run test:live:compaction` | Native compaction | Claude |
+| `npm run test:live:compaction` | Claude/OpenAI compaction and resume | Claude and Codex login |
 | `npm run test:live:zen` | Zen tools, cache, and resume | Zen API key |
 | `npm run test:live:cursor` | Cursor SDK tools, continuation, and disk resume | Cursor SDK login |
 | `npm run test:live:auto-mode` | Native Auto mode | Provider login under test |
 | `npm run test:live:provider-approval` | Provider approval | Provider login under test |
-| `npm run test:live:reviewer` | Reviewer ownership | OpenAI/Cursor login as applicable |
+| `npm run test:live:reviewer` | OpenAI reviewer allow/deny and inspection | Codex login |
 | `npm run test:live:approval-worker` | Worker approval | Provider login under test |
 | `npm run test:live:permissions` | Native permissions | Claude and provider login |
 | `npm run test:live:antigravity` | Antigravity CLI harness | `agy` login |

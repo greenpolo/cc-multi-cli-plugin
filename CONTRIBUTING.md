@@ -34,6 +34,10 @@ Changes to live integrations also need the relevant opt-in checks listed in
 usage. Keep probes bounded; Cursor checks must explicitly disable Fast mode.
 Describe checks you could not run and why in the pull request.
 
+For Claude Mods hook or surface changes, also run `npm run test:mod` with the
+installed Claude Code executable. It runs local plugin tests without provider
+inference and is not included in `npm run check` or the current CI matrix.
+
 ## Reporting problems
 
 Use the [bug report form](https://github.com/greenpolo/cc-multi-cli-plugin/issues/new?template=bug_report.yml)

@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Configure ordinary claude startup for installed Multi providers.
+description: Configure the Multi launch command and model selection for installed providers.
 disable-model-invocation: true
 allowed-tools: Bash
 ---
@@ -13,9 +13,9 @@ fish's config file, or the PowerShell profile. It preserves the real Claude
 executable and existing settings. Explain these changes, then offer two optional customizations before running
 setup. Use the defaults unless the user chooses otherwise:
 
-- **Launch command name** (default `claude-multi`). Multi is the real Claude Code
-  binary started behind a local gateway, so only the command name differs. Any name
-  works, such as `multiclaude`; pass it with `--command <name>`. Naming it `claude`
+- **Launch command name** (default `claude-multi`). The wrapper starts Claude Code
+  with Multi's gateway, model, worker, and hook configuration. Choose a name such
+  as `multiclaude`; `multi` is reserved. Pass it with `--command <name>`. Naming it `claude`
   shadows the plain command for every launch, including scripts, editors and agents
   that run `claude`; explain that before accepting it.
 - **Models shown in `/model`** (default: curated rows for connected providers). Pass
@@ -26,13 +26,27 @@ setup. Use the defaults unless the user chooses otherwise:
   selection, it extends the curated defaults. Existing explicit selections
   remain until changed. If a requested worker is unavailable, find its model ID
   in the provider docs or with `--cursor-models` / `--zen-models`, add it to the
-  displayed models, and relaunch the session. Do not inject model-selection
-  advice at every worker spawn.
+  displayed models, and relaunch the session.
 
-Run the fixed helper using this plugin's root, adding the chosen flags:
+Run the helper using this plugin's root, adding the chosen flags. Choose the
+syntax for the target shell.
+
+Linux/macOS (POSIX shell):
 
 ```sh
 node "${CLAUDE_PLUGIN_ROOT}/plugins/multi-core/src/setup.ts"
+```
+
+Windows PowerShell:
+
+```powershell
+node "$env:CLAUDE_PLUGIN_ROOT/plugins/multi-core/src/setup.ts"
+```
+
+Windows cmd:
+
+```bat
+node "%CLAUDE_PLUGIN_ROOT%\plugins\multi-core\src\setup.ts"
 ```
 
 Re-running setup without flags keeps the previous command name and model

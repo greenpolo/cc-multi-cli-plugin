@@ -6,10 +6,12 @@ OpenCode Zen models use direct API requests while Claude Code owns tools, permis
 
 1. Install the core and Zen plugins. See [docs/installation.md](installation.md).
 2. Run `/multi-zen:connect`.
-3. Enter the key in the separate terminal opened by the connection helper.
+3. Open a separate terminal and run the connection command shown by the skill;
+   the helper prompts for the key there without echoing it.
 4. Relaunch the session so Zen models and workers load.
 
-Zen uses an API key. The key is stored in OpenCode's auth store with mode `0600`.
+Zen uses an API key stored in OpenCode's auth store. The writer requests mode
+`0600` on POSIX; Windows access is governed by filesystem ACLs.
 
 | Platform | Default auth file |
 | --- | --- |
@@ -21,7 +23,9 @@ Zen uses an API key. The key is stored in OpenCode's auth store with mode `0600`
 
 ## Models
 
-Use `/model multi/zen/<model-id>`. The picker includes the curated rows below by default. Supported catalog models remain available by explicit selection.
+Use `/model multi/zen/<model-id>`. The default picker includes DeepSeek V4 Pro,
+DeepSeek V4 Flash, Kimi K3, GLM 5.3, GLM 5.3 Flash, and Muse Spark 1.3. The table
+below lists the full supported catalog; other rows require explicit selection.
 
 | Model IDs | Protocol | Effort |
 | --- | --- | --- |

@@ -4,7 +4,13 @@ Claude Code's permission mode reaches every provider. Select it before the promp
 
 ## One permission control
 
-Claude Code's permission mode is the single control at prompt boundaries. Auto and the default mode preserve ordinary automatic review and permission behavior. Plan restricts the available work to the plan capabilities exposed by the provider. Bypass disables automatic review where the provider supports that setting while retaining explicit capability restrictions. Claude ask rules remain part of Claude's permission checks.
+Claude Code's permission mode is the single control at prompt boundaries. Direct
+models retain Claude's permission checks; native harnesses translate supported
+modes and reject unsupported ones. Auto does not imply a reviewer exists:
+Antigravity has none, and Cursor can fall back when its classifier is unavailable.
+Plan restricts work to provider-supported plan capabilities. Bypass disables
+automatic review where supported while retaining explicit capability restrictions.
+Claude ask rules remain part of Claude's own tool permission checks.
 
 The mode snapshot applies at the next prompt. Direct Claude, OpenAI, and Zen
 workers record prompt identity and resolve tool permissions in Claude's loop.
@@ -24,10 +30,13 @@ explicitly.
 | Grok native harness | Each run carries Claude's mode, a bounded native toolset and deny rules that outrank every mode; the announced toolset is checked against the policy. See [docs/grok.md](grok.md). |
 | Claude tools | Claude's native permission checks and Anthropic classification apply. |
 
-Claude `PreToolUse` and `PermissionRequest` hooks observe native harness
-activity. Native harness admission and provider policy enforce those actions;
-the hooks do not replay native actions as Claude tools. The launcher keeps
-Claude's agent view limitation required for its supervisor-owned worker setup.
+Claude `PreToolUse` and `PermissionRequest` hooks govern Claude-executed tools,
+not each action inside a native harness. Provider SDK/CLI events supply native
+action observations and progress; Claude Mods displays them. Native harness
+admission and provider policy enforce the actions without replaying them as
+executable Claude tools. The launcher currently disables whole-session agent-view
+handoff because its gateway and generated worker settings belong to the launcher;
+ordinary background subagent tasks remain supported.
 
 The launcher enables Claude's on-demand tool discovery through the local
 gateway. Direct adapters omit deferred schemas until their names appear in a

@@ -6,14 +6,42 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Remove inherited workflow rules and correct maintained documentation.** The
+  OpenAI prompt is now a short Claude Code compatibility note; it no longer
+  supplies personal assumptions, writing-style bans, or restrictions on planning
+  and delegation. Session instructions govern those choices, and reversibility
+  does not imply authorization. The legacy Claude-agent fleet ban is removed;
+  direct imports are a convention rather than an absolute restriction. Claude
+  Mods remains the explicit UI/extensibility requirement, without requiring
+  gateway routes for local rendering changes. Login/setup skills now distinguish
+  POSIX, PowerShell, and cmd commands. Correct model examples, native hook and
+  continuation descriptions, privacy/accounting disclosures, Grok usage and
+  login guidance, issue forms, verification scope, and illustration labeling.
+  This supersedes the older OpenAI workflow profile described below; historical
+  entries are records of previous decisions, not current instructions.
+
+- **Native turn ownership and completion are shared.** All three harnesses use
+  scoped turn leases for replay, recovery, and dispatch, with one loading gate
+  and separate persisted records and live attachments. Shutdown keeps busy locks
+  until the owning turn finishes. Replies are archived before later dispatch;
+  completion and replay events commit together before terminal delivery.
+
+- **Claude Mods remains the UI and extensibility boundary.** The gateway accepts
+  narrow harness contracts and provider-owned usage callbacks while existing Mods
+  hooks own model/worker rows, policy, progress, compaction, and usage UI.
+  `docs/claude-mods.md` provides the local reference required by both contributor
+  instruction files. Cursor now uses shared conversation/media normalization
+  instead of constructing an OpenAI request just to prepare its prompt.
+
 - **Shared harness plumbing.** Grok, Antigravity, and Cursor now share their
-  session store, exchange registry, response builder, notice text, native
-  process runner, and prompt preparation through six new modules under
-  `plugins/multi-core/src/gateway/harness-*.ts`. Each provider still owns its
+  session store, exchange registry, response builder, and notice text. Grok and
+  Antigravity also share the native process runner and text prompt preparation;
+  Cursor retains its SDK and image-aware prompt format. The initial extraction
+  introduced six modules under `plugins/multi-core/src/gateway/harness-*.ts`.
+  Each provider still owns its
   event grammar, CLI argument construction, usage accounting, and SDK agent
-  lifecycle; only the identical plumbing moved. Net change across the four
-  slices is roughly -800 lines. No behaviour changes except the five listed
-  below, which the shared modules made possible.
+  lifecycle. The initial extraction through `6c3a97f` reduced production code by
+  117 lines; most of the provider-file reduction moved into the shared modules.
 
 - **Antigravity and Cursor refuse a prompt sent while a run is in flight.**
   Both harnesses previously answered a second prompt for the same identity
@@ -26,10 +54,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 - **Cursor session record moved to version 3.** The record now carries the
   shared session header (`provider`, `identity`, `interrupted`, `response`,
-  `replay`, `policyIdentity`) used by every harness. A version 2 file on disk
-  is ignored rather than read, so a live agent starts fresh the first time it
-  runs after the upgrade; the record's file name also changed, so no old file
-  is overwritten or reused.
+  `replay`, `policyIdentity`) used by every harness. Version 2 records now migrate
+  under both old and current filename locks, preserving native agents and pending
+  run recovery. This supersedes the initial extraction's fresh-agent fallback.
+  The original file is preserved; conflicting old/current native identities fail
+  explicitly instead of choosing one conversation silently.
 
 - **A Grok spawn failure the OS called transient is now retryable.** The shared
   native runner records the operating system's own `code` for a process it could
@@ -41,12 +70,15 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   A missing binary stays a deterministic 400.
 
 - **Cursor replays hold the session record's lock.** Cursor's replay path now
-  reads the record through the shared store's `loadOnly`, which takes the
+  reads the record through the shared store's turn lease, which takes the
   record's lock file and caches the record until the harness closes; the
   previous replay path read the file without the lock. Holding it is what keeps
   a replay, an interrupted-state recovery and a dispatch from interleaving on
-  one record. Cursor's 32-agent budget now counts only records that hold a
-  native SDK agent, so the extra cached records cannot evict a live agent.
+  one record. Cursor's 32-agent budget counts attached SDK handles and pending
+  attachment reservations. Disk-only replays cannot evict a live agent, and
+  simultaneous creations cannot exceed the budget. In-flight billing queries
+  protect their attached handles from eviction, and read-only billing can still
+  find a legacy record before its first migrated turn.
 
 - **Cursor's token estimate fallback changed.** When the SDK reports no usage
   for a turn, the output token estimate is now `ceil(content length / 4)`,

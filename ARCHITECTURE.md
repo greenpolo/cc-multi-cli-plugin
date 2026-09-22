@@ -12,7 +12,8 @@ The plugin puts external models and coding harnesses inside one Claude Code
 session. The launcher registers provider models and named workers. The Node
 gateway routes requests, preserves Claude passthrough, and coordinates sessions.
 Claude Mods provide the in-engine control plane for model rows, worker rows,
-permission state, progress, and compaction. Provider adapters own their model
+permission state, progress, and compaction. [The local Mods reference](docs/claude-mods.md)
+is required reading for changes to Claude Code UI or extensibility. Provider adapters own their model
 catalogs, authentication, execution, and review boundaries.
 
 ```text
@@ -47,7 +48,7 @@ time, streamed progress, completion, failure, and cancellation.
 
 OpenAI and Zen are direct model integrations. Their worker hooks record prompt
 identity and let Claude Code run the tool loop. Full settings translation runs
-at Cursor and Antigravity prompts, or when a direct-model conversation requests
+at Cursor, Antigravity, and Grok prompts, or when a direct-model conversation requests
 a harness worker. OpenAI
 review stays with the originating OpenAI account. Zen never borrows Codex
 review. Missing GPT review fails explicitly.
@@ -61,13 +62,16 @@ policy in its own run arguments, and each announced toolset is checked against
 it because an unknown removal is accepted and ignored by that CLI.
 
 All three harnesses share their session store, in-flight exchange registry,
-response builder, notice text, native process runner, and prompt preparation
-from `plugins/multi-core/src/gateway/harness-*.ts`. Each provider still owns
+response builder, durable completion, and notices from
+`plugins/multi-core/src/gateway/harness-*.ts`. Grok and Antigravity additionally
+share native process execution and text prompt preparation; Cursor retains its
+SDK and image-aware prompt format. Each provider still owns
 its own event grammar, CLI argument construction, usage accounting, and (for
-Cursor) SDK agent lifecycle; the shared modules hold only plumbing that was
-identical across providers. A prompt sent for an identity with a run already
-in flight is refused with a deterministic 400 on every harness, never queued
-or retried against a native conversation that has moved on.
+Cursor) SDK agent lifecycle. The shared layer owns turn leases, lock lifetime,
+archival before subsequent dispatch, and durable completion before terminal
+events. Identical in-flight requests observe the existing exchange. A different
+request for the same busy identity is refused with a deterministic 400, rather
+than queued against a native conversation that has moved on.
 
 ## Permissions
 
@@ -80,7 +84,9 @@ Auto review while retaining explicit restrictions. See [docs/permissions.md](doc
 
 Native harness actions do not enter Claude's PreToolUse or PermissionRequest
 admission path. Their worker admission loads the selected settings and managed
-policy sources, while those hooks observe native activity. Antigravity native
+policy sources. Provider SDK/CLI events supply progress and action observations
+for display through Claude Mods; Claude's classic tool hooks do not observe each
+native action. Antigravity native
 children and MCP stay denied. Grok denies native subagents and MCP execution by
 rule, and its announced toolset is verified because that CLI accepts an unknown
 removal silently; its MCP tools stay visible to the model and are documented as
@@ -108,37 +114,43 @@ run IDs support terminal-result recovery. A recoverable run resumes its native
 record; an uncertain run does not rerun actions blindly. Claude, OpenAI, and Zen
 conversations use Claude Code's compaction without Multi's harness checks;
 Cursor, Antigravity and Grok compaction remains provider-owned and policy-bound. Follow-ups forward the
-newest turn after the last assistant response. Outer history changes continue
-only with a matching prompt hash or unique saved-response anchor. Native state is
-never rewound. Compaction summarizes authenticated context while preserving the
+newest turn after the last assistant response. If outer history no longer contains
+the saved response, the harness emits a notice and continues on its native record;
+it does not require a matching prompt hash or unique response anchor. Native state
+is never rewound. Compaction summarizes authenticated context while preserving the
 native record. Cache reuse and usage accounting remain provider-owned.
 
-Cursor, Antigravity, and Grok persist and load native session records through
-the shared `HarnessSessionStore` (`gateway/harness-session.ts`), which owns
-the busy/loading gate, the atomic-write lock, and record validation; a
-provider supplies only its own field extensions and a default record. An
-in-flight native turn is tracked by the shared `ExchangeRegistry`
-(`gateway/harness-exchange.ts`), which lets a second identical request join
-the running turn or replay a settled one instead of starting a second paid
-turn. `HarnessSessionStore.acquire` and `.loadOnly` are the only way to reach
-a session record, and both throw `HarnessBusyError` for a busy identity
-instead of queuing: every harness reports this as a 400, so a prompt sent
-while a run is in flight is refused rather than retried against native state
-that has since moved on.
+`HarnessSessionStore` (`gateway/harness-session.ts`) owns the loading gate,
+record validation, and lock lifetime. Persisted `saved` fields are separate from
+live `runtime` attachments; SDK handles cannot enter a saved record accidentally.
+`acquireLease` holds the identity through replay, recovery, and dispatch. Releasing
+the lease ends the turn; shutdown releases idle records and leaves busy locks
+owned until their leases finish. `loadOnly` uses the same loading gate and rejects
+busy records. Every harness maps `HarnessBusyError` to a deterministic 400.
 
-Reading a record takes its lock. Cursor's replay path goes through `loadOnly`
-like every other path, so even a turn answered entirely from disk holds the
-record's lock file until the harness closes; the record it caches is the same
-object the turn would later mutate, so an unlocked shortcut would reintroduce
-the recovery race the lock exists to prevent. Cursor's interrupted-state
-recovery holds the turn with `acquire` for its whole duration, because it both
-awaits the native run and rewrites the record: a second request that slipped in
-between would dispatch a run whose `pendingRun` the finishing recovery then
-cleared. Cursor's agent budget counts records that actually hold a native SDK
-agent, so a cached record that never created one evicts nothing. Replay
-validation is provider-parameterized: Cursor's replies may carry the
+`ExchangeRegistry` (`gateway/harness-exchange.ts`) lets identical requests observe
+one native run before a second lease is attempted. Its typed metadata remains
+provider-owned. `harness-completion.ts` archives a previous reply before the next
+native dispatch can replace it, then commits the new response and replay events
+in one atomic session write before emitting terminal events. Provider usage and
+native recovery decisions stay in the adapters.
+
+Cursor upgrades preserve v2 native agents and pending run IDs. The store holds
+both the old filename's lock and the current v3 filename's lock while migrating
+and using a record. Existing v3 state takes precedence when both records identify
+the same agent; conflicting native identities fail explicitly. The original v2
+file is preserved. Cursor's 32-agent budget counts attached SDK handles and
+in-flight attachment reservations, not disk-only replay records. Eviction closes
+an idle SDK handle while retaining its native identity for later resume.
+Handles with an in-flight billed usage query are not evicted. A detached SDK
+record's `running` status is not a live ownership claim: the existing interrupted
+continuation notice remains the fallback when no terminal result can be recovered.
+
+Replay validation is provider-parameterized: Cursor's replies may carry the
 display-only `tool_use` blocks a Claude Mods row produces, while Grok and
-Antigravity stay text-only.
+Antigravity stay text-only. `gateway/conversation.ts` normalizes Messages content
+and media for Cursor and OpenAI without coupling Cursor to OpenAI request
+construction; provider-specific reasoning decoding stays with OpenAI.
 
 ## Platform layer
 
@@ -153,7 +165,10 @@ its own argument construction, event grammar, and environment allowlist.
 Linux, WSL, macOS, and Windows support is
 described in [docs/platform-support.md](docs/platform-support.md).
 
-## Design rules
+## Current design contracts
+
+These summarize the current architecture, not permanent restrictions on future
+features requested by the maintainer.
 
 - Keep authentication, model catalogs, review, and native state with each provider.
 - Keep shared Claude protocol types and cross-provider helpers in `gateway/`.

@@ -603,7 +603,8 @@ test('OpenAI cache keys survive history changes and restart, isolating sessions,
 });
 
 test('OpenAI main and worker requests adapt instructions without losing runtime policy or changing translation', async (t) => {
-  const runtime = 'Runtime policy: Plan is read-only. Never edit secrets. Custom worker scope.';
+  const runtime =
+    'Runtime policy: Plan is read-only. Never edit secrets. Custom worker scope. Use agents when appropriate; use headings for reports.';
   const payload = { ...body, system: runtime };
   const seen: ResponsesRequest[] = [];
   const call = await gateway(t, async (_url, options) => {
@@ -618,10 +619,9 @@ test('OpenAI main and worker requests adapt instructions without losing runtime 
   for (const request of seen) {
     assert.equal(request.instructions, openaiInstructions(runtime));
     assert(request.instructions.startsWith(runtime));
-    assert.match(request.instructions, /Do not call EnterPlanMode unless the user explicitly asks/);
-    assert.match(
+    assert.doesNotMatch(
       request.instructions,
-      /Use Agent only when the user or applicable project\/worker instructions explicitly authorize/,
+      /Do not call EnterPlanMode unless|Use Agent only when|The user gets very frustrated|Avoid section headings|Do not write tests for reversible/,
     );
     const translated = toResponses(payload, request.model);
     assert.deepEqual(request.input, translated.input);

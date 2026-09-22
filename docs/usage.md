@@ -1,7 +1,7 @@
 # Usage and receipts
 
 Run `/multi-usage` inside `claude-multi` to open the native Claude Mods usage
-pane. It starts with an overview of all four providers. Select a provider for
+pane. It starts with an overview of all five providers. Select a provider for
 quota, billing, and session token details; select **Receipts** for completed
 worker and main-turn records. Use the buttons or left/right arrows to switch
 views, up/down to scroll, **Refresh** or `r` to reload, and Escape to close.
@@ -12,7 +12,7 @@ views, up/down to scroll, **Refresh** or `r` to reload, and Escape to close.
 | Cursor | Account subscription usage percentages and billing-cycle resets, plus billed token totals and charged USD for this session's active native agents |
 | OpenCode Zen | Go subscription quota windows and resets when entitled; prepaid balance and billed API spend require the billing console |
 | Antigravity | Native account quota groups, remaining percentages, reset times, and AI credit balance when reported |
-| Grok | Whether an account login is present and how long it remains valid; the CLI exposes no account quota |
+| Grok | Local login/renewal status; an access-token expiry is shown only without a refresh token. The CLI exposes no account quota, and local token presence does not prove the login remains accepted. |
 
 Unavailable and disabled providers stay visible. Missing billing data is never
 shown as a zero charge. The menu also shows session token counts for every
@@ -68,7 +68,7 @@ Each receipt includes a schema version, unique receipt ID, session and agent IDs
 invocation ID when available, timestamps, outcome, request count, and usage entries
 grouped by provider, model, effort, endpoint or native transport, and count source.
 Model or effort changes remain separate entries. Native SDK/CLI transports are
-identified as `@cursor/sdk` and `agy`; their upstream URLs are not known to Multi.
+identified as `@cursor/sdk`, `agy`, and `grok`; their upstream URLs are not known to Multi.
 
 Receipts contain no prompts, responses, tool arguments, or credentials. File errors
 are reported on stderr without failing inference. A normal shutdown drains queued

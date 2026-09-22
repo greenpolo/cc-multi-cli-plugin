@@ -20,6 +20,7 @@ body:
         - Cursor SDK
         - OpenCode Zen
         - Antigravity CLI
+        - Grok Build CLI
         - Claude passthrough
         - Gateway / model picker / workers
         - Other
