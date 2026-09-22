@@ -4,30 +4,14 @@ import http from 'node:http';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import {
-  type AntigravityHarness,
-  AntigravityProviderError,
-} from '../../../multi-antigravity/src/harness.ts';
-import {
-  formatAntigravityQuota,
-  readAntigravityAccountStatus,
-} from '../../../multi-antigravity/src/quota.ts';
-import { CursorProviderError } from '../../../multi-cursor/src/errors.ts';
-import type { CursorHarness } from '../../../multi-cursor/src/harness.ts';
-import { formatCursorQuota, readCursorQuota } from '../../../multi-cursor/src/quota.ts';
-import { readCursorAccountUsage } from '../../../multi-cursor/src/usage.ts';
-import { type GrokHarness, GrokProviderError } from '../../../multi-grok/src/harness.ts';
-import { formatGrokQuota, readGrokAuth } from '../../../multi-grok/src/usage.ts';
 import { CodexAuthError, codexRequest } from '../../../multi-openai/src/auth.ts';
 import { openaiInstructions } from '../../../multi-openai/src/instructions.ts';
 import { MODELS } from '../../../multi-openai/src/models.ts';
 import type { ResponsesRequest } from '../../../multi-openai/src/responses.ts';
 import { forAnthropic, fromResponses, toResponses } from '../../../multi-openai/src/responses.ts';
-import { readCodexUsage } from '../../../multi-openai/src/usage.ts';
 import { validateZenKey } from '../../../multi-zen/src/auth.ts';
 import { fromChat } from '../../../multi-zen/src/chat.ts';
 import { zenRequest } from '../../../multi-zen/src/request.ts';
-import { formatZenQuota, readZenQuota } from '../../../multi-zen/src/usage.ts';
 import type { AgentCatalog } from './agent-catalog.ts';
 import type { ApprovalContext, NativeApprovalBridge } from './approval.ts';
 import { approvalCwdForComparison, isApprovalRequest, parseApprovalRequest } from './approval.ts';
@@ -37,8 +21,9 @@ import { ModBridge } from './mod-bridge.ts';
 import { ModCompactions } from './mod-compaction.ts';
 import { handleModRoute } from './mod-routes.ts';
 import type { PermissionContext, PermissionModes } from './mode-hook.ts';
+import { type NativeHarness, nativeHarnessErrorStatus } from './native-harness.ts';
 import type { PendingApprovalTool } from './permission-hook.ts';
-import { codexQuotaView, ProviderUsageDashboard } from './provider-usage.ts';
+import { ProviderUsageDashboard, type ProviderUsageReader } from './provider-usage.ts';
 import { ReceiptLedger } from './receipts.ts';
 import { estimateInputTokens } from './tokens.ts';
 import { forwardObservedTools, ToolObserver } from './tool-observer.ts';
@@ -97,16 +82,19 @@ export interface GatewayEvent {
 export interface GatewayOptions {
   receipts?: ReceiptLedger;
   usageDashboard?: ProviderUsageDashboard;
+  billedUsage?: (session: string) => Promise<unknown>;
+  usageReaders?: Partial<
+    Record<'openai' | 'cursor' | 'zen' | 'antigravity' | 'grok', ProviderUsageReader>
+  >;
   token: string;
   enabledProviders?: readonly string[];
   authFile: string;
   fetchImpl?: GatewayFetch;
   onEvent?: (event: GatewayEvent) => void;
   timeoutMs?: number;
-  cursor?: Pick<CursorHarness, 'validate' | 'handle'> &
-    Partial<Pick<CursorHarness, 'billedUsageForSession'>>;
-  antigravity?: Pick<AntigravityHarness, 'validate' | 'handle'>;
-  grok?: Pick<GrokHarness, 'validate' | 'handle'>;
+  cursor?: NativeHarness;
+  antigravity?: NativeHarness;
+  grok?: NativeHarness;
   zen?: { apiKey: string };
   /** OpenAI review for GPT-originated actions, independent of Claude authentication. */
   approvalBridge?: Pick<NativeApprovalBridge, 'respond'>;
@@ -194,8 +182,9 @@ export function createNativeGateway({
   modBridge = new ModBridge(),
   receipts = new ReceiptLedger(),
   usageDashboard,
+  billedUsage,
+  usageReaders = {},
 }: GatewayOptions): Server {
-  const billedUsage = cursor?.billedUsageForSession?.bind(cursor);
   const dashboard =
     usageDashboard ??
     new ProviderUsageDashboard({
@@ -216,20 +205,7 @@ export function createNativeGateway({
           return provider === 'openai';
         },
       ),
-      openai: async () => codexQuotaView(await readCodexUsage(authFile)),
-      cursor: cursor
-        ? (session) =>
-            readCursorAccountUsage(
-              session,
-              async () => formatCursorQuota(await readCursorQuota()),
-              billedUsage,
-            )
-        : undefined,
-      zen: zen ? async () => formatZenQuota(await readZenQuota({ apiKey: zen.apiKey })) : undefined,
-      antigravity: antigravity
-        ? async () => formatAntigravityQuota(await readAntigravityAccountStatus())
-        : undefined,
-      grok: grok ? async () => formatGrokQuota(await readGrokAuth()) : undefined,
+      ...usageReaders,
     });
   const onEvent = (event: GatewayEvent) => {
     receipts.observe(event);
@@ -977,12 +953,9 @@ function errorStatus(error: unknown): number {
   if (error instanceof UpstreamFailure) {
     return error.status;
   }
-  if (
-    error instanceof CursorProviderError ||
-    error instanceof AntigravityProviderError ||
-    error instanceof GrokProviderError
-  ) {
-    return error.failure.status;
+  const harnessStatus = nativeHarnessErrorStatus(error);
+  if (harnessStatus !== undefined) {
+    return harnessStatus;
   }
   return 502;
 }

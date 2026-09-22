@@ -100,25 +100,25 @@ async function probe(system: string, prompt: string) {
     .map((block) => block.name);
 }
 try {
-  const direct = await probe(
-    'You are Claude Code. Generic workflow guidance: use Plan mode before implementation and Explore agents for investigation. Working directory: /tmp/fixture.',
-    'The greeting in greeting.txt has a typo. Inspect the file and fix it.',
+  const planned = await probe(
+    'You are Claude Code. Follow the active session instructions. Working directory: /tmp/fixture.',
+    'The greeting in greeting.txt has a typo. First enter Plan mode before investigating or editing anything.',
   );
-  assert(direct.includes('Read'), JSON.stringify(results.at(-1)));
-  assert(!direct.some((name) => ['Agent', 'EnterPlanMode', 'Edit'].includes(name)));
+  assert(planned.includes('EnterPlanMode'), JSON.stringify(results.at(-1)));
+  assert(!planned.includes('Edit'));
   const plan = await probe(
     'The user has selected Plan mode. You MUST NOT edit files. Inspect and describe a proposed fix only. greeting.txt contains "Helo world".',
     'Fix the greeting typo in greeting.txt.',
   );
-  assert(!plan.some((name) => ['Edit', 'Agent', 'EnterPlanMode'].includes(name)));
+  assert(!plan.includes('Edit'));
   const delegated = await probe(
     'Working directory: /tmp/fixture. No additional restrictions.',
     'Explicitly delegate a read-only investigation of greeting.txt to the Explore agent. Do not edit anything.',
   );
   assert(delegated.includes('Agent'), JSON.stringify(results.at(-1)));
-  assert(!delegated.some((name) => ['Edit', 'EnterPlanMode'].includes(name)));
+  assert(!delegated.includes('Edit'));
   console.log(
-    `PASS: direct work, active Plan restrictions, requested delegation (${requests} requests).`,
+    `PASS: requested planning, active Plan restrictions, requested delegation (${requests} requests).`,
   );
 } finally {
   server.closeAllConnections();

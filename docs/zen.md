@@ -6,10 +6,12 @@ OpenCode Zen models use direct API requests while Claude Code owns tools, permis
 
 1. Install the core and Zen plugins. See [docs/installation.md](installation.md).
 2. Run `/multi-zen:connect`.
-3. Enter the key in the separate terminal opened by the connection helper.
+3. Open a separate terminal and run the connection command shown by the skill;
+   the helper prompts for the key there without echoing it.
 4. Relaunch the session so Zen models and workers load.
 
-Zen uses an API key. The key is stored in OpenCode's auth store with mode `0600`.
+Zen uses an API key stored in OpenCode's auth store. The writer requests mode
+`0600` on POSIX; Windows access is governed by filesystem ACLs.
 
 | Platform | Default auth file |
 | --- | --- |
@@ -21,12 +23,14 @@ Zen uses an API key. The key is stored in OpenCode's auth store with mode `0600`
 
 ## Models
 
-Use `/model multi/zen/<model-id>`. The picker includes the curated rows below by default. Supported catalog models remain available by explicit selection.
+Use `/model multi/zen/<model-id>`. The default picker includes DeepSeek V4 Pro,
+DeepSeek V4 Flash, Kimi K3, GLM 5.3, GLM 5.3 Flash, and Muse Spark 1.3. The table
+below lists the full supported catalog; other rows require explicit selection.
 
 | Model IDs | Protocol | Effort |
 | --- | --- | --- |
 | `deepseek-v4-pro`, `deepseek-v4-flash`, `kimi-k3`, `glm-5.3`, `glm-5.3-flash`, `kimi-k2.7-code`, `glm-5.2`, `minimax-m2.7`, `big-pickle`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`, `nemotron-3-ultra-free`, and `nemotron-3.5-lightning-free` | Chat Completions | Provider-native reasoning |
-| `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `muse-spark-1.2-contributor-free` | Responses | `low`, `medium`, `high`, `xhigh`, and `max` for GPT and `muse-spark-1.3`; `low`, `medium`, `high`, and `xhigh` for contributor-free Muse |
+| `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `muse-spark-1.3`, `muse-spark-1.3-contributor-free`, `muse-spark-1.2-contributor-free` | Responses | `low`, `medium`, `high`, `xhigh`, and `max` for GPT and `muse-spark-1.3`; `low`, `medium`, `high`, and `xhigh` for contributor-free Muse |
 
 Workers use the `zen-<model-id>` name. Models with effort support also have effort-suffixed workers. Chat workers have no effort variants.
 

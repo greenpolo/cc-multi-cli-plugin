@@ -26,7 +26,7 @@ if (process.argv.includes('--help')) {
   );
   process.exit(0);
 }
-const initialModel = 'multi/openai/gpt-5.6-luna';
+const initialModel = 'multi/openai/gpt-6-luna';
 const launcher = process.argv.includes('--launcher');
 const nativeEscalation = launcher || process.argv.includes('--native-escalation');
 const claudeAuthFixture = process.argv.includes('--claude-auth-fixture');

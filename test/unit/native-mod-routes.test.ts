@@ -98,7 +98,7 @@ test('Claude-loop worker route does not require a settings-policy generation', a
   modes.recordHostSession('session', {
     permissionMode: 'default',
     cwd: '/workspace',
-    model: 'multi/openai/gpt-5.6-luna',
+    model: 'multi/openai/gpt-6-luna',
   });
   const base = await start(t, modes);
   const result = await request(base, '/multi/mod/worker', {
@@ -107,7 +107,7 @@ test('Claude-loop worker route does not require a settings-policy generation', a
     cwd: '/workspace',
     permissionMode: 'default',
     model: 'multi/zen/deepseek-v4-pro',
-    parentModel: 'multi/openai/gpt-5.6-luna',
+    parentModel: 'multi/openai/gpt-6-luna',
   });
   assert.equal(result.status, 200);
   assert.equal(result.body.accepted, true);

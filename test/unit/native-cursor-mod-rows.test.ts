@@ -126,6 +126,7 @@ test('ModBridge emits completed rows in order with tool-call-answerable input', 
 
 test('Cursor stream contains ordered display blocks and completed exchange replays without a send', async (t) => {
   const updates: Array<{ update: InteractionUpdate }> = [
+    { update: { type: 'text-delta', text: 'Inspecting. ' } },
     {
       update: {
         type: 'tool-call-started',
@@ -173,6 +174,20 @@ test('Cursor stream contains ordered display blocks and completed exchange repla
     toolUseId: 'read',
   });
   assert.equal(f.sends(), 1);
+  assert.deepEqual(
+    first.events
+      .filter(([name]) => name === 'content_block_start' || name === 'content_block_stop')
+      .map(([name, value]) => [name, (value as { index: number }).index]),
+    [
+      ['content_block_start', 0],
+      ['content_block_stop', 0],
+      ['content_block_start', 1],
+      ['content_block_stop', 1],
+      ['content_block_start', 2],
+      ['content_block_stop', 2],
+    ],
+    'each display/text block closes before the next starts, even before durable completion',
+  );
   const replay = capture();
   await f.harness.handle(
     body,
@@ -215,4 +230,126 @@ test('missing or denied display tools disable row transport', () => {
     bridge.observe('denied', { type: 'completed', id: 'x', text: 'x', error: true }),
     undefined,
   );
+});
+
+test('a mod-row reply replays from the session record and from its archived response file', async (t) => {
+  const updates: Array<{ update: InteractionUpdate }> = [
+    {
+      update: {
+        type: 'tool-call-started',
+        callId: 'read',
+        modelCallId: 'm',
+        toolCall: { type: 'read', args: { path: 'a.txt' } },
+      },
+    },
+    {
+      update: {
+        type: 'tool-call-completed',
+        callId: 'read',
+        modelCallId: 'm',
+        toolCall: {
+          type: 'read',
+          args: { path: 'a.txt' },
+          result: { status: 'success', value: { fileSize: 1, content: 'A', totalLines: 1 } },
+        },
+      },
+    },
+    { update: { type: 'text-delta', text: 'done' } },
+  ];
+  let sends = 0;
+  const createAgent = async () => ({
+    agentId: 'agent-row',
+    close() {},
+    async send(_prompt: unknown, options?: SendOptions) {
+      sends++;
+      for (const update of updates) {
+        await options?.onDelta?.(update);
+      }
+      const finished = Promise.resolve<RunResult>({
+        id: `run-${sends}`,
+        status: 'finished',
+        result: 'done',
+      });
+      return fakeRun(finished, () => {});
+    },
+  });
+  const stateDirectory = await mkdtemp(path.join(os.tmpdir(), 'native-mod-rows-replay-'));
+  const harnesses: CursorHarness[] = [];
+  const make = () => {
+    const harness = new CursorHarness(models, {
+      cwd: process.cwd(),
+      stateDirectory,
+      createAgent,
+      resumeAgent: createAgent,
+    });
+    harnesses.push(harness);
+    return harness;
+  };
+  t.after(async () => {
+    await Promise.all(harnesses.map((harness) => harness.close()));
+    await removeTemporary(stateDirectory);
+  });
+  const bridge = new ModBridge();
+  const observe = (observation: Parameters<ModBridge['observe']>[1]) =>
+    bridge.observe('replay/main', observation);
+  const context = { permissionMode: 'plan' as const };
+  const live = capture();
+  const first = make();
+  const answer = await first.handle(
+    body,
+    'replay/main',
+    new AbortController().signal,
+    live.emit,
+    context,
+    observe,
+  );
+  assert(answer.content.some((block) => block.type === 'tool_use'));
+  await first.close();
+
+  // A fresh harness has neither the exchange nor the cached record, so the reply
+  // has to survive the session record's own validation before it can be replayed.
+  const second = make();
+  const fromRecord = capture();
+  const replayed = await second.handle(
+    body,
+    'replay/main',
+    new AbortController().signal,
+    fromRecord.emit,
+    context,
+    observe,
+  );
+  assert.equal(sends, 1, 'a persisted display row must never be answered by a second native run');
+  assert.deepEqual(fromRecord.content, live.content);
+  assert.equal(replayed.multi_usage?.replayed, true);
+
+  // The next turn moves that reply out of the record and into its own file.
+  await second.handle(
+    {
+      ...body,
+      messages: [
+        ...(body.messages ?? []),
+        { role: 'assistant', content: replayed.content },
+        { role: 'user', content: 'and again' },
+      ],
+    },
+    'replay/main',
+    new AbortController().signal,
+    undefined,
+    context,
+    observe,
+  );
+  assert.equal(sends, 2);
+  await second.close();
+  const third = make();
+  const fromFile = capture();
+  await third.handle(
+    body,
+    'replay/main',
+    new AbortController().signal,
+    fromFile.emit,
+    context,
+    observe,
+  );
+  assert.equal(sends, 2);
+  assert.deepEqual(fromFile.content, live.content);
 });

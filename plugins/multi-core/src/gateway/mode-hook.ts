@@ -116,8 +116,15 @@ export class PermissionModes {
   }
 
   resolveHarness(session: string, agent?: string, model?: string): PermissionContext {
+    if (agent && !this.workers.has(JSON.stringify([session, agent]))) {
+      throw new Error(
+        'Native harness worker has no acknowledged spawn. Workflow-started native workers are unsupported until Claude Code supplies spawn context; use the Agent tool instead. If this came from the Agent tool, submit a new prompt and retry.',
+      );
+    }
     if (this.hostOnly.has(session)) {
-      throw new Error('Native harness settings policy has not been admitted');
+      throw new Error(
+        'Native harness settings policy has not been admitted. If starting a native worker from a Workflow, use the Agent tool instead; Workflow starts lack the spawn context needed for safe admission.',
+      );
     }
     const context = this.resolve(session, agent);
     if (model && context.model && !sameModel(context.model, model)) {

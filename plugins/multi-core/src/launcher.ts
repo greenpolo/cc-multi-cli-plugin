@@ -19,6 +19,7 @@ import {
   nativeSpelling,
 } from '../../multi-antigravity/src/models.ts';
 import { antigravityPermissionPolicy } from '../../multi-antigravity/src/permissions.ts';
+import { antigravityUsageReader } from '../../multi-antigravity/src/usage-adapter.ts';
 import { CursorHarness } from '../../multi-cursor/src/harness.ts';
 import type { CursorModelOption } from '../../multi-cursor/src/models.ts';
 import { cursorModelOptions, cursorPickerOptions } from '../../multi-cursor/src/models.ts';
@@ -26,6 +27,7 @@ import {
   cursorPermissionPolicy,
   mergeCursorPermissions,
 } from '../../multi-cursor/src/permissions.ts';
+import { cursorUsageReader } from '../../multi-cursor/src/usage-adapter.ts';
 import { CursorWorkspaces } from '../../multi-cursor/src/workspaces.ts';
 import { GrokHarness } from '../../multi-grok/src/harness.ts';
 import {
@@ -34,10 +36,12 @@ import {
   grokPickerOptions,
 } from '../../multi-grok/src/models.ts';
 import { grokPermissionPolicy } from '../../multi-grok/src/permissions.ts';
+import { grokUsageReader } from '../../multi-grok/src/usage-adapter.ts';
 import { createOpenAIApproval, discoverOpenAIReviewer } from '../../multi-openai/src/approval.ts';
 import { readCodexAuth } from '../../multi-openai/src/auth.ts';
 import { MODELS, OPENAI_WORKERS } from '../../multi-openai/src/models.ts';
 import type { Effort } from '../../multi-openai/src/responses.ts';
+import { openAIUsageReader } from '../../multi-openai/src/usage-adapter.ts';
 import { readZenKey } from '../../multi-zen/src/auth.ts';
 import {
   ZEN_MODELS,
@@ -45,6 +49,7 @@ import {
   zenModelOptions,
   zenPickerOptions,
 } from '../../multi-zen/src/models.ts';
+import { zenUsageReader } from '../../multi-zen/src/usage-adapter.ts';
 import { AgentCatalog } from './gateway/agent-catalog.ts';
 import {
   loadWorkerPermissions,
@@ -56,6 +61,7 @@ import { executableInvocation, resolveExecutable } from './gateway/executable.ts
 import { ModBridge } from './gateway/mod-bridge.ts';
 import { PermissionModes } from './gateway/mode-hook.ts';
 import { hookCommand } from './gateway/permission-hook.ts';
+import type { ProviderUsageReader } from './gateway/provider-usage.ts';
 import { ReceiptLedger } from './gateway/receipts.ts';
 import type { GatewayEvent } from './gateway/server.ts';
 import { createNativeGateway } from './gateway/server.ts';
@@ -154,6 +160,7 @@ async function main() {
     args,
     callerSettings,
   );
+  const usageReaders = providerUsageReaders(authFile, zenKey, { cursor, antigravity, grok });
   const agents = workerDefinitions(
     codexSignedIn,
     cursorPicker,
@@ -192,6 +199,7 @@ async function main() {
   });
   const server = createNativeGateway({
     receipts,
+    billedUsage: cursor?.billedUsageForSession.bind(cursor),
     token,
     enabledProviders,
     authFile,
@@ -200,6 +208,7 @@ async function main() {
     antigravity,
     grok,
     zen: zenKey ? { apiKey: zenKey } : undefined,
+    usageReaders,
     permissionModes,
     approvalBridge,
     approvalProviders,
@@ -409,6 +418,21 @@ function nativeHarnesses(
       })
     : undefined;
   return { cursor, antigravity, grok };
+}
+
+function providerUsageReaders(
+  authFile: string,
+  zenKey: string | undefined,
+  harnesses: ReturnType<typeof nativeHarnesses>,
+): Partial<Record<'openai' | 'cursor' | 'zen' | 'antigravity' | 'grok', ProviderUsageReader>> {
+  const { cursor, antigravity, grok } = harnesses;
+  return {
+    openai: openAIUsageReader(authFile),
+    cursor: cursor ? cursorUsageReader(cursor) : undefined,
+    zen: zenKey ? zenUsageReader(zenKey) : undefined,
+    antigravity: antigravity ? antigravityUsageReader() : undefined,
+    grok: grok ? grokUsageReader() : undefined,
+  };
 }
 
 async function discoverCursor(required: boolean) {
@@ -780,7 +804,7 @@ async function initialSelection(args: string[], settings: LaunchSettings, anthro
   const initialModel = retagSelection(requested, options);
   const defaultModel =
     process.env.MULTI_MODELS === undefined
-      ? options.find((option) => option.model === 'multi/openai/gpt-5.6-luna')
+      ? options.find((option) => option.model === 'multi/openai/gpt-6-luna')
       : undefined;
   const fallback = anthropic ? undefined : (defaultModel ?? options[0])?.model;
   const selectedModel = initialModel ?? fallback;

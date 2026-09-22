@@ -54,7 +54,7 @@ const workers = {
     effort: 'high',
   },
   'openai-luna': {
-    model: 'multi/openai/gpt-5.6-luna',
+    model: 'multi/openai/gpt-6-luna',
     description: 'CACHE_HIDDEN_MODEL',
     prompt: 'Follow the task.',
     tools: ['Read'],

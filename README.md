@@ -16,9 +16,9 @@ Multi brings external models and coding harnesses into one Claude Code session t
 
 [Quick start](#install) · [Providers](#providers) · [Documentation](#documentation) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
-![Claude Code: Fable 5.1 coordinating GPT-5.6 Luna, Grok 4.6, and Gemini 3.8 Flash workers](docs/assets/multi-provider-workers.svg)
+![Illustration of Fable 5.1 coordinating GPT-5.6 Luna, Grok 4.6, and Gemini 3.8 Flash workers](docs/assets/multi-provider-workers.svg)
 
-*Fable 5.1 coordinating GPT-5.6 Luna, Grok 4.6, and Gemini 3.8 Flash in one Claude Code session.*
+*Illustration of the multi-provider workflow, edited from a live Luna terminal capture; not a recording of a mixed-provider run. [Asset provenance](docs/assets/README.md#multi-provider-worker-showcase).*
 
 ## Why Multi?
 
@@ -55,7 +55,7 @@ Install any subset; each provider pulls in the shared `multi-core` plugin. Open 
 | `multi-antigravity` | `/multi-antigravity:connect` | [Antigravity models and workers through `agy`](docs/antigravity.md) |
 | `multi-grok` | `/multi-grok:login` | [Grok models and workers through Grok Build](docs/grok.md) |
 
-`multi status` shows what is installed and connected. `multi uninstall` removes the shell integration and keeps provider logins. Plain `claude` is never changed. Rename the launch command or trim the `/model` rows with `/multi-core:setup --command <name> --models <ids>`. Details: [installation](docs/installation.md).
+`multi status` shows installed/enabled providers; it does not test login or inference. `multi uninstall` removes the shell integration and keeps provider logins. Plain `claude` stays unchanged unless you explicitly choose `--command claude`. Rename the launch command or trim the `/model` rows with `/multi-core:setup --command <name> --models <ids>`. Details: [installation](docs/installation.md).
 
 <details>
 <summary>Installing with a coding agent</summary>
@@ -76,7 +76,7 @@ launching to append JSONL receipts. See [usage and receipts](docs/usage.md).
 
 ## Platforms
 
-Linux, macOS, and Windows are supported, with offline checks running in CI on all three for every commit. WSL behaves as Linux. See [platform support](docs/platform-support.md) for the live-verified matrix per provider.
+Linux, macOS, and Windows have platform-specific implementations and a CI matrix for offline checks on pushes and pull requests. WSL uses Linux paths and policy handling. See [platform support](docs/platform-support.md) for verification scope and remaining live checks.
 
 ## Documentation
 
@@ -84,12 +84,13 @@ Linux, macOS, and Windows are supported, with offline checks running in CI on al
 | --- | --- |
 | [Installation and account setup](docs/installation.md) | [Permissions and review](docs/permissions.md) |
 | [OpenAI](docs/openai.md) · [Cursor](docs/cursor.md) | [Architecture and execution flow](ARCHITECTURE.md) |
+| [Claude Mods reference](docs/claude-mods.md) | Required integration boundary for Claude Code UI and extensibility |
 | [OpenCode Zen](docs/zen.md) · [Antigravity](docs/antigravity.md) · [Grok](docs/grok.md) | [Platform support and verification](docs/platform-support.md) |
 
 <details>
 <summary>Does this change my normal Claude setup?</summary>
 
-No. Launch Multi with `claude-multi`; plain `claude` stays unchanged. Provider plugins are opt-in, and each provider uses its own authentication. `multi uninstall` removes the shell integration while preserving provider logins.
+With the default `claude-multi` command, plain `claude` stays unchanged. Choosing `--command claude` explicitly shadows it. Provider plugins are opt-in, and each provider uses its own authentication. `multi uninstall` removes the shell integration while preserving provider logins.
 
 </details>
 

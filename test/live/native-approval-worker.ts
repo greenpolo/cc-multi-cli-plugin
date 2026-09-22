@@ -61,7 +61,7 @@ const child = spawn(
     '-p',
     prompt,
     '--model',
-    'multi/openai/gpt-5.6-luna',
+    'multi/openai/gpt-6-luna',
     '--permission-mode',
     mode,
     '--settings',

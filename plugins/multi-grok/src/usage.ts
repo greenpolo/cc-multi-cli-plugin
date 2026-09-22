@@ -30,7 +30,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Reads the expiry only; the credential itself stays with the CLI. */
+/** Loads native auth to report key/refresh-token presence and access-token expiry only. */
 export async function readGrokAuth(options: GrokAuthOptions = {}): Promise<GrokAuthStatus> {
   let source: string;
   try {

@@ -5,43 +5,43 @@
   },
   "metadata": {
     "description": "Choose the model providers to use inside Claude Code.",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "plugins": [
     {
       "name": "multi-core",
       "source": "./",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Shared Multi gateway, setup, status and reversible Claude startup integration."
     },
     {
       "name": "multi-openai",
       "source": "./plugins/multi-openai",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "ChatGPT models through Codex login"
     },
     {
       "name": "multi-cursor",
       "source": "./plugins/multi-cursor",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Official Cursor SDK coding harness"
     },
     {
       "name": "multi-zen",
       "source": "./plugins/multi-zen",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "OpenCode Zen direct API models"
     },
     {
       "name": "multi-antigravity",
       "source": "./plugins/multi-antigravity",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Official Antigravity CLI harness"
     },
     {
       "name": "multi-grok",
       "source": "./plugins/multi-grok",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Official Grok Build CLI harness"
     }
   ]

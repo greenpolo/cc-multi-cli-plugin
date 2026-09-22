@@ -116,6 +116,11 @@ test('host-only snapshots cannot authorize harness workers until policy admissio
     model: 'multi/cursor/auto',
   });
   assert.throws(() => modes.resolveHarness('s'), /settings policy has not been admitted/);
+  assert.throws(() => modes.resolveHarness('s'), /Workflow.*Agent tool/);
+  assert.throws(
+    () => modes.resolveHarness('s', 'unacknowledged-worker', 'multi/cursor/auto'),
+    /no acknowledged spawn.*Workflow.*Agent tool/,
+  );
   assert.throws(() => modes.authorizeModCompaction('s'), /settings policy has not been admitted/);
   await assert.rejects(
     modes.prepareModWorker('s', {

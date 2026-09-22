@@ -1,6 +1,6 @@
 {
   "name": "cc-multi-cli-plugin",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin providing a native model gateway that runs external models inside one Claude Code session.",
@@ -14,6 +14,7 @@
     "test:live:compaction": "node test/live/native-compaction.ts",
     "test:live:zen": "node test/live/native-zen.ts",
     "test:live:cursor": "node test/live/native-cursor-harness.ts",
+    "test:live:openai-instructions": "node test/live/native-openai-instructions.ts",
     "test:live:auto-mode": "node test/live/native-auto-mode.ts",
     "test:live:provider-approval": "node test/live/native-provider-approval.ts",
     "test:live:reviewer": "node test/live/native-reviewer.ts",

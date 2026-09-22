@@ -4,7 +4,7 @@ import { toResponses } from '../../plugins/multi-openai/src/responses.ts';
 import { toChat } from '../../plugins/multi-zen/src/chat.ts';
 
 const body = {
-  model: 'multi/openai/gpt-5.6-luna',
+  model: 'multi/openai/gpt-6-luna',
   messages: [
     {
       role: 'user',

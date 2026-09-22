@@ -63,7 +63,7 @@ for (const [user, command, expected] of [
     ],
   };
   const result = await bridge.respond(request, AbortSignal.timeout(65000), {
-    model: 'multi/openai/gpt-5.6-luna',
+    model: 'multi/openai/gpt-6-luna',
     scope: 'reviewer-live',
     request: { messages: [{ role: 'user', content: user }] },
   });

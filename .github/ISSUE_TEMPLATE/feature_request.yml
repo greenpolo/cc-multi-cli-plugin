@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Use this template for a provider integration, model/worker choice, permission mapping, or session improvement.
-        Current integrations are OpenAI, Cursor, OpenCode Zen, and Antigravity.
+        Current integrations are OpenAI, Cursor, OpenCode Zen, Antigravity, and Grok Build.
         Describe the execution route you need: Claude-executed tools or the provider's native harness.
 
   - type: textarea

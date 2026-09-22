@@ -31,6 +31,26 @@ const GPT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const satisfies
 // Zen's /models endpoint exposes IDs only, so capabilities stay explicit and conservative.
 export const ZEN_MODELS: readonly ZenModel[] = Object.freeze([
   {
+    id: 'gpt-6-luna',
+    protocol: 'responses',
+    label: 'GPT-6 Luna',
+    description: 'OpenCode Zen · GPT Responses',
+    efforts: GPT_EFFORTS,
+    images: true,
+    documents: true,
+    maxOutputTokens: 128000,
+  },
+  {
+    id: 'gpt-6-sol',
+    protocol: 'responses',
+    label: 'GPT-6 Sol',
+    description: 'OpenCode Zen · GPT Responses',
+    efforts: GPT_EFFORTS,
+    images: true,
+    documents: true,
+    maxOutputTokens: 128000,
+  },
+  {
     id: 'gpt-5.6-luna',
     protocol: 'responses',
     label: 'GPT-5.6 Luna',

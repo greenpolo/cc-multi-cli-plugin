@@ -8,7 +8,10 @@ import type {
   AntigravityRunOptions,
   AntigravityRunResult,
 } from '../../plugins/multi-antigravity/src/cli.ts';
-import { AntigravityHarness } from '../../plugins/multi-antigravity/src/harness.ts';
+import {
+  AntigravityHarness,
+  AntigravityProviderError,
+} from '../../plugins/multi-antigravity/src/harness.ts';
 import {
   checkAntigravityHooks,
   installAntigravityHook,
@@ -297,6 +300,7 @@ test('an init event durably saves the conversation id and interrupted state befo
     undefined,
     context,
   );
+  void pending.catch(() => {});
   // The durability write is fire-and-forget; wait for it to land instead of
   // assuming a fixed delay covers a loaded machine.
   let sessionFile: string | undefined;
@@ -793,4 +797,131 @@ test('an unrelated active PreToolUse hook does not block native admission', asyn
   );
   await installAntigravityHook(globalFile);
   await assert.doesNotReject(checkAntigravityHooks({ globalFile, settingsFile }));
+});
+
+test('a prompt sent during a run is refused instead of resuming stale history', async (t) => {
+  const stateDirectory = await mkdtemp(path.join(os.tmpdir(), 'agy-busy-'));
+  t.after(() => removeTemporary(stateDirectory));
+  const calls: AntigravityRunOptions[] = [];
+  const release = Promise.withResolvers<void>();
+  const harness = new AntigravityHarness([model], {
+    stateDirectory,
+    checkPermissions: policy,
+    run: async (options: AntigravityRunOptions): Promise<AntigravityRunResult> => {
+      calls.push(options);
+      options.onEvent?.({ event: 'init', conversation_id: 'busy-conversation', init: {} });
+      if (calls.length === 1) {
+        await release.promise;
+      }
+      return {
+        result: {
+          conversation_id: 'busy-conversation',
+          status: 'SUCCESS' as const,
+          response: 'done',
+        },
+        exitCode: 0,
+        signal: null,
+        stderr: '',
+      };
+    },
+  });
+  t.after(async () => {
+    release.resolve();
+    await harness.close();
+  });
+
+  const first = harness.handle(
+    { model: model.model, messages: [{ role: 'user', content: 'long running' }] },
+    'busy-worker',
+    new AbortController().signal,
+    undefined,
+    context,
+  );
+  await until(() => calls.length === 1, 'the first native run to start');
+
+  // This prompt was written before the answer existed, so its history stops at the
+  // running turn; resuming with it would send that turn to agy a second time.
+  await assert.rejects(
+    harness.handle(
+      {
+        model: model.model,
+        messages: [
+          { role: 'user', content: 'long running' },
+          { role: 'user', content: 'typed while busy' },
+        ],
+      },
+      'busy-worker',
+      new AbortController().signal,
+      undefined,
+      context,
+    ),
+    (error: unknown) => {
+      assert.equal(error instanceof AntigravityProviderError, true);
+      assert.match((error as AntigravityProviderError).message, /already running/);
+      // Deterministic while the run lasts: a retryable status turned one conflict
+      // into ten attempts in a live session.
+      assert.equal((error as AntigravityProviderError).failure.status, 400);
+      return true;
+    },
+  );
+  assert.equal(calls.length, 1, 'the refused prompt must not start a native run');
+
+  release.resolve();
+  const answer = await first;
+
+  // The run in flight is untouched, and the next prompt resumes the conversation it opened.
+  await harness.handle(
+    {
+      model: model.model,
+      messages: [
+        { role: 'user', content: 'long running' },
+        { role: 'assistant', content: answer.content },
+        { role: 'user', content: 'after the refusal' },
+      ],
+    },
+    'busy-worker',
+    new AbortController().signal,
+    undefined,
+    context,
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].conversation, 'busy-conversation');
+});
+
+test('a first-load race is refused with 400, not a retryable gateway failure', async (t) => {
+  const { stateDirectory, calls, run } = await setup();
+  t.after(() => removeTemporary(stateDirectory));
+  const harness = new AntigravityHarness([model], {
+    stateDirectory,
+    checkPermissions: policy,
+    run,
+  });
+  t.after(() => harness.close());
+  // Two distinct requests on the same agent, started before either has cached a
+  // record: the second reaches `loadOnly` while the first still holds the load.
+  const requests = [
+    harness.handle(
+      { model: model.model, messages: [{ role: 'user', content: 'first' }] },
+      'race-worker',
+      new AbortController().signal,
+      undefined,
+      context,
+    ),
+    harness.handle(
+      { model: model.model, messages: [{ role: 'user', content: 'second' }] },
+      'race-worker',
+      new AbortController().signal,
+      undefined,
+      context,
+    ),
+  ];
+  const settled = await Promise.allSettled(requests);
+  const refused = settled.filter((outcome) => outcome.status === 'rejected');
+  assert.equal(refused.length, 1, `expected exactly one refusal, got ${JSON.stringify(settled)}`);
+  const error = refused[0].reason;
+  assert(error instanceof AntigravityProviderError);
+  // A bare HarnessBusyError escapes as a retryable 502, which Claude re-sends.
+  assert.equal(error.failure.status, 400);
+  assert.match(error.message, /already (running|loading)/);
+  assert.equal(calls.length, 1, 'the refused request must not start a native run');
 });

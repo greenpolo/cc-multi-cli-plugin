@@ -120,7 +120,7 @@ export function cursorPickerOptions(
       );
     }
   }
-  return [...new Set(['default', 'grok-4.6', 'composer-2.5', ...extras])].flatMap((id) =>
+  return [...new Set(['default', 'grok-4.7', 'composer-2.5', ...extras])].flatMap((id) =>
     options.filter((option) => option.model === `multi/cursor/${encodeURIComponent(id)}`),
   );
 }

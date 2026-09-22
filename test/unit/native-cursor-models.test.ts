@@ -105,6 +105,7 @@ test('Cursor picker defaults to Auto, Grok and Composer, excluding other provide
     'claude-fable-5-1',
     'default',
     'gpt-5.6-sol',
+    'grok-4.7',
     'grok-4.6',
     'composer-2.5',
   ];
@@ -129,7 +130,7 @@ test('Cursor picker defaults to Auto, Grok and Composer, excluding other provide
   const picker = cursorPickerOptions(catalog);
   assert.deepEqual(
     picker.map((o) => o.selection.id),
-    ['default', 'grok-4.6', 'composer-2.5'],
+    ['default', 'grok-4.7', 'composer-2.5'],
   );
   assert.equal(picker[0].label, 'Auto via Cursor');
   assert.deepEqual(picker[0].selection, { id: 'default' });
@@ -192,17 +193,17 @@ test('Cursor extras expose only a base effort row while preserving parameters an
 
 test('extra Cursor picker models are opt-in, deduplicated and checked against the account catalog', () => {
   const catalog = cursorModelOptions(
-    ['default', 'grok-4.6', 'composer-2.5', 'gemini-3.8-flash', 'gpt-5.6-sol'].map((id) => ({
+    ['default', 'grok-4.7', 'composer-2.5', 'gemini-3.8-flash', 'gpt-5.6-sol'].map((id) => ({
       id,
       displayName: id,
     })),
   );
   const before = structuredClone(catalog);
   assert.deepEqual(
-    cursorPickerOptions(catalog, ' gemini-3.8-flash, gpt-5.6-sol,gemini-3.8-flash,grok-4.6, ').map(
+    cursorPickerOptions(catalog, ' gemini-3.8-flash, gpt-5.6-sol,gemini-3.8-flash,grok-4.7, ').map(
       (o) => o.selection.id,
     ),
-    ['default', 'grok-4.6', 'composer-2.5', 'gemini-3.8-flash', 'gpt-5.6-sol'],
+    ['default', 'grok-4.7', 'composer-2.5', 'gemini-3.8-flash', 'gpt-5.6-sol'],
   );
   assert.deepEqual(cursorPickerOptions(catalog, ' , '), cursorPickerOptions(catalog));
   assert.throws(

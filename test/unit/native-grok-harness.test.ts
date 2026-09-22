@@ -157,6 +157,46 @@ test('resumes the recorded session and forwards only the newest turn', async (t)
   assert.equal(text(second).includes('Claude Code rules take precedence'), false);
 });
 
+test('a continuation error releases the session instead of leaving it busy', async (t) => {
+  const { stateDirectory, calls } = await setup(t);
+  const harness = new GrokHarness([model], {
+    stateDirectory,
+    checkPermissions: policy,
+    run: async (options) => {
+      calls.push(options);
+      options.onEvent?.({ event: 'text', text: 'answered' });
+      return echoSession(options);
+    },
+  });
+  t.after(() => harness.close());
+
+  const first: MessagesResponse = await ask(harness, 'first question');
+
+  // No message follows the last assistant turn, so `continuation` throws before any
+  // native run starts. That must still release the record: a busy flag left set by
+  // the throw would refuse every later request on this agent forever.
+  await assert.rejects(
+    harness.handle(
+      {
+        model: model.model,
+        messages: [
+          { role: 'user', content: 'first question' },
+          { role: 'assistant', content: first.content },
+        ],
+      },
+      'worker',
+      new AbortController().signal,
+      undefined,
+      context,
+    ),
+    /continuation requires a message/,
+  );
+  assert.equal(calls.length, 1, 'the rejected continuation must not start a native run');
+
+  await ask(harness, 'still works');
+  assert.equal(calls.length, 2, 'the session was released, so a later request runs normally');
+});
+
 test('displays native tool activity as text instead of replaying it', async (t) => {
   const { stateDirectory } = await setup(t);
   const harness = new GrokHarness([model], {

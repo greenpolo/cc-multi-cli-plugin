@@ -18,9 +18,9 @@ Use `/model multi/openai/<model-id>` or choose a row in `/model`. Use `/effort <
 | Picker row | Model | Named worker |
 | --- | --- | --- |
 | OpenAI · `gpt-6-astra` | `gpt-6-astra` | `openai-native` |
-| OpenAI · `gpt-5.6-sol` | `gpt-5.6-sol` | `openai-sol` |
+| OpenAI · `gpt-6-sol` | `gpt-6-sol` | `openai-sol` |
 | OpenAI · `gpt-5.6-terra` | `gpt-5.6-terra` | `openai-terra` |
-| OpenAI · `gpt-5.6-luna` | `gpt-5.6-luna` | `openai-luna` |
+| OpenAI · `gpt-6-luna` | `gpt-6-luna` | `openai-luna` |
 
 Each worker has `-low`, `-medium`, `-high`, `-xhigh`, and `-max` variants. An unsuffixed worker uses medium effort. For example, `openai-luna-high` sends `high` as OpenAI reasoning effort.
 
@@ -32,7 +32,17 @@ Ask Claude to use a named worker, such as `openai-luna-high`. Workers appear as 
 
 ## Instruction profile
 
-OpenAI requests append `plugins/multi-openai/src/instructions.md` to Claude's runtime instructions. The profile adapts Codex guidance to Claude Code tool names, terminal formatting, skill discovery, direct work, explicit Plan requests, and authorized delegation. Claude's existing policy blocks stay intact. The profile applies to the OpenAI inference and token-counting route.
+OpenAI requests append a short Claude Code compatibility note from
+`plugins/multi-openai/src/instructions.md`. It identifies the host's tools,
+permission and compaction boundaries without adding personal preferences or
+planning, delegation, or writing-style defaults. Claude's existing instructions
+stay intact. The note applies to OpenAI inference and token counting, not other
+providers or the independent reviewer.
+
+`npm run test:live:openai-instructions` checks explicit planning requests,
+active Plan-mode edit restrictions, and requested delegation. It requires Codex
+login and makes at most three paid requests; returned tool calls are inspected,
+not executed. It is opt-in and is not part of the offline checks.
 
 ## Prompt caching and continuation
 

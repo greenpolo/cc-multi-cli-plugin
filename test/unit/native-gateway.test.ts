@@ -591,7 +591,7 @@ test('OpenAI cache keys survive history changes and restart, isolating sessions,
     await call({ ...body, metadata: { user_id: JSON.stringify({ session_id: 'session-b' }) } })
   ).text();
   await (await call(payload, { 'x-claude-code-agent-id': 'worker-a' })).text();
-  await (await call({ ...payload, model: 'multi/openai/gpt-5.6-luna' })).text();
+  await (await call({ ...payload, model: 'multi/openai/gpt-6-luna' })).text();
   await (await call(body)).text();
   await (await call(body)).text();
   await (await restarted(body)).text();
@@ -603,14 +603,15 @@ test('OpenAI cache keys survive history changes and restart, isolating sessions,
 });
 
 test('OpenAI main and worker requests adapt instructions without losing runtime policy or changing translation', async (t) => {
-  const runtime = 'Runtime policy: Plan is read-only. Never edit secrets. Custom worker scope.';
+  const runtime =
+    'Runtime policy: Plan is read-only. Never edit secrets. Custom worker scope. Use agents when appropriate; use headings for reports.';
   const payload = { ...body, system: runtime };
   const seen: ResponsesRequest[] = [];
   const call = await gateway(t, async (_url, options) => {
     seen.push(JSON.parse(String(options.body)));
     return new Response(sse(textEvents));
   });
-  for (const name of ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+  for (const name of ['gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
     await (await call({ ...payload, model: `multi/openai/${name}` })).text();
   }
   await (await call(payload, { 'x-claude-code-agent-id': 'worker-a' })).text();
@@ -618,10 +619,9 @@ test('OpenAI main and worker requests adapt instructions without losing runtime 
   for (const request of seen) {
     assert.equal(request.instructions, openaiInstructions(runtime));
     assert(request.instructions.startsWith(runtime));
-    assert.match(request.instructions, /Do not call EnterPlanMode unless the user explicitly asks/);
-    assert.match(
+    assert.doesNotMatch(
       request.instructions,
-      /Use Agent only when the user or applicable project\/worker instructions explicitly authorize/,
+      /Do not call EnterPlanMode unless|Use Agent only when|The user gets very frustrated|Avoid section headings|Do not write tests for reversible/,
     );
     const translated = toResponses(payload, request.model);
     assert.deepEqual(request.input, translated.input);
@@ -717,7 +717,7 @@ test('external route isolates provider credentials and handles simultaneous work
     models.push(request.model);
     return new Response(sse(textEvents), { headers: { 'content-type': 'text/event-stream' } });
   });
-  const slugs = ['gpt-6-astra', 'gpt-5.6-luna'];
+  const slugs = ['gpt-6-astra', 'gpt-6-luna'];
   const responses = await Promise.all(
     slugs.map((slug, i) =>
       call(
@@ -740,7 +740,7 @@ test('browser, unauthenticated and unregistered external requests never reach a 
   const call = await gateway(t, () => assert.fail('Unexpected provider request'));
   assert.equal((await call(body, { origin: 'https://example.com' })).status, 403);
   assert.equal((await call(body, { 'x-multi-gateway-token': 'wrong' })).status, 403);
-  for (const unknownModel of ['multi/openai/unknown', 'multi/cursor/gpt-5.6-luna']) {
+  for (const unknownModel of ['multi/openai/unknown', 'multi/cursor/gpt-6-luna']) {
     assert.equal(
       (await call({ ...body, model: unknownModel }, { 'x-claude-code-agent-id': 'a' })).status,
       400,
@@ -778,9 +778,9 @@ test('all registered model and reasoning choices reach OpenAI without substituti
   });
   for (const [name, slug] of [
     ['openai-native', 'gpt-6-astra'],
-    ['openai-sol', 'gpt-5.6-sol'],
+    ['openai-sol', 'gpt-6-sol'],
     ['openai-terra', 'gpt-5.6-terra'],
-    ['openai-luna', 'gpt-5.6-luna'],
+    ['openai-luna', 'gpt-6-luna'],
   ]) {
     assert.deepEqual(OPENAI_WORKERS[name], { model: slug, effort: 'medium' });
     for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {

@@ -1,4 +1,5 @@
 import type { RunResult } from '@cursor/sdk';
+import { HarnessBusyError } from '../../multi-core/src/gateway/harness-session.ts';
 
 interface CursorFailure {
   status: number;
@@ -75,6 +76,11 @@ export function sanitizeCursorErrorMessage(value: unknown): string {
 }
 
 export function cursorFailure(error: unknown): CursorFailure {
+  if (error instanceof HarnessBusyError) {
+    // Deterministic, not retryable: the prompt was composed before the running
+    // turn answered, so a retry would forward that turn's stale history again.
+    return { status: 400, message: sanitizeCursorErrorMessage(error.message) };
+  }
   const fields =
     error !== null && typeof error === 'object' ? (error as Record<string, unknown>) : {};
   const code = stringField(fields, 'code');

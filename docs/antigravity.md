@@ -87,6 +87,14 @@ ID but no terminal result, the next request streams an interruption notice befor
 continuing. Non-success terminal results are reported as errors and are retried
 by a later identical request.
 
+One turn runs at a time per worker and workspace. An identical in-flight request
+observes the existing exchange. A different request for that busy identity is
+refused with a deterministic error rather than queued behind it:
+resuming a prompt whose history stops at the previous assistant message would
+forward the running turn to the CLI a second time. Multi never reruns a paid
+turn on a guess; send the prompt again once the answer lands. Cursor and Grok
+refuse the same way.
+
 ## Config and hook paths per OS
 
 | OS | Global hook file | Settings file |

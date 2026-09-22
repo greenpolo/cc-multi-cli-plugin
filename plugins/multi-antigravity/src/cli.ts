@@ -1,10 +1,11 @@
-import { type ChildProcess, spawn } from 'node:child_process';
-import { StringDecoder } from 'node:string_decoder';
+import type { ChildProcess, spawn } from 'node:child_process';
 import {
-  executableInvocation,
-  resolveExecutable,
-} from '../../multi-core/src/gateway/executable.ts';
-import { terminateProcessTree } from '../../multi-core/src/gateway/process-tree.ts';
+  NativeCliError,
+  nativeEnvironment,
+  promptArgumentLimitBytes,
+  runNativeCli,
+} from '../../multi-core/src/gateway/harness-process.ts';
+import { isRecord } from '../../multi-core/src/gateway/harness-session.ts';
 
 type AntigravityStatus =
   | 'SUCCESS'
@@ -88,42 +89,66 @@ export interface AntigravityRunResult {
   stderr: string;
 }
 
-export class AntigravityCliError extends Error {
-  readonly code: 'spawn' | 'output_limit' | 'parse' | 'no_terminal_result' | 'aborted';
-  readonly exitCode: number | null;
-  readonly signal: NodeJS.Signals | null;
-  readonly stderr: string;
+/** agy's own failure codes; the shared runner reports the first three. */
+export type AntigravityCliCode =
+  | 'spawn'
+  | 'output_limit'
+  | 'parse'
+  | 'no_terminal_result'
+  | 'aborted';
 
+const CLI_CODES: readonly string[] = [
+  'spawn',
+  'output_limit',
+  'parse',
+  'no_terminal_result',
+  'aborted',
+];
+
+/** agy's own failures, so a caller can tell them from another provider's. */
+export class AntigravityCliError extends NativeCliError {
   constructor(
     message: string,
-    code: AntigravityCliError['code'],
-    details: { exitCode?: number | null; signal?: NodeJS.Signals | null; stderr?: string } = {},
+    code: AntigravityCliCode,
+    details: {
+      exitCode?: number | null;
+      signal?: NodeJS.Signals | null;
+      stderr?: string;
+      systemCode?: string;
+    } = {},
   ) {
-    super(message);
+    super(message, code, details);
     this.name = 'AntigravityCliError';
-    this.code = code;
-    this.exitCode = details.exitCode ?? null;
-    this.signal = details.signal ?? null;
-    this.stderr = details.stderr ?? '';
   }
 }
 
-const defaultMaxOutputBytes = 8 * 1024 * 1024;
-// cmd.exe caps a command line at 8,191 characters when a .cmd shim cannot be
-// bypassed; the fixed flags, executable path, cwd and quoting need the rest.
-const windowsPromptArgumentLimitBytes = 6 * 1024;
-const posixPromptArgumentLimitBytes = 128 * 1024;
-const interruptGraceMs = 1500;
-const terminateGraceMs = 1500;
-const cancellationWaitMs = interruptGraceMs + terminateGraceMs + 1000;
-
-function promptArgumentLimitBytes(platform: NodeJS.Platform): number {
-  return platform === 'win32' ? windowsPromptArgumentLimitBytes : posixPromptArgumentLimitBytes;
+/** A shared-runner failure keeps its own code; anything unknown reads as a parse fault. */
+function cliCode(code: string): AntigravityCliCode {
+  return CLI_CODES.includes(code) ? (code as AntigravityCliCode) : 'parse';
 }
 
-export function runAntigravity(options: AntigravityRunOptions): Promise<AntigravityRunResult> {
-  const platform = options.platform ?? process.platform;
-  const promptOnStdin = Buffer.byteLength(options.prompt) >= promptArgumentLimitBytes(platform);
+/**
+ * `runNativeCli` raises its own generic spawn failures as a bare `NativeCliError`
+ * before any agy parser state exists — a synchronous spawn throw never reaches
+ * `finishValue`. Those are rewrapped so every failure this module reports is an
+ * `AntigravityCliError`.
+ */
+function toAntigravityCliError(error: unknown): AntigravityCliError {
+  if (error instanceof AntigravityCliError) {
+    return error;
+  }
+  if (error instanceof NativeCliError) {
+    return new AntigravityCliError(error.message, cliCode(error.code), {
+      exitCode: error.exitCode,
+      signal: error.signal,
+      stderr: error.stderr,
+      systemCode: error.systemCode,
+    });
+  }
+  throw error;
+}
+
+function antigravityArguments(options: AntigravityRunOptions, promptOnStdin: boolean): string[] {
   const args = promptOnStdin
     ? ['--input-format', 'stream-json', '--output-format', 'stream-json']
     : ['-p', options.prompt, '--output-format', 'stream-json'];
@@ -154,177 +179,42 @@ export function runAntigravity(options: AntigravityRunOptions): Promise<Antigrav
   // nobody using this gateway maintains native config. Claude's rules and the
   // gateway's own pre-tool hook are the only enforcement that matters.
   args.push('--dangerously-skip-permissions');
+  return args;
+}
 
-  return new Promise((resolve, reject) => {
-    let child: ChildProcess;
-    const environment = antigravityEnvironment(options.env);
-    try {
-      const invocation = executableInvocation(
-        resolveExecutable('agy', {
-          platform,
-          env: environment,
-          configuredPath: options.executable,
-        }),
-        args,
-        platform,
-        environment,
-      );
-      child = (options.spawn ?? spawn)(invocation.command, invocation.args, {
-        cwd: options.cwd,
-        env: environment,
-        detached: platform !== 'win32',
-        shell: false,
-        stdio: [promptOnStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-        ...invocation.options,
-      });
-    } catch (error) {
-      reject(new AntigravityCliError(`Failed to start agy: ${String(error)}`, 'spawn'));
-      return;
-    }
+export async function runAntigravity(
+  options: AntigravityRunOptions,
+): Promise<AntigravityRunResult> {
+  try {
+    return await spawnAntigravity(options);
+  } catch (error) {
+    throw toAntigravityCliError(error);
+  }
+}
 
-    const maxOutputBytes = options.maxOutputBytes ?? defaultMaxOutputBytes;
-    const stdoutDecoder = new StringDecoder('utf8');
-    let stdoutBuffer = '';
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let stderr = '';
-    const parser: ParserState = { initSeen: false };
-    let aborted = false;
-    let interruptTimer: NodeJS.Timeout | undefined;
-    let terminateTimer: NodeJS.Timeout | undefined;
-    let cancellationTimer: NodeJS.Timeout | undefined;
-    let settled = false;
-
-    const kill = (signal: NodeJS.Signals) => {
-      if (child.pid) {
-        terminateProcessTree(child.pid, { platform, signal });
-      }
-    };
-    const stop = () => {
-      kill('SIGINT');
-      interruptTimer = setTimeout(() => {
-        kill('SIGTERM');
-        terminateTimer = setTimeout(() => kill('SIGKILL'), terminateGraceMs);
-      }, interruptGraceMs);
-    };
-    const clearTimers = () => {
-      clearTimeout(interruptTimer);
-      clearTimeout(terminateTimer);
-      clearTimeout(cancellationTimer);
-    };
-    const closePipes = () => {
-      child.stdin?.destroy();
-      child.stdout?.destroy();
-      child.stderr?.destroy();
-    };
-    const fail = (error: AntigravityCliError) => {
-      if (!parser.failure) {
-        parser.failure = error;
-        stop();
-      }
-    };
-    const emit = (event: AntigravityStreamEvent) => {
-      try {
-        options.onEvent?.(event);
-      } catch (error) {
-        fail(
-          new AntigravityCliError(`Antigravity event handler failed: ${String(error)}`, 'parse'),
-        );
-      }
-    };
-    const consumeStdout = (chunk: Buffer) => {
-      if (parser.failure) {
-        return;
-      }
-      stdoutBytes += chunk.byteLength;
-      if (stdoutBytes > maxOutputBytes) {
-        fail(
-          new AntigravityCliError('Antigravity stdout exceeded its safety limit', 'output_limit'),
-        );
-        return;
-      }
-      stdoutBuffer += stdoutDecoder.write(chunk);
-      let newline = stdoutBuffer.indexOf('\n');
-      while (newline >= 0) {
-        const line = stdoutBuffer.slice(0, newline).replace(/\r$/, '');
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        parseLine(line, parser, emit, fail);
-        newline = stdoutBuffer.indexOf('\n');
-      }
-      if (stdoutBuffer.length > maxOutputBytes) {
-        fail(
-          new AntigravityCliError(
-            'Antigravity stdout line exceeded its safety limit',
-            'output_limit',
-          ),
-        );
-      }
-    };
-    const consumeStderr = (chunk: Buffer) => {
-      if (parser.failure) {
-        return;
-      }
-      stderrBytes += chunk.byteLength;
-      if (stderrBytes > maxOutputBytes) {
-        fail(
-          new AntigravityCliError('Antigravity stderr exceeded its safety limit', 'output_limit'),
-        );
-        return;
-      }
-      stderr += chunk.toString('utf8');
-    };
-    const onAbort = () => {
-      if (!aborted) {
-        aborted = true;
-        closePipes();
-        stop();
-        cancellationTimer = setTimeout(() => {
-          finish(null, null);
-        }, cancellationWaitMs);
-      }
-    };
-    const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      options.signal.removeEventListener('abort', onAbort);
-      stdoutBuffer += stdoutDecoder.end();
-      if (stdoutBuffer && !parser.failure) {
-        parseLine(stdoutBuffer, parser, emit, fail);
-      }
-      clearTimers();
-      if (aborted || parser.failure || !parser.terminal) {
-        kill('SIGKILL');
-      }
-      const safeStderr = redactStderr(stderr);
-      const final = finishValue(parser, aborted, exitCode, signal, safeStderr);
-      if (final instanceof AntigravityCliError) {
-        reject(final);
-        return;
-      }
-      resolve({ result: final, exitCode, signal, stderr: safeStderr });
-    };
-
-    child.stdout?.on('data', consumeStdout);
-    child.stderr?.on('data', consumeStderr);
-    child.once('error', (error) => {
-      fail(new AntigravityCliError(`agy failed to start: ${error.message}`, 'spawn'));
-    });
-    child.stdin?.on('error', (error) => {
-      fail(new AntigravityCliError(`agy stdin failed: ${error.message}`, 'spawn'));
-    });
-    child.once('close', finish);
-    options.signal.addEventListener('abort', onAbort, { once: true });
-    if (options.signal.aborted) {
-      onAbort();
-    }
-    if (promptOnStdin && !parser.failure) {
-      child.stdin?.end(
-        `${JSON.stringify({ event: 'user', message: { content: options.prompt } })}\n`,
-      );
-    }
+function spawnAntigravity(options: AntigravityRunOptions): Promise<AntigravityRunResult> {
+  const platform = options.platform ?? process.platform;
+  const promptOnStdin = Buffer.byteLength(options.prompt) >= promptArgumentLimitBytes(platform);
+  const environment = antigravityEnvironment(options.env);
+  return runNativeCli<ParserState, AntigravityResult, AntigravityStreamEvent>({
+    name: 'Antigravity',
+    executable: 'agy',
+    configuredPath: options.executable,
+    args: antigravityArguments(options, promptOnStdin),
+    cwd: options.cwd,
+    platform,
+    env: environment,
+    signal: options.signal,
+    spawn: options.spawn,
+    maxOutputBytes: options.maxOutputBytes,
+    // The oversized prompt travels as one stream-json user event on stdin.
+    stdin: promptOnStdin
+      ? `${JSON.stringify({ event: 'user', message: { content: options.prompt } })}\n`
+      : undefined,
+    parser: { initSeen: false },
+    parseLine,
+    onEvent: options.onEvent,
+    finish: finishValue,
   });
 }
 
@@ -332,7 +222,7 @@ type ParserState = {
   conversationId?: string;
   initSeen: boolean;
   terminal?: AntigravityResult;
-  failure?: AntigravityCliError;
+  failure?: NativeCliError;
 };
 
 function finishValue(
@@ -341,9 +231,9 @@ function finishValue(
   exitCode: number | null,
   signal: NodeJS.Signals | null,
   stderr: string,
-): AntigravityResult | AntigravityCliError {
+): AntigravityResult | NativeCliError {
   if (parser.failure) {
-    return new AntigravityCliError(parser.failure.message, parser.failure.code, {
+    return new AntigravityCliError(parser.failure.message, cliCode(parser.failure.code), {
       exitCode,
       signal,
       stderr,
@@ -372,7 +262,7 @@ function parseLine(
   line: string,
   parser: ParserState,
   emit: (event: AntigravityStreamEvent) => void,
-  fail: (error: AntigravityCliError) => void,
+  fail: (error: NativeCliError) => void,
 ) {
   if (!line.trim()) {
     return;
@@ -401,7 +291,7 @@ function parseInit(
   value: Record<string, unknown>,
   parser: ParserState,
   emit: (event: AntigravityStreamEvent) => void,
-  fail: (error: AntigravityCliError) => void,
+  fail: (error: NativeCliError) => void,
 ) {
   const init = record(value.init);
   if (!init || typeof value.conversation_id !== 'string' || parser.initSeen || parser.terminal) {
@@ -417,7 +307,7 @@ function parseStep(
   value: Record<string, unknown>,
   parser: ParserState,
   emit: (event: AntigravityStreamEvent) => void,
-  fail: (error: AntigravityCliError) => void,
+  fail: (error: NativeCliError) => void,
 ) {
   const stepUpdate = record(value.step_update);
   if (!stepUpdate || !parser.initSeen || !matchesConversation(stepUpdate, parser.conversationId)) {
@@ -431,7 +321,7 @@ function parseTerminal(
   value: Record<string, unknown>,
   parser: ParserState,
   emit: (event: AntigravityStreamEvent) => void,
-  fail: (error: AntigravityCliError) => void,
+  fail: (error: NativeCliError) => void,
 ) {
   const result = parseResult(value.result);
   if (
@@ -452,35 +342,22 @@ function parseTerminal(
 }
 
 export function antigravityEnvironment(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const environment = { ...process.env, ...overrides };
-  for (const key of Object.keys(environment)) {
-    if (
-      key.startsWith('ANTHROPIC_') ||
-      key.startsWith('OPENAI_') ||
-      key.startsWith('CURSOR_') ||
-      key.startsWith('OPENCODE_') ||
-      key === 'GEMINI_API_KEY' ||
-      key === 'GOOGLE_GEMINI_BASE_URL' ||
-      key === 'MULTI_GATEWAY_TOKEN'
-    ) {
-      delete environment[key];
-    }
-  }
-  return environment;
+  return nativeEnvironment({
+    overrides,
+    drop: [
+      'ANTHROPIC_',
+      'OPENAI_',
+      'CURSOR_',
+      'OPENCODE_',
+      'GEMINI_API_KEY',
+      'GOOGLE_GEMINI_BASE_URL',
+      'MULTI_GATEWAY_TOKEN',
+    ],
+  });
 }
 
 function matchesConversation(value: Record<string, unknown>, conversationId: string | undefined) {
   return typeof value.conversation_id !== 'string' || value.conversation_id === conversationId;
-}
-
-function redactStderr(value: string): string {
-  return value
-    .replaceAll(/Bearer\s+\S+/gi, 'Bearer [redacted]')
-    .replaceAll(/([?&](?:api[_-]?key|token|password)=)[^&\s]+/gi, '$1[redacted]');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

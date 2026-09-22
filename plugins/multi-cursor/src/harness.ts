@@ -1,22 +1,50 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentOptions, AgentUsage, Run, SDKAgent, TokenUsage } from '@cursor/sdk';
 import type { WorkerPermissions } from '../../multi-core/src/gateway/agent-definitions.ts';
-import { atomicWriteFile } from '../../multi-core/src/gateway/atomic-write.ts';
+import {
+  archiveHarnessReply,
+  commitHarnessResponse,
+} from '../../multi-core/src/gateway/harness-completion.ts';
+import {
+  ExchangeRegistry,
+  type HarnessEvent,
+  type HarnessExchange,
+  replayPersisted,
+} from '../../multi-core/src/gateway/harness-exchange.ts';
+import {
+  continuation,
+  harnessHistoryHash,
+  historyRewound,
+  interruptedNotice,
+  terminalSuffix,
+  writeNotices,
+} from '../../multi-core/src/gateway/harness-notices.ts';
+import {
+  HarnessResponse,
+  type HarnessUsageFields,
+} from '../../multi-core/src/gateway/harness-response.ts';
+import {
+  type ContentBlockCheck,
+  HarnessBusyError,
+  type HarnessSession,
+  type HarnessSessionBase,
+  HarnessSessionStore,
+  type HarnessTurnLease,
+  isHash,
+  isRecord,
+  readJson,
+  textContentBlock,
+} from '../../multi-core/src/gateway/harness-session.ts';
 import type {
   Emit,
   MessagesRequest,
   MessagesResponse,
-  StreamEventBody,
-  StreamEventName,
 } from '../../multi-core/src/gateway/messages.ts';
-import type { ModDisplayEvent } from '../../multi-core/src/gateway/mod-bridge.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 import { settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
-import { lockStateFile } from '../../multi-core/src/gateway/state-lock.ts';
-import { estimateTextTokens } from '../../multi-core/src/gateway/tokens.ts';
 import { CursorProviderError, cursorRunError } from './errors.ts';
 import { type CursorModelOption, cursorSelection } from './models.ts';
 import {
@@ -26,7 +54,8 @@ import {
 } from './permissions.ts';
 import type { NativeRowObserver } from './progress.ts';
 import { cursorRowObservation, formatCursorProgress } from './progress.ts';
-import { cursorHistoryHash, cursorTerminalSuffix, prepareCursorRequest } from './request.ts';
+import { prepareCursorRequest } from './request.ts';
+import { legacyCursorSessionFile, restoreCursorSession } from './session-record.ts';
 
 type Agent = Pick<SDKAgent, 'agentId' | 'send' | 'close'> & Partial<Pick<SDKAgent, 'getUsage'>>;
 export type CreateCursorHarnessAgent = (options: AgentOptions) => Promise<Agent>;
@@ -37,52 +66,77 @@ type PendingRun = {
   effort?: string;
   inputTokens: number;
 };
-type SavedSession = {
-  version: 2;
-  agentId: string;
-  response?: MessagesResponse;
-  replay?: { key: string; events: Event[] };
-  interrupted: boolean;
+/**
+ * The persisted half. Version 3 carries the shared `provider`/`identity` header.
+ * Version 2 records are migrated while holding both generations' lock files.
+ */
+type SavedSession = HarnessSessionBase & {
+  version: 3;
+  agentId?: string;
   pendingRun?: PendingRun;
 };
-type Event = [StreamEventName, StreamEventBody];
-type Session = {
-  agent: Agent;
-  file: string;
-  response?: MessagesResponse;
-  replay?: { key: string; events: Event[] };
-  interrupted: boolean;
-  busy: boolean;
+/** SDK handles and reservations never enter the persisted session record. */
+type CursorRuntime = {
+  agent?: Agent;
   run?: Run;
-  unlock?: Promise<void>;
-  release: () => Promise<void>;
-  pendingRun?: PendingRun;
-  policy: string;
+  policy?: string;
 };
-type Exchange = {
-  result: Promise<MessagesResponse>;
-  controller: AbortController;
-  events: Event[];
-  listeners: Set<Emit>;
-  observers: number;
-  settled: boolean;
-  mayHaveRun: boolean;
-  committed: boolean;
-  rowObserver?: NativeRowObserver;
+type Session = HarnessSession<SavedSession, CursorRuntime>;
+type ReadySession = Session & { runtime: CursorRuntime & { agent: Agent } };
+type TurnLease = HarnessTurnLease<SavedSession, CursorRuntime>;
+
+function assertReady(session: Session): asserts session is ReadySession {
+  if (!session.runtime.agent) {
+    throw new Error('Cursor SDK agent is not attached');
+  }
+}
+/** Run facts the exchange carries for us; the registry never reads them. */
+type RunState = {
+  mayHaveRun?: boolean;
+  committed?: boolean;
+  succeeded?: boolean;
 };
+
 const hash = (value: unknown) =>
   createHash('sha256')
     .update(JSON.stringify(value) ?? 'null')
     .digest('hex');
+type CursorExchange = HarnessExchange<RunState>;
 
-const INTERRUPTED_NOTICE =
-  '[Cursor] The previous turn was interrupted. Report its state and do not repeat completed actions.';
+/**
+ * Cursor is the one harness whose reply is not text alone: a mod display row is
+ * persisted as a `tool_use` block, so a replay that rejected it would fail the
+ * turn forever. The block is display-only and is never executed as a tool.
+ */
+const cursorContentBlock: ContentBlockCheck = (block) =>
+  textContentBlock(block) ||
+  (block.type === 'tool_use' &&
+    typeof block.id === 'string' &&
+    typeof block.name === 'string' &&
+    isRecord(block.input));
+
 const billedUsageTimeoutMs = 5000;
+const maximumAgents = 32;
+const maximumExchanges = 256;
 
 function selectedEffort(selection: ReturnType<CursorHarness['selection']>) {
   return selection.params?.find(
     (parameter) => parameter.id === 'effort' || parameter.id === 'reasoning_effort',
   )?.value;
+}
+
+/** Cursor's own usage vocabulary, mapped once into the shared one. */
+function cursorUsage(usage: TokenUsage | undefined): HarnessUsageFields | undefined {
+  return usage
+    ? {
+        input: usage.inputTokens,
+        output: usage.outputTokens,
+        cacheRead: usage.cacheReadTokens,
+        cacheCreate: usage.cacheWriteTokens,
+        reasoning: usage.reasoningTokens,
+        total: usage.totalTokens,
+      }
+    : undefined;
 }
 
 async function boundedUsage(request: Promise<AgentUsage>) {
@@ -105,9 +159,11 @@ async function boundedUsage(request: Promise<AgentUsage>) {
 /** Cursor owns state, tools and review. External actions are display-only text. */
 export class CursorHarness {
   private readonly options: Map<string, CursorModelOption>;
-  private readonly sessions = new Map<string, Session>();
-  private readonly exchanges = new Map<string, Exchange>();
-  private readonly creating = new Set<string>();
+  private readonly store: HarnessSessionStore<SavedSession, CursorRuntime>;
+  private readonly registry = new ExchangeRegistry<RunState>({
+    provider: 'Cursor',
+    createMeta: () => ({}),
+  });
   private cwd: string;
   private readonly stateDirectory: string;
   private readonly platform: NodeJS.Platform;
@@ -117,6 +173,9 @@ export class CursorHarness {
   private readonly getRun: (id: string, cwd: string) => Promise<Run>;
   private closed = false;
   private readonly closedAgents = new WeakSet<Agent>();
+  private readonly attaching = new Set<Session>();
+  private readonly usageReaders = new Map<Agent, number>();
+  private temporarySlots = 0;
 
   constructor(
     options: CursorModelOption[],
@@ -159,6 +218,21 @@ export class CursorHarness {
     this.getRun = getRun;
     this.resumeAgent = resumeAgent;
     this.createAgent = createAgent;
+    this.store = new HarnessSessionStore<SavedSession, CursorRuntime>({
+      provider: 'Cursor',
+      stateDirectory: this.stateDirectory,
+      platform,
+      version: 3,
+      fresh: (identity) => ({ version: 3, provider: 'Cursor', identity, interrupted: false }),
+      validate: (saved) =>
+        typeof saved.agentId === 'string' &&
+        saved.agentId.length > 0 &&
+        validPendingRun(saved.pendingRun),
+      runtime: () => ({}),
+      aliasFiles: (identity) => [legacyCursorSessionFile(this.stateDirectory, identity)],
+      restore: restoreCursorSession,
+      validContentBlock: cursorContentBlock,
+    });
   }
 
   private selection(body: MessagesRequest) {
@@ -180,6 +254,15 @@ export class CursorHarness {
     return prepareCursorRequest(body).inputTokens;
   }
 
+  /**
+   * The native record key: one agent per working directory and worker scope. The
+   * array shape is load-bearing, because `sessionScope` reads the scope back out
+   * of it; the store hashes the whole key into the record's file name.
+   */
+  private identity(scope: string) {
+    return JSON.stringify([this.cwd, scope]);
+  }
+
   /** Fetch Cursor's billed usage on demand; this is not inferred from turn tokens. */
   async billedUsage(scope: string): Promise<
     Array<{
@@ -190,18 +273,41 @@ export class CursorHarness {
       runs: AgentUsage['runs'];
     }>
   > {
-    const active = this.sessions.get(scope);
-    let agent = active?.agent;
-    let temporary = false;
-    if (!agent) {
-      const saved = await readSession(this.sessionFile(scope));
-      if (!saved) {
-        return [];
-      }
-      agent = await this.resumeAgent(saved.agentId, {});
-      temporary = true;
+    if (this.closed) {
+      throw new Error('Cursor harness is closed');
     }
+    const identity = this.identity(scope);
+    const active = [...this.store.sessions()].find((session) => session.identity === identity);
+    let agent = active?.runtime.agent;
+    let temporary = false;
     try {
+      if (!agent || this.closedAgents.has(agent)) {
+        agent = undefined;
+        // A billing query never takes the record lock; it only needs the agent id.
+        const restored = await restoreCursorSession({
+          identity,
+          files: [
+            this.store.sessionFile(identity),
+            legacyCursorSessionFile(this.stateDirectory, identity),
+          ],
+          read: readJson,
+        });
+        const agentId = savedAgentId(restored.saved);
+        if (!agentId) {
+          return [];
+        }
+        const idle = this.reserveCapacity();
+        temporary = true;
+        this.temporarySlots++;
+        if (idle) {
+          await this.store.evictIdle(idle);
+        }
+        agent = await this.resumeAgent(agentId, {});
+        if (this.closed) {
+          throw new Error('Cursor harness is closed');
+        }
+      }
+      this.usageReaders.set(agent, (this.usageReaders.get(agent) ?? 0) + 1);
       if (!agent.getUsage) {
         return [];
       }
@@ -210,21 +316,36 @@ export class CursorHarness {
         { agentId: agent.agentId, scope, usage: usage.usage, cost: usage.cost, runs: usage.runs },
       ];
     } finally {
+      if (agent) {
+        this.releaseUsageReader(agent);
+      }
       if (temporary) {
         this.closeAgent(agent);
+        this.temporarySlots--;
       }
     }
   }
 
+  private releaseUsageReader(agent: Agent) {
+    const remaining = (this.usageReaders.get(agent) ?? 1) - 1;
+    if (remaining) {
+      this.usageReaders.set(agent, remaining);
+    } else {
+      this.usageReaders.delete(agent);
+    }
+  }
+
   async billedUsageForSession(sessionId: string) {
-    const scopes = [...this.sessions.keys()].filter((scope) => {
-      try {
-        const parsed: unknown = JSON.parse(scope);
-        return Array.isArray(parsed) && parsed[0] === sessionId;
-      } catch {
-        return false;
-      }
-    });
+    const scopes = [...this.store.sessions()]
+      .map((session) => sessionScope(session.identity))
+      .filter((scope): scope is string => {
+        try {
+          const parsed: unknown = JSON.parse(scope ?? '');
+          return Array.isArray(parsed) && parsed[0] === sessionId;
+        } catch {
+          return false;
+        }
+      });
     if (scopes.length > 64) {
       throw new Error('Cursor billing query exceeds 64 active agents');
     }
@@ -266,20 +387,15 @@ export class CursorHarness {
       { ...body, stream: undefined },
       cursorPermissionPolicy(permissions).identity,
     ]);
-    let exchange = this.exchanges.get(key);
+    let exchange = this.registry.get(key);
     if (!exchange) {
       // Keep failed/finished requests too: a transport retry must never repeat native edits.
-      if (this.exchanges.size >= 256) {
-        const completed = [...this.exchanges].find(([, item]) => item.settled);
-        if (!completed) {
-          throw new Error('Too many concurrent Cursor requests');
-        }
-        this.exchanges.delete(completed[0]);
+      if (this.registry.size >= maximumExchanges && !this.registry.evictSettled()) {
+        throw new Error('Too many concurrent Cursor requests');
       }
       exchange = this.startExchange(body, scope, key, permissions, rowObserver);
-      this.exchanges.set(key, exchange);
     }
-    return observe(exchange, signal, emit);
+    return this.registry.observe(exchange, signal, emit);
   }
 
   private startExchange(
@@ -288,124 +404,86 @@ export class CursorHarness {
     key: string,
     context: PermissionContext,
     rowObserver?: NativeRowObserver,
-  ): Exchange {
-    const controller = new AbortController();
-    const events: Event[] = [];
-    const listeners = new Set<Emit>();
-    const emit: Emit = (name, value) => {
-      events.push([name, structuredClone(value)]);
-      for (const listener of listeners) {
-        listener(name, value);
-      }
-    };
-    const exchange: Exchange = {
-      controller,
-      events,
-      listeners,
-      observers: 0,
-      settled: false,
-      mayHaveRun: false,
-      committed: false,
-      rowObserver,
-      result: Promise.resolve().then(() =>
-        this.cachedExecute(body, scope, key, exchange, emit, context),
-      ),
-    };
-    void exchange.result.then(
-      () => {
-        exchange.settled = true;
+  ): CursorExchange {
+    return this.registry.start(
+      key,
+      async (exchange, emit) => {
+        const response = await this.cachedExecute(
+          body,
+          scope,
+          key,
+          exchange,
+          emit,
+          context,
+          rowObserver,
+        );
+        exchange.meta.succeeded = true;
+        return response;
       },
-      () => {
-        exchange.settled = true;
-        if ((!exchange.mayHaveRun || exchange.committed) && this.exchanges.get(key) === exchange) {
-          this.exchanges.delete(key);
-        }
+      {
+        // A finished turn stays addressable so a retry replays it. A failed turn
+        // that may have run stays too, so its uncertainty is reported instead of
+        // repeating native edits; a failure that provably ran nothing is dropped.
+        retain: (exchange) => {
+          const state = exchange.meta;
+          return state.succeeded === true || (state.mayHaveRun === true && !state.committed);
+        },
       },
     );
-    return exchange;
   }
 
   private async cachedExecute(
     body: MessagesRequest,
     scope: string,
     key: string,
-    exchange: Exchange,
+    exchange: CursorExchange,
     emit: Emit,
     context: PermissionContext,
+    rowObserver?: NativeRowObserver,
   ): Promise<MessagesResponse> {
-    const file = path.join(this.stateDirectory, `${key}.response.json`);
-    let current = await readSession(this.sessionFile(scope));
-    if (current?.interrupted) {
-      // Attempted once per request: a readable terminal result is the stronger
-      // path and is persisted as a completed turn; anything else leaves the
-      // session interrupted and this request proceeds with a fresh dispatch.
-      current = await this.recoverSession(scope);
-    }
-    const latest = current?.replay;
-    const cached =
-      latest?.key === key
-        ? { response: current?.response, events: latest.events }
-        : await readJson(file);
-    if (cached !== undefined) {
-      const saved = cached as { response: MessagesResponse; events: Event[] };
-      if (!saved.response?.id || !Array.isArray(saved.events)) {
-        throw new Error('Invalid persisted Cursor response');
+    const lease = await this.takeTurn(scope);
+    const session = lease.session;
+    try {
+      if (session.saved.interrupted) {
+        await this.recoverSession(session);
       }
-      for (const event of saved.events) {
-        emit(...event);
+      const cached = await replayPersisted({
+        stateDirectory: this.stateDirectory,
+        key,
+        saved: session.saved,
+        emit,
+        provider: 'Cursor',
+        validContentBlock: cursorContentBlock,
+      });
+      if (cached !== undefined) {
+        return cached;
       }
-      return {
-        ...saved.response,
-        multi_usage: saved.response.multi_usage
-          ? { ...saved.response.multi_usage, replayed: true }
-          : { source: 'unavailable', replayed: true },
-      };
-    }
-    const terminal: Event[] = [];
-    const replay: { key: string; events: Event[] } = { key, events: [] };
-    const deferredEmit: Emit = (name, value) => {
-      replay.events.push([name, structuredClone(value)]);
-      if (['message_delta', 'message_stop', 'content_block_stop'].includes(name)) {
-        terminal.push([name, value]);
-      } else {
-        emit(name, value);
+      return await this.execute(body, session, key, exchange, emit, context, rowObserver);
+    } finally {
+      if (this.closed) {
+        this.closeAgent(session.runtime.agent);
       }
-    };
-    const response = await this.execute(body, scope, exchange, deferredEmit, context, replay);
-    for (const event of terminal) {
-      emit(...event);
+      await lease.release();
+      if (!session.runtime.agent || this.closedAgents.has(session.runtime.agent)) {
+        await this.store.evictIdle(session);
+      }
     }
-    return response;
   }
 
-  private async recoverSession(scope: string): Promise<SavedSession | undefined> {
-    if (this.sessions.has(scope) || this.creating.has(scope)) {
-      throw new Error('Cursor run is still owned by this gateway; wait for it to finish');
+  private async recoverSession(session: Session) {
+    const pending = session.saved.pendingRun;
+    if (!pending || !session.saved.agentId) {
+      return;
     }
-    const file = this.sessionFile(scope);
-    const release = await lockStateFile(`${file}.lock`);
-    try {
-      const saved = await readSession(file);
-      const pending = saved?.pendingRun;
-      if (!saved?.interrupted || !pending) {
-        return saved;
-      }
-      const recovered = await this.recoverRun(pending, saved.agentId);
-      if (!recovered) {
-        return saved;
-      }
-      const updated: SavedSession = {
-        ...saved,
-        interrupted: false,
-        pendingRun: undefined,
-        response: recovered.response,
-        replay: { key: pending.key, events: recovered.events },
-      };
-      await atomicJson(file, updated, this.platform);
-      return updated;
-    } finally {
-      await release();
+    const recovered = await this.recoverRun(pending, session.saved.agentId);
+    if (!recovered) {
+      return;
     }
+    session.saved.interrupted = false;
+    session.saved.pendingRun = undefined;
+    session.saved.response = recovered.response;
+    session.saved.replay = { key: pending.key, events: recovered.events };
+    await this.store.save(session);
   }
 
   /** A readable terminal result; every other outcome leaves the run's status unknown. */
@@ -417,6 +495,8 @@ export class CursorHarness {
     if (run.id !== pending.runId || run.agentId !== agentId) {
       return undefined;
     }
+    // Detached local records can retain QUEUED/CREATING/RUNNING after a crash;
+    // this status is not evidence that another gateway still owns a live turn.
     if (run.status === 'running' || !run.supports('wait')) {
       return undefined;
     }
@@ -424,130 +504,130 @@ export class CursorHarness {
     if (result.id !== pending.runId || result.status !== 'finished') {
       return undefined;
     }
-    const events: Event[] = [];
+    const events: HarnessEvent[] = [];
     const response = new HarnessResponse(pending.model, pending.inputTokens, (name, value) => {
       events.push([name, structuredClone(value)]);
     });
     response.text(result.result ?? '');
-    return { response: response.finish(result.usage, pending.model, pending.effort), events };
+    const finished = response.finish(cursorUsage(result.usage), pending.model, pending.effort);
+    events.push(...response.takeTerminalEvents());
+    return { response: finished, events };
   }
 
-  private async session(scope: string, body: MessagesRequest, context: PermissionContext) {
-    if (this.sessions.get(scope)?.busy || this.creating.has(scope)) {
-      throw new Error('A different request is already running for this Cursor agent');
+  /** Select and detach an idle handle synchronously before reserving its slot. */
+  private reserveCapacity(): Session | undefined {
+    if (this.closed) {
+      throw new Error('Cursor harness is closed');
     }
-    this.creating.add(scope);
-    try {
-      const session = this.sessions.get(scope) ?? (await this.loadSession(scope, body, context));
-      const messages = session.response ? continuation(body) : (body.messages ?? []);
-      const rewound = historyRewound(session, body.messages ?? []);
-      session.busy = true;
-      return { session, messages, rewound };
-    } finally {
-      this.creating.delete(scope);
-    }
-  }
-
-  private sessionFile(scope: string) {
-    return path.join(this.stateDirectory, `${hash([this.cwd, scope])}.session.json`);
-  }
-
-  private async loadSession(
-    scope: string,
-    body: MessagesRequest,
-    context: PermissionContext,
-  ): Promise<Session> {
-    if (this.sessions.size >= 32) {
-      const idle = [...this.sessions].find(([, item]) => !item.busy);
+    const records = [...this.store.sessions()];
+    const agents = records.filter(
+      (item) =>
+        item.runtime.agent &&
+        !this.closedAgents.has(item.runtime.agent) &&
+        !this.attaching.has(item),
+    );
+    if (agents.length + this.attaching.size + this.temporarySlots >= maximumAgents) {
+      const idle = agents.find(
+        (item) =>
+          !item.busy &&
+          !this.attaching.has(item) &&
+          (!item.runtime.agent || !this.usageReaders.has(item.runtime.agent)),
+      );
       if (!idle) {
         throw new Error('Too many concurrent Cursor agents');
       }
-      this.sessions.delete(idle[0]);
-      this.closeAgent(idle[1].agent);
-      await this.releaseLock(idle[1]);
+      this.closeAgent(idle.runtime.agent);
+      idle.runtime.agent = undefined;
+      idle.runtime.policy = undefined;
+      return idle;
     }
-    await mkdir(this.stateDirectory, { recursive: true, mode: 0o700 });
-    const file = this.sessionFile(scope);
-    const release = await lockStateFile(`${file}.lock`);
+    return undefined;
+  }
+
+  /** Reserve before awaiting lock release, creation or resume. Replay uses no slot. */
+  private async reserveAgent(session: Session): Promise<void> {
+    const idle = this.reserveCapacity();
+    this.attaching.add(session);
+    if (idle) {
+      await this.store.evictIdle(idle);
+    }
+  }
+
+  /** One turn at a time per agent: a prompt that arrives during a run is refused. */
+  private async takeTurn(scope: string): Promise<TurnLease> {
+    try {
+      return await this.store.acquireLease(this.identity(scope));
+    } catch (error) {
+      throw error instanceof HarnessBusyError ? new CursorProviderError(error) : error;
+    }
+  }
+
+  /** Attach the native SDK agent the record names, or create its first one. */
+  private async ready(
+    session: Session,
+    body: MessagesRequest,
+    context: PermissionContext,
+  ): Promise<ReadySession> {
+    const attached = session.runtime.agent;
+    if (attached && !this.closedAgents.has(attached)) {
+      assertReady(session);
+      return session;
+    }
+    const previousId = session.saved.agentId;
     let agent: Agent | undefined;
     try {
-      const saved = await readSession(file);
+      await this.reserveAgent(session);
       const config = {
         ...(await cursorNativePermissions(this.cwd, context)),
         model: this.selection(body),
       };
-      agent = saved
-        ? await this.resumeAgent(saved.agentId, config)
+      agent = session.saved.agentId
+        ? await this.resumeAgent(session.saved.agentId, config)
         : await this.createAgent(config);
       if (this.closed) {
         this.closeAgent(agent);
         throw new Error('Cursor harness is closed');
       }
-      const session: Session = {
-        agent,
-        file,
-        response: saved?.response,
-        replay: saved?.replay,
-        interrupted: saved?.interrupted ?? false,
-        pendingRun: saved?.pendingRun,
-        busy: false,
-        release,
-        policy: cursorPermissionPolicy(context).identity,
-      };
-      await this.saveSession(session);
-      this.sessions.set(scope, session);
+      session.runtime.agent = agent;
+      session.saved.agentId = agent.agentId;
+      session.runtime.policy = cursorPermissionPolicy(context).identity;
+      await this.store.save(session);
+      assertReady(session);
       return session;
     } catch (error) {
       if (agent) {
         this.closeAgent(agent);
       }
-      await release();
+      session.runtime.agent = undefined;
+      session.runtime.policy = undefined;
+      session.saved.agentId = previousId;
       throw error;
+    } finally {
+      this.attaching.delete(session);
     }
   }
 
   private async configureSession(
-    session: Session,
+    session: ReadySession,
     body: MessagesRequest,
     context: PermissionContext,
   ) {
     const config = await cursorNativePermissions(this.cwd, context);
     const policy = cursorPermissionPolicy(context).identity;
-    if (session.policy === policy && !this.closedAgents.has(session.agent)) {
+    if (session.runtime.policy === policy && !this.closedAgents.has(session.runtime.agent)) {
       return;
     }
     // Tools are agent-level SDK options. Resume the same conversation with the new policy.
-    this.closeAgent(session.agent);
-    session.agent = await this.resumeAgent(session.agent.agentId, {
-      ...config,
-      model: this.selection(body),
-    });
-    session.policy = policy;
-  }
-
-  private saveSession(session: Session) {
-    return atomicJson(
-      session.file,
-      {
-        version: 2,
-        agentId: session.agent.agentId,
-        response: session.response,
-        replay: session.replay,
-        interrupted: session.interrupted,
-        pendingRun: session.pendingRun,
-      },
-      this.platform,
-    );
-  }
-
-  private async archiveReply(session: Session) {
-    if (session.replay && session.response) {
-      // Archive the previous reply before replacing the single atomic session commit.
-      await atomicJson(
-        path.join(this.stateDirectory, `${session.replay.key}.response.json`),
-        { response: session.response, events: session.replay.events },
-        this.platform,
-      );
+    this.closeAgent(session.runtime.agent);
+    try {
+      await this.reserveAgent(session);
+      session.runtime.agent = await this.resumeAgent(session.runtime.agent.agentId, {
+        ...config,
+        model: this.selection(body),
+      });
+      session.runtime.policy = policy;
+    } finally {
+      this.attaching.delete(session);
     }
   }
 
@@ -558,33 +638,36 @@ export class CursorHarness {
     inputTokens: number,
     effort?: string,
   ) {
-    session.pendingRun = { key, model, inputTokens, effort };
+    session.saved.pendingRun = { key, model, inputTokens, effort };
     // Durability write: a gateway crash before a terminal result arrives leaves
     // the session interrupted, so the next request resumes it with a notice
     // instead of guessing what the dispatched run did.
-    session.interrupted = true;
-    await this.saveSession(session);
-    return session.pendingRun;
+    session.saved.interrupted = true;
+    await this.store.save(session);
+    return session.saved.pendingRun;
   }
 
   private async execute(
     body: MessagesRequest,
-    scope: string,
-    exchange: Exchange,
+    held: Session,
+    key: string,
+    exchange: CursorExchange,
     emit: Emit,
     context: PermissionContext,
-    replay: { key: string; events: Event[] },
+    rowObserver?: NativeRowObserver,
   ) {
     const signal = exchange.controller.signal;
     signal.throwIfAborted();
-    const { session, messages, rewound } = await this.session(scope, body, context);
+    const messages = held.saved.response ? continuation(body, 'Cursor') : (body.messages ?? []);
+    const rewound = historyRewound(held.saved, body.messages ?? [], harnessHistoryHash);
+    const session = await this.ready(held, body, context);
     let text = '';
     let cancelled = false;
     let dispatched = false;
     const cancel = () => {
-      if (session.run && !cancelled) {
+      if (session.runtime.run && !cancelled) {
         cancelled = true;
-        const run = session.run;
+        const run = session.runtime.run;
         void Promise.resolve()
           .then(() => run.cancel())
           .catch(() => {});
@@ -593,29 +676,40 @@ export class CursorHarness {
     signal.addEventListener('abort', cancel, { once: true });
     try {
       const prepared = prepareCursorRequest({ ...body, messages });
-      if (session.interrupted) {
-        prepared.prompt.text = `${INTERRUPTED_NOTICE}\n\n${prepared.prompt.text ?? ''}`;
+      if (session.saved.interrupted) {
+        prepared.prompt.text = `${interruptedNotice('Cursor')}\n\n${prepared.prompt.text ?? ''}`;
       }
-      const stream = new HarnessResponse(body.model ?? '', prepared.inputTokens, emit);
-      this.writeNotices(stream, session, rewound);
+      const stream = new HarnessResponse(body.model ?? '', prepared.inputTokens, emit, {
+        multiBlock: true,
+      });
+      writeNotices(stream, {
+        tag: 'Cursor',
+        interrupted: session.saved.interrupted,
+        rewound,
+        noticeChanged: false,
+      });
       signal.throwIfAborted();
       if (this.closed) {
         throw new Error('Cursor harness is closed');
       }
       await this.configureSession(session, body, context);
-      await this.archiveReply(session);
+      await archiveHarnessReply({
+        session,
+        stateDirectory: this.stateDirectory,
+        platform: this.platform,
+      });
       const selection = this.selection(body);
       const dispatch = await this.persistDispatch(
         session,
-        replay.key,
+        key,
         selection.id,
         prepared.inputTokens,
         selectedEffort(selection),
       );
       dispatched = true;
       signal.throwIfAborted();
-      exchange.mayHaveRun = true;
-      session.run = await this.dispatchRun(
+      exchange.meta.mayHaveRun = true;
+      session.runtime.run = await this.dispatchRun(
         session,
         prepared.prompt,
         { model: selection, mode: cursorPermissionPolicy(context).mode },
@@ -624,61 +718,59 @@ export class CursorHarness {
         (delta) => {
           text += delta;
         },
-        exchange.rowObserver,
+        rowObserver,
       );
-      dispatch.runId = session.run.id;
-      await this.saveSession(session);
+      dispatch.runId = session.runtime.run.id;
+      await this.store.save(session);
       if (signal.aborted) {
         cancel();
       }
-      const result = await settleOrAbort(session.run.wait(), signal, 'Cursor native run');
-      // A readable terminal result, success or not, resolves the uncertainty.
-      session.interrupted = false;
-      session.pendingRun = undefined;
-      signal.throwIfAborted();
+      const result = await settleOrAbort(session.runtime.run.wait(), signal, 'Cursor native run');
       if (result.status !== 'finished') {
+        // Known native failure is distinct from failure to persist a success.
+        session.saved.interrupted = false;
+        session.saved.pendingRun = undefined;
         throw cursorRunError(result);
       }
-      const suffix = cursorTerminalSuffix(text, result.result ?? '');
+      signal.throwIfAborted();
+      const suffix = terminalSuffix(text, result.result ?? '');
       if (suffix) {
-        exchange.rowObserver?.({ type: 'text', text: suffix });
+        rowObserver?.({ type: 'text', text: suffix });
       }
       stream.text(suffix);
-      const response = stream.finish(result.usage, selection.id, selectedEffort(selection));
-      session.response = response;
-      session.replay = replay;
-      // Completion and its replayable HTTP reply must commit together.
-      await this.saveSession(session);
-      exchange.committed = true;
-      return response;
+      const response = stream.finish(
+        cursorUsage(result.usage),
+        selection.id,
+        selectedEffort(selection),
+      );
+      return await commitHarnessResponse({
+        session,
+        store: this.store,
+        response: stream,
+        finished: response,
+        exchange,
+        key,
+        emit,
+        update: (saved) => {
+          saved.interrupted = false;
+          saved.pendingRun = undefined;
+        },
+        onCommitted: () => {
+          exchange.meta.committed = true;
+        },
+      });
     } catch (error) {
       cancel();
-      await this.recordUncertainty(session, dispatched, exchange.mayHaveRun);
+      await this.recordUncertainty(session, dispatched, exchange.meta.mayHaveRun === true);
       throw error instanceof CursorProviderError ? error : new CursorProviderError(error);
     } finally {
-      session.busy = false;
-      session.run = undefined;
+      session.runtime.run = undefined;
       signal.removeEventListener('abort', cancel);
-      if (this.closed) {
-        this.closeAgent(session.agent);
-        await this.releaseLock(session);
-      }
-    }
-  }
-
-  private writeNotices(stream: HarnessResponse, session: Session, rewound: boolean) {
-    if (session.interrupted) {
-      stream.text(`${INTERRUPTED_NOTICE}\n`);
-    }
-    if (rewound) {
-      stream.text(
-        '[Cursor] Outer history changed; the native conversation continues with its own record.\n',
-      );
     }
   }
 
   private dispatchRun(
-    session: Session,
+    session: ReadySession,
     prompt: ReturnType<typeof prepareCursorRequest>['prompt'],
     options: {
       model: ReturnType<CursorHarness['selection']>;
@@ -689,7 +781,7 @@ export class CursorHarness {
     appendText: (delta: string) => void,
     rowObserver?: NativeRowObserver,
   ) {
-    return session.agent.send(prompt, {
+    return session.runtime.agent.send(prompt, {
       ...options,
       onDelta: ({ update }) => {
         signal.throwIfAborted();
@@ -718,16 +810,16 @@ export class CursorHarness {
       return;
     }
     if (!mayHaveRun) {
-      session.interrupted = false;
-      session.pendingRun = undefined;
+      session.saved.interrupted = false;
+      session.saved.pendingRun = undefined;
     }
-    await this.saveSession(session).catch(() => {
+    await this.store.save(session).catch(() => {
       // The error surfaced to the caller is the more useful failure.
     });
   }
 
-  private closeAgent(agent: Agent) {
-    if (this.closedAgents.has(agent)) {
+  private closeAgent(agent: Agent | undefined) {
+    if (!agent || this.closedAgents.has(agent)) {
       return;
     }
     this.closedAgents.add(agent);
@@ -738,210 +830,19 @@ export class CursorHarness {
     }
   }
 
-  private releaseLock(session: Session) {
-    // Run completion and shutdown can both clean up; never remove a later owner's lock.
-    session.unlock ??= session.release();
-    return session.unlock;
-  }
-
   async close() {
     this.closed = true;
-    for (const exchange of this.exchanges.values()) {
+    for (const exchange of this.registry.all()) {
       if (!exchange.settled) {
         exchange.controller.abort(new Error('Cursor gateway closed'));
       }
     }
-    await bounded(
-      Promise.allSettled([...this.exchanges.values()].map((exchange) => exchange.result)),
-    );
-    for (const session of this.sessions.values()) {
-      this.closeAgent(session.agent);
-      if (!session.busy) {
-        await this.releaseLock(session);
-      }
+    await bounded(Promise.allSettled(this.registry.all().map((exchange) => exchange.result)));
+    for (const session of [...this.store.sessions()]) {
+      this.closeAgent(session.runtime.agent);
     }
-    this.sessions.clear();
+    await this.store.closeAll();
   }
-}
-
-/**
- * The newest turn: everything after the last assistant message (the newest user
- * message plus any trailing inline system reminders). The persistent SDK agent
- * already holds everything before it; only the delta needs to be sent on resume.
- */
-function continuation(body: MessagesRequest): NonNullable<MessagesRequest['messages']> {
-  const messages = body.messages ?? [];
-  const lastAssistant = messages.findLastIndex((message) => message.role === 'assistant');
-  if (lastAssistant === messages.length - 1) {
-    throw new Error('Cursor continuation requires a message after the last assistant turn');
-  }
-  const delta = messages.slice(lastAssistant + 1);
-  if (!delta.some((message) => message.role === 'user')) {
-    throw new Error('Cursor continuation requires a new user message');
-  }
-  return delta;
-}
-
-/** True when the outer history no longer contains the previous turn's response. */
-function historyRewound(
-  session: Session,
-  messages: NonNullable<MessagesRequest['messages']>,
-): boolean {
-  if (!session.response) {
-    return false;
-  }
-  const expected = cursorHistoryHash([{ role: 'assistant', content: session.response.content }]);
-  return !messages.some(
-    (message) => message.role === 'assistant' && cursorHistoryHash([message]) === expected,
-  );
-}
-
-async function observe(exchange: Exchange, signal: AbortSignal, emit?: Emit) {
-  exchange.observers++;
-  const aborted = Promise.withResolvers<never>();
-  void aborted.promise.catch(() => {});
-  const cancel = () => aborted.reject(signal.reason);
-  signal.addEventListener('abort', cancel, { once: true });
-  try {
-    if (emit) {
-      exchange.listeners.add(emit);
-      for (const event of exchange.events) {
-        emit(...event);
-      }
-    }
-    signal.throwIfAborted();
-    return await Promise.race([exchange.result, aborted.promise]);
-  } finally {
-    signal.removeEventListener('abort', cancel);
-    if (emit) {
-      exchange.listeners.delete(emit);
-    }
-    exchange.observers--;
-    if (!exchange.observers && !exchange.settled) {
-      exchange.controller.abort(new Error('All Cursor request observers disconnected'));
-    }
-  }
-}
-
-class HarnessResponse {
-  private readonly response: MessagesResponse;
-  private readonly emit: Emit;
-  private activeTextIndex: number | undefined;
-  private bytes = 0;
-
-  constructor(model: string, inputTokens: number, emit: Emit) {
-    this.emit = emit;
-    this.response = {
-      id: `msg_${randomUUID()}`,
-      type: 'message',
-      role: 'assistant',
-      model,
-      content: [],
-      stop_reason: null,
-      stop_sequence: null,
-      usage: { input_tokens: inputTokens, output_tokens: 0 },
-    };
-    emit('message_start', { message: structuredClone(this.response) });
-  }
-
-  text(text: string) {
-    if (!text) {
-      return;
-    }
-    this.bytes += Buffer.byteLength(text);
-    if (this.bytes > 32 * 1024 * 1024) {
-      throw new Error('Cursor run exceeded the 32 MiB output limit');
-    }
-    if (this.activeTextIndex === undefined) {
-      this.activeTextIndex = this.response.content.length;
-      this.response.content.push({ type: 'text', text: '' });
-      this.emit('content_block_start', {
-        index: this.activeTextIndex,
-        content_block: { type: 'text', text: '' },
-      });
-    }
-    const block = this.response.content[this.activeTextIndex];
-    if (block.type === 'text') {
-      block.text += text;
-    }
-    this.emit('content_block_delta', {
-      index: this.activeTextIndex,
-      delta: { type: 'text_delta', text },
-    });
-  }
-
-  displayRow(event: ModDisplayEvent) {
-    if (this.activeTextIndex !== undefined) {
-      this.emit('content_block_stop', { index: this.activeTextIndex });
-      this.activeTextIndex = undefined;
-    }
-    const index = this.response.content.length;
-    this.response.content.push({
-      type: 'tool_use',
-      id: event.toolUseId,
-      name: event.tool,
-      input: event.input,
-    });
-    this.emit('content_block_start', {
-      index,
-      content_block: { type: 'tool_use', id: event.toolUseId, name: event.tool, input: {} },
-    });
-    this.emit('content_block_delta', {
-      index,
-      delta: { type: 'input_json_delta', partial_json: JSON.stringify(event.input) },
-    });
-    this.emit('content_block_stop', { index });
-  }
-
-  finish(usage?: TokenUsage, model?: string, effort?: string) {
-    if (this.activeTextIndex !== undefined) {
-      this.emit('content_block_stop', { index: this.activeTextIndex });
-    }
-    this.response.stop_reason = 'end_turn';
-    if (usage) {
-      this.response.usage.input_tokens = usage.inputTokens;
-      this.response.usage.output_tokens = usage.outputTokens;
-      this.response.usage.cache_read_input_tokens = usage.cacheReadTokens;
-      this.response.usage.cache_creation_input_tokens = usage.cacheWriteTokens;
-    } else {
-      this.response.usage.output_tokens = estimateTextTokens(JSON.stringify(this.response.content));
-    }
-    this.response.multi_usage = {
-      source: usage ? 'provider' : 'estimate',
-      ...(model === undefined ? {} : { model }),
-      ...(effort === undefined ? {} : { effort }),
-      ...(usage?.reasoningTokens === undefined ? {} : { reasoning_tokens: usage.reasoningTokens }),
-      ...(usage?.totalTokens === undefined ? {} : { total_tokens: usage.totalTokens }),
-    };
-    this.emit('message_delta', {
-      delta: { stop_reason: 'end_turn', stop_sequence: null },
-      usage: this.response.usage,
-    });
-    this.emit('message_stop', {});
-    return this.response;
-  }
-}
-
-async function readSession(file: string): Promise<SavedSession | undefined> {
-  const saved = (await readJson(file)) as Partial<SavedSession> | undefined;
-  if (saved === undefined) {
-    return undefined;
-  }
-  if (saved.version !== 2) {
-    // The native SDK agent is never deleted; an older or unknown session file
-    // is ignored and the session starts fresh instead of refusing to load.
-    return undefined;
-  }
-  if (
-    typeof saved.agentId !== 'string' ||
-    !saved.agentId ||
-    typeof saved.interrupted !== 'boolean' ||
-    !validSessionReply(saved) ||
-    !validPendingRun(saved.pendingRun)
-  ) {
-    throw new Error('Cursor session has invalid state; refusing to replay native actions');
-  }
-  return saved as SavedSession;
 }
 
 function validPendingRun(pending: PendingRun | undefined) {
@@ -957,50 +858,17 @@ function validPendingRun(pending: PendingRun | undefined) {
   );
 }
 
-function isHash(value: unknown): value is string {
-  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+/** The worker scope inside a record identity; the record file keys on both. */
+function sessionScope(identity: string): string | undefined {
+  const parsed: unknown = JSON.parse(identity);
+  return Array.isArray(parsed) && typeof parsed[1] === 'string' ? parsed[1] : undefined;
 }
 
-function validSessionReply(saved: Partial<SavedSession>) {
-  if (saved.response === undefined && saved.replay === undefined) {
-    return true;
+function savedAgentId(saved: unknown): string | undefined {
+  if (!isRecord(saved) || typeof saved.agentId !== 'string' || !saved.agentId) {
+    return undefined;
   }
-  return (
-    typeof saved.response?.id === 'string' &&
-    Array.isArray(saved.response.content) &&
-    saved.response.content.every(
-      (block) => block?.type === 'text' && typeof block.text === 'string',
-    ) &&
-    isHash(saved.replay?.key) &&
-    Array.isArray(saved.replay?.events) &&
-    saved.replay.events.every(
-      (event) =>
-        Array.isArray(event) &&
-        event.length === 2 &&
-        typeof event[0] === 'string' &&
-        event[1] !== null &&
-        typeof event[1] === 'object',
-    )
-  );
-}
-
-async function readJson(file: string): Promise<unknown> {
-  try {
-    return JSON.parse(await readFile(file, 'utf8'));
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      return undefined;
-    }
-    throw error;
-  }
-}
-
-async function atomicJson(
-  file: string,
-  value: unknown,
-  platform: NodeJS.Platform = process.platform,
-) {
-  await atomicWriteFile(file, JSON.stringify(value), { mode: 0o600, platform });
+  return saved.agentId;
 }
 
 async function bounded(operation: Promise<unknown>) {

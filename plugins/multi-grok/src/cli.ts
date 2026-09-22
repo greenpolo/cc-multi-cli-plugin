@@ -1,13 +1,13 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import type { ChildProcess, spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
 import {
-  executableInvocation,
-  resolveExecutable,
-} from '../../multi-core/src/gateway/executable.ts';
-import { terminateProcessTree } from '../../multi-core/src/gateway/process-tree.ts';
+  NativeCliError,
+  nativeEnvironment,
+  promptArgumentLimitBytes,
+  runNativeCli,
+} from '../../multi-core/src/gateway/harness-process.ts';
 
 /**
  * Grok Build headless contract, captured from `grok -p --output-format streaming-json`
@@ -96,17 +96,19 @@ export interface GrokRunResult {
   stderr: string;
 }
 
-export class GrokCliError extends Error {
-  readonly code: 'spawn' | 'output_limit' | 'parse' | 'policy' | 'no_terminal_result' | 'aborted';
-  readonly exitCode: number | null;
-  readonly signal: NodeJS.Signals | null;
-  readonly stderr: string;
-  /**
-   * The operating system's own reason a process could not be created, when it gave
-   * one: `ENOENT` for a missing binary, `EAGAIN` for a machine momentarily out of
-   * processes. Only that code tells a permanent failure from a transient one.
-   */
-  readonly systemCode: string | undefined;
+/**
+ * Grok's own failure vocabulary, layered on the shared native-CLI error so a policy
+ * breach or an unparsable event stays as specific as `runNativeCli`'s generic
+ * `spawn`/`output_limit` failures are not.
+ */
+export class GrokCliError extends NativeCliError {
+  declare readonly code:
+    | 'spawn'
+    | 'output_limit'
+    | 'parse'
+    | 'policy'
+    | 'no_terminal_result'
+    | 'aborted';
 
   constructor(
     message: string,
@@ -118,56 +120,48 @@ export class GrokCliError extends Error {
       systemCode?: string;
     } = {},
   ) {
-    super(message);
+    super(message, code, details);
     this.name = 'GrokCliError';
-    this.code = code;
-    this.exitCode = details.exitCode ?? null;
-    this.signal = details.signal ?? null;
-    this.stderr = details.stderr ?? '';
-    this.systemCode = details.systemCode;
   }
 }
 
-/** Node reports the OS failure as `code` on the error it throws or emits. */
-function spawnSystemCode(error: unknown): string | undefined {
-  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
-    return error.code;
+/**
+ * `runNativeCli` raises its own generic spawn/output-limit failures as a bare
+ * `NativeCliError` before any Grok-specific parser state exists. Those are rewrapped
+ * here so every failure this module reports is a `GrokCliError`.
+ */
+function toGrokCliError(error: unknown): GrokCliError {
+  if (error instanceof GrokCliError) {
+    return error;
   }
-  return undefined;
-}
-
-const defaultMaxOutputBytes = 8 * 1024 * 1024;
-// cmd.exe caps a command line at 8,191 characters when a .cmd shim cannot be
-// bypassed; the fixed flags, executable path, cwd and quoting need the rest.
-const windowsPromptArgumentLimitBytes = 6 * 1024;
-const posixPromptArgumentLimitBytes = 128 * 1024;
-const interruptGraceMs = 1500;
-const terminateGraceMs = 1500;
-const cancellationWaitMs = interruptGraceMs + terminateGraceMs + 1000;
-
-function promptArgumentLimitBytes(platform: NodeJS.Platform): number {
-  return platform === 'win32' ? windowsPromptArgumentLimitBytes : posixPromptArgumentLimitBytes;
+  if (error instanceof NativeCliError) {
+    return new GrokCliError(error.message, error.code as GrokCliError['code'], {
+      exitCode: error.exitCode,
+      signal: error.signal,
+      stderr: error.stderr,
+      systemCode: error.systemCode,
+    });
+  }
+  throw error;
 }
 
 /** Credentials of other providers never reach the native CLI. */
 export function grokEnvironment(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { ...process.env, ...overrides, NO_COLOR: '1' };
-  for (const key of Object.keys(environment)) {
-    if (
-      key.startsWith('ANTHROPIC_') ||
-      key.startsWith('OPENAI_') ||
-      key.startsWith('CURSOR_') ||
-      key.startsWith('OPENCODE_') ||
-      key === 'GEMINI_API_KEY' ||
-      key === 'MULTI_GATEWAY_TOKEN' ||
-      // An API key silently outranks the browser login and moves billing from the
-      // subscription to metered xAI credit. This bridge runs on the account login.
-      key === 'XAI_API_KEY'
-    ) {
-      delete environment[key];
-    }
-  }
-  return environment;
+  return nativeEnvironment({
+    overrides,
+    // An API key silently outranks the browser login and moves billing from the
+    // subscription to metered xAI credit. This bridge runs on the account login.
+    drop: [
+      'ANTHROPIC_',
+      'OPENAI_',
+      'CURSOR_',
+      'OPENCODE_',
+      'GEMINI_API_KEY',
+      'MULTI_GATEWAY_TOKEN',
+      'XAI_API_KEY',
+    ],
+    extra: { NO_COLOR: '1' },
+  });
 }
 
 function grokArguments(options: GrokRunOptions, promptFile: string | undefined): string[] {
@@ -216,6 +210,8 @@ export async function runGrok(options: GrokRunOptions): Promise<GrokRunResult> {
   }
   try {
     return await spawnGrok(options, platform, promptFile);
+  } catch (error) {
+    throw toGrokCliError(error);
   } finally {
     if (directory) {
       await rm(directory, { recursive: true, force: true });
@@ -223,187 +219,47 @@ export async function runGrok(options: GrokRunOptions): Promise<GrokRunResult> {
   }
 }
 
-function startGrok(
-  options: GrokRunOptions,
-  platform: NodeJS.Platform,
-  environment: NodeJS.ProcessEnv,
-  promptFile: string | undefined,
-): ChildProcess {
-  const invocation = executableInvocation(
-    resolveExecutable('grok', {
-      platform,
-      env: environment,
-      configuredPath: options.executable,
-    }),
-    grokArguments(options, promptFile),
-    platform,
-    environment,
-  );
-  return (options.spawn ?? spawn)(invocation.command, invocation.args, {
-    cwd: options.cwd,
-    env: environment,
-    detached: platform !== 'win32',
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-    ...invocation.options,
-  });
-}
-
-function spawnGrok(
-  options: GrokRunOptions,
-  platform: NodeJS.Platform,
-  promptFile: string | undefined,
-): Promise<GrokRunResult> {
-  return new Promise((resolve, reject) => {
-    const environment = grokEnvironment(options.env);
-    let child: ChildProcess;
-    try {
-      child = startGrok(options, platform, environment, promptFile);
-    } catch (error) {
-      reject(
-        new GrokCliError(`Failed to start grok: ${String(error)}`, 'spawn', {
-          systemCode: spawnSystemCode(error),
-        }),
-      );
-      return;
-    }
-
-    const maxOutputBytes = options.maxOutputBytes ?? defaultMaxOutputBytes;
-    const stdoutDecoder = new StringDecoder('utf8');
-    const parser: ParserState = { response: '', forbidden: options.forbiddenTools };
-    let stdoutBuffer = '';
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let stderr = '';
-    let aborted = false;
-    let interruptTimer: NodeJS.Timeout | undefined;
-    let terminateTimer: NodeJS.Timeout | undefined;
-    let cancellationTimer: NodeJS.Timeout | undefined;
-    let settled = false;
-
-    const kill = (signal: NodeJS.Signals) => {
-      if (child.pid) {
-        terminateProcessTree(child.pid, { platform, signal });
-      }
-    };
-    const stop = () => {
-      kill('SIGINT');
-      interruptTimer = setTimeout(() => {
-        kill('SIGTERM');
-        terminateTimer = setTimeout(() => kill('SIGKILL'), terminateGraceMs);
-      }, interruptGraceMs);
-    };
-    const clearTimers = () => {
-      clearTimeout(interruptTimer);
-      clearTimeout(terminateTimer);
-      clearTimeout(cancellationTimer);
-    };
-    const fail = (error: GrokCliError) => {
-      if (!parser.failure) {
-        parser.failure = error;
-        stop();
-      }
-    };
-    const emit = (event: GrokStreamEvent) => {
-      try {
-        options.onEvent?.(event);
-      } catch (error) {
-        fail(new GrokCliError(`Grok event handler failed: ${String(error)}`, 'parse'));
-      }
-    };
-    const consumeStdout = (chunk: Buffer) => {
-      if (parser.failure) {
-        return;
-      }
-      stdoutBytes += chunk.byteLength;
-      if (stdoutBytes > maxOutputBytes) {
-        fail(new GrokCliError('Grok stdout exceeded its safety limit', 'output_limit'));
-        return;
-      }
-      stdoutBuffer += stdoutDecoder.write(chunk);
-      let newline = stdoutBuffer.indexOf('\n');
-      while (newline >= 0) {
-        const line = stdoutBuffer.slice(0, newline).replace(/\r$/, '');
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        parseGrokLine(line, parser, emit, fail);
-        newline = stdoutBuffer.indexOf('\n');
-      }
-      if (stdoutBuffer.length > maxOutputBytes) {
-        fail(new GrokCliError('Grok stdout line exceeded its safety limit', 'output_limit'));
-      }
-    };
-    const consumeStderr = (chunk: Buffer) => {
-      if (parser.failure) {
-        return;
-      }
-      stderrBytes += chunk.byteLength;
-      if (stderrBytes > maxOutputBytes) {
-        fail(new GrokCliError('Grok stderr exceeded its safety limit', 'output_limit'));
-        return;
-      }
-      stderr += chunk.toString('utf8');
-    };
-    const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      options.signal.removeEventListener('abort', onAbort);
-      stdoutBuffer += stdoutDecoder.end();
-      if (stdoutBuffer && !parser.failure) {
-        parseGrokLine(stdoutBuffer, parser, emit, fail);
-      }
-      clearTimers();
-      if (aborted || parser.failure || !parser.terminal) {
-        kill('SIGKILL');
-      }
-      const safeStderr = redactStderr(stderr);
-      const final = finishValue(parser, aborted, exitCode, signal, safeStderr);
-      if (final instanceof GrokCliError) {
-        reject(final);
-        return;
-      }
-      resolve({ result: final, response: parser.response, exitCode, signal, stderr: safeStderr });
-    };
-    function onAbort() {
-      if (aborted) {
-        return;
-      }
-      aborted = true;
-      child.stdout?.destroy();
-      child.stderr?.destroy();
-      stop();
-      cancellationTimer = setTimeout(() => finish(null, null), cancellationWaitMs);
-    }
-
-    child.stdout?.on('data', consumeStdout);
-    child.stderr?.on('data', consumeStderr);
-    child.once('error', (error) => {
-      fail(
-        new GrokCliError(`grok failed to start: ${error.message}`, 'spawn', {
-          systemCode: spawnSystemCode(error),
-        }),
-      );
-    });
-    child.once('close', finish);
-    options.signal.addEventListener('abort', onAbort, { once: true });
-    if (options.signal.aborted) {
-      onAbort();
-    }
-  });
-}
-
 type ParserState = {
   response: string;
   forbidden?: readonly string[];
   tools?: readonly string[];
   terminal?: GrokResult;
-  failure?: GrokCliError;
+  failure?: NativeCliError;
 };
 
 type Emit = (event: GrokStreamEvent) => void;
 type Fail = (error: GrokCliError) => void;
+
+async function spawnGrok(
+  options: GrokRunOptions,
+  platform: NodeJS.Platform,
+  promptFile: string | undefined,
+): Promise<GrokRunResult> {
+  const parser: ParserState = { response: '', forbidden: options.forbiddenTools };
+  const run = await runNativeCli<ParserState, GrokResult, GrokStreamEvent>({
+    name: 'Grok',
+    executable: 'grok',
+    configuredPath: options.executable,
+    args: grokArguments(options, promptFile),
+    cwd: options.cwd,
+    platform,
+    env: grokEnvironment(options.env),
+    signal: options.signal,
+    spawn: options.spawn,
+    maxOutputBytes: options.maxOutputBytes,
+    parser,
+    parseLine: parseGrokLine,
+    onEvent: options.onEvent,
+    finish: finishValue,
+  });
+  return {
+    result: run.result,
+    response: parser.response,
+    exitCode: run.exitCode,
+    signal: run.signal,
+    stderr: run.stderr,
+  };
+}
 
 function finishValue(
   parser: ParserState,
@@ -413,10 +269,11 @@ function finishValue(
   stderr: string,
 ): GrokResult | GrokCliError {
   if (parser.failure) {
-    return new GrokCliError(parser.failure.message, parser.failure.code, {
+    return new GrokCliError(parser.failure.message, parser.failure.code as GrokCliError['code'], {
       exitCode,
       signal,
       stderr,
+      systemCode: parser.failure.systemCode,
     });
   }
   if (parser.terminal) {
@@ -585,12 +442,6 @@ function parseTerminal(
   };
   parser.terminal = result;
   emit({ event: 'result', result });
-}
-
-function redactStderr(value: string): string {
-  return value
-    .replaceAll(/Bearer\s+\S+/gi, 'Bearer [redacted]')
-    .replaceAll(/([?&](?:api[_-]?key|token|password)=)[^&\s]+/gi, '$1[redacted]');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

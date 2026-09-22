@@ -1,7 +1,11 @@
 import { isDeepStrictEqual } from 'node:util';
+import {
+  type NormalizedContent,
+  normalizeConversation,
+  textContent,
+} from '../../multi-core/src/gateway/conversation.ts';
 import { isDirectToolAvailable } from '../../multi-core/src/gateway/direct-tools.ts';
 import type {
-  ContentBlock,
   Emit,
   MessagesRequest,
   MessagesResponse,
@@ -12,12 +16,6 @@ import { callId, toolName } from '../../multi-core/src/gateway/tools.ts';
 
 // Anthropic Messages <-> OpenAI Responses, for native Claude Code workers.
 const SIGNATURE_PREFIX = 'multi-openai:';
-const IMAGE_MEDIA_TYPES: readonly unknown[] = [
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-];
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export type Effort = (typeof EFFORTS)[number];
@@ -26,10 +24,7 @@ export type Effort = (typeof EFFORTS)[number];
 // OpenAI Responses, as the gateway sends and reads them.
 // ---------------------------------------------------------------------------
 
-export type ResponsesInputContent =
-  | { type: 'input_text' | 'output_text'; text: string }
-  | { type: 'input_image'; image_url: string; detail: 'auto' }
-  | { type: 'input_file'; filename: string; file_data: string };
+export type ResponsesInputContent = NormalizedContent;
 
 export type ResponsesInputItem =
   | { role: 'user' | 'assistant' | 'developer'; content: ResponsesInputContent[] }
@@ -275,125 +270,6 @@ export function forAnthropic(body: MessagesRequest): MessagesRequest {
   return changed ? { ...body, messages } : body;
 }
 
-function blocks(value: unknown): ContentBlock[] {
-  if (typeof value === 'string') {
-    return [{ type: 'text', text: value }];
-  }
-  if (!Array.isArray(value)) {
-    throw new Error('Expected text or content blocks');
-  }
-  for (const block of value) {
-    if (!isRecord(block) || typeof block.type !== 'string') {
-      throw new Error('Invalid content block');
-    }
-    for (const key of ['id', 'name', 'tool_use_id', 'signature', 'title', 'tool_name']) {
-      if (block[key] !== undefined && typeof block[key] !== 'string') {
-        throw new Error(`Invalid content field: ${key}`);
-      }
-    }
-    if (block.is_error !== undefined && typeof block.is_error !== 'boolean') {
-      throw new Error('Invalid tool result error flag');
-    }
-  }
-  return value;
-}
-
-function textOnly(value: unknown): string {
-  return blocks(value)
-    .map((block) => {
-      if (block.type !== 'text' || typeof block.text !== 'string') {
-        throw new Error(`Unsupported text content: ${block.type}`);
-      }
-      return block.text;
-    })
-    .join('\n');
-}
-
-function imageInput(block: ContentBlock): ResponsesInputContent {
-  const source = block.source;
-  let image_url: string;
-  if (source?.type === 'base64') {
-    if (
-      !IMAGE_MEDIA_TYPES.includes(source.media_type) ||
-      typeof source.data !== 'string' ||
-      !source.data ||
-      Buffer.from(source.data, 'base64').toString('base64') !== source.data
-    ) {
-      throw new Error('Invalid base64 image source');
-    }
-    image_url = `data:${source.media_type};base64,${source.data}`;
-  } else if (source?.type === 'url') {
-    let url: URL;
-    if (typeof source.url !== 'string') {
-      throw new Error('Invalid image URL');
-    }
-    try {
-      url = new URL(source.url);
-    } catch {
-      throw new Error('Invalid image URL');
-    }
-    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
-      throw new Error('Invalid image URL');
-    }
-    image_url = source.url;
-  } else {
-    throw new Error('Unsupported image source');
-  }
-  // Forward the source to the provider; never fetch image URLs in the gateway.
-  return { type: 'input_image', image_url, detail: 'auto' };
-}
-
-function documentInput(block: ContentBlock): ResponsesInputContent[] {
-  const source = block.source;
-  const title = block.title ? `Document: ${block.title}\n` : '';
-  if (
-    source?.type === 'text' &&
-    source.media_type === 'text/plain' &&
-    typeof source.data === 'string'
-  ) {
-    return [{ type: 'input_text', text: title + source.data }];
-  }
-  if (
-    source?.type !== 'base64' ||
-    source.media_type !== 'application/pdf' ||
-    typeof source.data !== 'string' ||
-    !source.data ||
-    Buffer.from(source.data, 'base64').toString('base64') !== source.data
-  ) {
-    throw new Error('Unsupported document: use base64 PDF or text/plain');
-  }
-  return [
-    {
-      type: 'input_file',
-      filename: 'document.pdf',
-      file_data: `data:application/pdf;base64,${source.data}`,
-    },
-  ];
-}
-
-function toolOutput(block: ContentBlock): string | ResponsesInputContent[] {
-  const content = blocks(block.content ?? '');
-  const prefix = block.is_error ? 'Tool error:\n' : '';
-  if (!content.some((item) => ['image', 'document', 'tool_reference'].includes(item.type))) {
-    return prefix + textOnly(content);
-  }
-  return [
-    ...(prefix ? [{ type: 'input_text' as const, text: prefix }] : []),
-    ...content.flatMap((item): ResponsesInputContent[] => {
-      if (item.type === 'image') {
-        return [imageInput(item)];
-      }
-      if (item.type === 'document') {
-        return documentInput(item);
-      }
-      if (item.type === 'tool_reference' && item.tool_name) {
-        return [{ type: 'input_text', text: `Available tool: ${toolName(item.tool_name)}` }];
-      }
-      return [{ type: 'input_text', text: textOnly([item]) }];
-    }),
-  ];
-}
-
 function validateRequestOptions(body: MessagesRequest) {
   if (
     body.stop_sequences !== undefined &&
@@ -523,95 +399,24 @@ function reasoningEffort(body: MessagesRequest): Effort {
   return effort;
 }
 
-function assistantInput(block: ContentBlock, signaturePrefix: string): ResponsesInputItem[] {
-  switch (block.type) {
-    case 'tool_use':
-      if (!block.id || !block.name || !isRecord(block.input)) {
-        throw new Error('Invalid tool_use');
-      }
-      return [
-        {
-          type: 'function_call',
-          call_id: callId(block.id),
-          name: toolName(block.name),
-          arguments: JSON.stringify(block.input),
-        },
-      ];
-    case 'thinking': {
-      if (!block.signature?.startsWith(signaturePrefix)) {
-        return [];
-      }
-      const item: unknown = JSON.parse(
-        Buffer.from(block.signature.slice(signaturePrefix.length), 'base64url').toString(),
-      );
-      if (!isReasoningState(item)) {
-        throw new Error('Invalid reasoning state');
-      }
-      return [
-        {
-          type: 'reasoning',
-          id: item.id,
-          encrypted_content: item.encrypted_content,
-          summary: item.summary ?? [],
-        },
-      ];
+function decodeReasoning(signaturePrefix: string) {
+  return (block: { type: string; signature?: string }): ResponsesInputItem | undefined => {
+    if (block.type === 'redacted_thinking' || !block.signature?.startsWith(signaturePrefix)) {
+      return undefined;
     }
-    case 'redacted_thinking':
-      return [];
-    default:
-      throw new Error(`Unsupported native worker content: ${block.type}`);
-  }
-}
-
-function userInput(block: ContentBlock): ResponsesInputItem[] {
-  switch (block.type) {
-    case 'image':
-      return [{ role: 'user', content: [imageInput(block)] }];
-    case 'document':
-      return [{ role: 'user', content: documentInput(block) }];
-    case 'tool_result':
-      if (!block.tool_use_id) {
-        throw new Error('Missing tool result ID');
-      }
-      return [
-        {
-          type: 'function_call_output',
-          call_id: callId(block.tool_use_id),
-          output: toolOutput(block),
-        },
-      ];
-    default:
-      throw new Error(`Unsupported native worker content: ${block.type}`);
-  }
-}
-
-function messageInput(message: unknown, signaturePrefix: string): ResponsesInputItem[] {
-  if (!isRecord(message)) {
-    throw new Error('Invalid message');
-  }
-  const role = message.role;
-  if (role !== 'user' && role !== 'assistant' && role !== 'system') {
-    throw new Error('Unsupported message role');
-  }
-  return blocks(message.content).flatMap((block): ResponsesInputItem[] => {
-    if (block.type === 'text') {
-      return [
-        {
-          role: role === 'system' ? 'developer' : role,
-          content: [
-            { type: role === 'assistant' ? 'output_text' : 'input_text', text: textOnly([block]) },
-          ],
-        },
-      ];
+    const item: unknown = JSON.parse(
+      Buffer.from(block.signature.slice(signaturePrefix.length), 'base64url').toString(),
+    );
+    if (!isReasoningState(item)) {
+      throw new Error('Invalid reasoning state');
     }
-    if (role === 'assistant') {
-      return assistantInput(block, signaturePrefix);
-    }
-    if (role === 'user') {
-      return userInput(block);
-    }
-    throw new Error(`Unsupported native worker content: ${block.type}`);
-  });
+    return {
+      type: 'reasoning',
+      id: item.id,
+      encrypted_content: item.encrypted_content,
+      summary: item.summary ?? [],
+    };
+  };
 }
 
 export function toResponses(
@@ -619,12 +424,9 @@ export function toResponses(
   model: string,
   signaturePrefix = SIGNATURE_PREFIX,
 ): ResponsesRequest {
-  if (!Array.isArray(body.messages)) {
-    throw new Error('messages must be an array');
-  }
   validateRequestOptions(body);
   const format = outputFormat(body);
-  const input = body.messages.flatMap((message) => messageInput(message, signaturePrefix));
+  const input = normalizeConversation(body.messages, decodeReasoning(signaturePrefix));
   // Claude's tool-search flow keeps deferred schemas out of the initial model
   // request. A loaded tool is resent without defer_loading on the next turn.
   const tools = (body.tools ?? [])
@@ -638,7 +440,7 @@ export function toResponses(
   const effort = reasoningEffort(body);
   return {
     model,
-    instructions: textOnly(body.system ?? ''),
+    instructions: textContent(body.system ?? ''),
     input,
     tools,
     ...(format

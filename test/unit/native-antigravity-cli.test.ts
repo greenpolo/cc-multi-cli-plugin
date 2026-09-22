@@ -369,3 +369,27 @@ test('cleans an ignored-signal descendant when the CLI closes first', async (t) 
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 });
+
+test('a synchronous spawn failure is reported as an agy failure, not a bare native one', async () => {
+  const failure = Object.assign(new Error('spawn EAGAIN'), { code: 'EAGAIN' });
+  await assert.rejects(
+    runAntigravity({
+      cwd: process.cwd(),
+      executable: process.execPath,
+      prompt: 'hello',
+      signal: AbortSignal.timeout(5000),
+      spawn: () => {
+        throw failure;
+      },
+    }),
+    (error: unknown) => {
+      // The shared runner throws before any agy parser state exists; a bare
+      // NativeCliError would lose this provider's own failure vocabulary.
+      assert(isCliError(error), `expected an AntigravityCliError, got ${String(error)}`);
+      assert.equal(error.name, 'AntigravityCliError');
+      assert.equal(error.code, 'spawn');
+      assert.equal(error.systemCode, 'EAGAIN');
+      return true;
+    },
+  );
+});

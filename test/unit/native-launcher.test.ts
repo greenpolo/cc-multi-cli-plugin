@@ -575,7 +575,7 @@ result(JSON.stringify({settings,agents,args,models:args.filter(x=>x.startsWith('
 
 test('launcher registers only Cursor picker workers and keeps the representative catalog under 30 KB', () => {
   const cursor = cursorModelOptions(
-    ['default', 'grok-4.6', 'composer-2.5', 'catalog-only'].map((id) => ({
+    ['default', 'grok-4.7', 'composer-2.5', 'catalog-only'].map((id) => ({
       id,
       displayName: id,
       variants: [{ displayName: 'Default', isDefault: true, params: [] }],
@@ -605,11 +605,11 @@ test('launcher registers only Cursor picker workers and keeps the representative
   assert.equal(Object.keys(agents).filter((name) => name.startsWith('cursor-')).length, 3);
   assert(!Object.keys(agents).some((name) => name.includes('catalog-only')));
   assert(definitionBytes < 30000, `representative worker JSON was ${definitionBytes} bytes`);
-  assert.equal(ZEN_MODELS.length, 19);
+  assert.equal(ZEN_MODELS.length, 21);
 });
 
 test('worker registration follows selected models and retains their effort aliases', () => {
-  const selected = ['multi/openai/gpt-5.6-luna', 'multi/zen/gpt-5.6-sol'];
+  const selected = ['multi/openai/gpt-6-luna', 'multi/zen/gpt-5.6-sol'];
   const agents = workerDefinitions(true, [], true, [], [], selected);
   assert.deepEqual(new Set(Object.values(agents).map((worker) => worker.model)), new Set(selected));
   assert.equal(Object.keys(agents).length, 12);
