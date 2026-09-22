@@ -9,33 +9,35 @@ export type HarnessEvent = [StreamEventName, StreamEventBody];
  * One in-flight native turn. `meta` carries provider-owned run facts (Cursor's
  * `mayHaveRun`/`committed`/row observer); the registry itself never reads it.
  */
-export type HarnessExchange = {
+export type HarnessExchange<M extends object = Record<string, unknown>> = {
   result: Promise<MessagesResponse>;
   controller: AbortController;
   events: HarnessEvent[];
   listeners: Set<Emit>;
   observers: number;
   settled: boolean;
-  meta: Record<string, unknown>;
+  meta: M;
 };
 
 /**
  * Identical requests share one native run. A second caller observes the running
  * exchange instead of starting a second paid turn.
  */
-export class ExchangeRegistry {
+export class ExchangeRegistry<M extends object = Record<string, unknown>> {
   private readonly provider: string;
-  private readonly exchanges = new Map<string, HarnessExchange>();
+  private readonly createMeta: () => M;
+  private readonly exchanges = new Map<string, HarnessExchange<M>>();
 
-  constructor(options: { provider: string }) {
+  constructor(options: { provider: string; createMeta: () => M }) {
     this.provider = options.provider;
+    this.createMeta = options.createMeta;
   }
 
   start(
     key: string,
-    run: (exchange: HarnessExchange, emit: Emit) => Promise<MessagesResponse>,
-    options: { retain?: (exchange: HarnessExchange) => boolean } = {},
-  ): HarnessExchange {
+    run: (exchange: HarnessExchange<M>, emit: Emit) => Promise<MessagesResponse>,
+    options: { retain?: (exchange: HarnessExchange<M>) => boolean } = {},
+  ): HarnessExchange<M> {
     const events: HarnessEvent[] = [];
     const listeners = new Set<Emit>();
     const forward: Emit = (name, value) => {
@@ -44,13 +46,13 @@ export class ExchangeRegistry {
         listener(name, value);
       }
     };
-    const exchange: HarnessExchange = {
+    const exchange: HarnessExchange<M> = {
       controller: new AbortController(),
       events,
       listeners,
       observers: 0,
       settled: false,
-      meta: {},
+      meta: this.createMeta(),
       result: Promise.resolve().then(() => run(exchange, forward)),
     };
     const settle = () => {
@@ -69,7 +71,7 @@ export class ExchangeRegistry {
     return exchange;
   }
 
-  get(key: string): HarnessExchange | undefined {
+  get(key: string): HarnessExchange<M> | undefined {
     return this.exchanges.get(key);
   }
 
@@ -92,7 +94,7 @@ export class ExchangeRegistry {
     return false;
   }
 
-  all(): HarnessExchange[] {
+  all(): HarnessExchange<M>[] {
     return [...this.exchanges.values()];
   }
 
@@ -101,7 +103,7 @@ export class ExchangeRegistry {
    * and cancel the native run once its last observer leaves.
    */
   async observe(
-    exchange: HarnessExchange,
+    exchange: HarnessExchange<M>,
     signal: AbortSignal,
     emit?: Emit,
   ): Promise<MessagesResponse> {

@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
-import type { HarnessEvent } from '../../plugins/multi-core/src/gateway/harness-exchange.ts';
+import { commitHarnessResponse } from '../../plugins/multi-core/src/gateway/harness-completion.ts';
+import {
+  ExchangeRegistry,
+  type HarnessEvent,
+} from '../../plugins/multi-core/src/gateway/harness-exchange.ts';
 import {
   HarnessResponse,
   type HarnessUsageFields,
   usageSource,
 } from '../../plugins/multi-core/src/gateway/harness-response.ts';
+import {
+  type HarnessSessionBase,
+  HarnessSessionStore,
+} from '../../plugins/multi-core/src/gateway/harness-session.ts';
 import type { Emit } from '../../plugins/multi-core/src/gateway/messages.ts';
 import type { ModDisplayEvent } from '../../plugins/multi-core/src/gateway/mod-bridge.ts';
 
@@ -81,6 +92,61 @@ test('a run without usage reports an estimate and keeps its requested input coun
   assert.equal(usageSource({ input: 1, output: 2 }), 'provider');
   assert.equal(usageSource({ input: 1 }), 'mixed');
   assert.equal(usageSource({}), 'mixed');
+});
+
+test('a failed completion write rolls state back and emits no terminal events', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-completion-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  type Saved = HarnessSessionBase & { version: 1; marker: string };
+  const store = new HarnessSessionStore<Saved>({
+    provider: 'native',
+    stateDirectory: directory,
+    platform: 'linux',
+    version: 1,
+    runtime: () => ({}),
+    fresh: (identity) => ({
+      version: 1,
+      provider: 'native',
+      identity,
+      interrupted: true,
+      marker: 'before',
+    }),
+    validate: () => true,
+  });
+  const lease = await store.acquireLease('worker');
+  const streamed = collector();
+  const response = new HarnessResponse('native-1', 1, streamed.emit);
+  response.text('answer');
+  const finished = response.finish({ input: 1, output: 1 });
+  const terminal = collector();
+  const registry = new ExchangeRegistry({ provider: 'Native', createMeta: () => ({}) });
+  const exchange = registry.start('key', async () => finished);
+  store.save = async () => {
+    throw new Error('disk full');
+  };
+  await assert.rejects(
+    commitHarnessResponse({
+      session: lease.session,
+      store,
+      response,
+      finished,
+      exchange,
+      key: 'a'.repeat(64),
+      emit: terminal.emit,
+      update: (saved) => {
+        saved.interrupted = false;
+        saved.marker = 'after';
+      },
+    }),
+    /disk full/,
+  );
+  assert.equal(lease.session.saved.interrupted, true);
+  assert.equal(lease.session.saved.marker, 'before');
+  assert.equal(lease.session.saved.response, undefined);
+  assert.deepEqual(terminal.events, []);
+  await exchange.result;
+  await lease.release();
+  await store.closeAll();
 });
 
 test('a display row interrupts the text block and carries no executable tool input', () => {

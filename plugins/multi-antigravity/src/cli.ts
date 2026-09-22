@@ -196,7 +196,7 @@ function spawnAntigravity(options: AntigravityRunOptions): Promise<AntigravityRu
   const platform = options.platform ?? process.platform;
   const promptOnStdin = Buffer.byteLength(options.prompt) >= promptArgumentLimitBytes(platform);
   const environment = antigravityEnvironment(options.env);
-  return runNativeCli<ParserState, AntigravityResult>({
+  return runNativeCli<ParserState, AntigravityResult, AntigravityStreamEvent>({
     name: 'Antigravity',
     executable: 'agy',
     configuredPath: options.executable,
@@ -213,7 +213,7 @@ function spawnAntigravity(options: AntigravityRunOptions): Promise<AntigravityRu
       : undefined,
     parser: { initSeen: false },
     parseLine,
-    onEvent: (event) => options.onEvent?.(event as AntigravityStreamEvent),
+    onEvent: options.onEvent,
     finish: finishValue,
   });
 }
@@ -261,7 +261,7 @@ function finishValue(
 function parseLine(
   line: string,
   parser: ParserState,
-  emit: (event: unknown) => void,
+  emit: (event: AntigravityStreamEvent) => void,
   fail: (error: NativeCliError) => void,
 ) {
   if (!line.trim()) {

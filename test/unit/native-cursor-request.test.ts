@@ -102,3 +102,59 @@ test('native Cursor estimates shrink with supplied context and preserve complete
   assert.match(history.prompt.text ?? '', /Already inspected/);
   assert.match(history.prompt.text ?? '', /never repeat them/);
 });
+
+test('Cursor serializes the shared normalized conversation without provider reasoning', () => {
+  const prepared = prepareCursorRequest({
+    ...body,
+    messages: [
+      { role: 'user', content: 'Inspect the existing result.' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'private', signature: 'foreign:opaque' },
+          { type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: 'fixture.txt' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'read-1',
+            content: [
+              { type: 'text', text: 'already read' },
+              { type: 'tool_reference', tool_name: 'Search' },
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'cGl4ZWxz' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const envelope = JSON.parse((prepared.prompt.text ?? '').split('\n').at(-1) ?? '');
+  assert.deepEqual(envelope, {
+    conversation: [
+      { role: 'user', content: [{ type: 'input_text', text: 'Inspect the existing result.' }] },
+      {
+        type: 'function_call',
+        call_id: 'read-1',
+        name: 'Read',
+        arguments: '{"file_path":"fixture.txt"}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'read-1',
+        output: [
+          { type: 'input_text', text: 'already read' },
+          { type: 'input_text', text: 'Available tool: Search' },
+          { type: 'text', text: '[Attached image 1]' },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(prepared.prompt.images, [{ data: 'cGl4ZWxz', mimeType: 'image/png' }]);
+  assert.doesNotMatch(prepared.prompt.text ?? '', /private|foreign:opaque|reasoning/);
+});

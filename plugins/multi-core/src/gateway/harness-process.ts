@@ -95,7 +95,7 @@ function spawnSystemCode(error: unknown): string | undefined {
 
 type NativeParser = { terminal?: unknown; failure?: NativeCliError };
 
-type NativeCliSpec<P extends NativeParser, R> = {
+type NativeCliSpec<P extends NativeParser, E, R> = {
   /** Message subject, for example `Grok`. */
   name: string;
   /** Binary to resolve on PATH, for example `grok`. */
@@ -115,10 +115,10 @@ type NativeCliSpec<P extends NativeParser, R> = {
   parseLine: (
     line: string,
     parser: P,
-    emit: (event: unknown) => void,
+    emit: (event: E) => void,
     fail: (error: NativeCliError) => void,
   ) => void;
-  onEvent?: (event: unknown) => void;
+  onEvent?: (event: E) => void;
   /**
    * The provider decides what its stream proved. It stays provider-side because
    * a missing terminal result must never become a success, and providers
@@ -140,8 +140,8 @@ type NativeCliRun<R> = {
   stderr: string;
 };
 
-type RunContext<P extends NativeParser, R> = {
-  spec: NativeCliSpec<P, R>;
+type RunContext<P extends NativeParser, E, R> = {
+  spec: NativeCliSpec<P, E, R>;
   child: ChildProcess;
   decoder: StringDecoder;
   limit: number;
@@ -164,8 +164,8 @@ type RunContext<P extends NativeParser, R> = {
  * escalated SIGINT, SIGTERM, SIGKILL across the whole process tree, and a run
  * that stops without a terminal result is never reported as an answer.
  */
-export function runNativeCli<P extends NativeParser, R>(
-  spec: NativeCliSpec<P, R>,
+export function runNativeCli<P extends NativeParser, R, E = unknown>(
+  spec: NativeCliSpec<P, E, R>,
 ): Promise<NativeCliRun<R>> {
   return new Promise<NativeCliRun<R>>((resolve, reject) => {
     let child: ChildProcess;
@@ -179,7 +179,7 @@ export function runNativeCli<P extends NativeParser, R>(
       );
       return;
     }
-    const context: RunContext<P, R> = {
+    const context: RunContext<P, E, R> = {
       spec,
       child,
       decoder: new StringDecoder('utf8'),
@@ -199,7 +199,7 @@ export function runNativeCli<P extends NativeParser, R>(
   });
 }
 
-function startChild<P extends NativeParser, R>(spec: NativeCliSpec<P, R>): ChildProcess {
+function startChild<P extends NativeParser, E, R>(spec: NativeCliSpec<P, E, R>): ChildProcess {
   const invocation = executableInvocation(
     resolveExecutable(spec.executable, {
       platform: spec.platform,
@@ -221,7 +221,7 @@ function startChild<P extends NativeParser, R>(spec: NativeCliSpec<P, R>): Child
   });
 }
 
-function attach<P extends NativeParser, R>(context: RunContext<P, R>): void {
+function attach<P extends NativeParser, E, R>(context: RunContext<P, E, R>): void {
   const { child, spec } = context;
   child.stdout?.on('data', (chunk: Buffer) => consumeStdout(context, chunk));
   child.stderr?.on('data', (chunk: Buffer) => consumeStderr(context, chunk));
@@ -246,14 +246,17 @@ function attach<P extends NativeParser, R>(context: RunContext<P, R>): void {
   }
 }
 
-function kill<P extends NativeParser, R>(context: RunContext<P, R>, signal: NodeJS.Signals): void {
+function kill<P extends NativeParser, E, R>(
+  context: RunContext<P, E, R>,
+  signal: NodeJS.Signals,
+): void {
   if (context.child.pid) {
     terminateProcessTree(context.child.pid, { platform: context.spec.platform, signal });
   }
 }
 
 /** Interrupt first, then terminate, then kill: a CLI may save native state. */
-function stop<P extends NativeParser, R>(context: RunContext<P, R>): void {
+function stop<P extends NativeParser, E, R>(context: RunContext<P, E, R>): void {
   kill(context, 'SIGINT');
   context.interruptTimer = setTimeout(() => {
     kill(context, 'SIGTERM');
@@ -261,20 +264,23 @@ function stop<P extends NativeParser, R>(context: RunContext<P, R>): void {
   }, interruptGraceMs);
 }
 
-function clearTimers<P extends NativeParser, R>(context: RunContext<P, R>): void {
+function clearTimers<P extends NativeParser, E, R>(context: RunContext<P, E, R>): void {
   clearTimeout(context.interruptTimer);
   clearTimeout(context.terminateTimer);
   clearTimeout(context.cancellationTimer);
 }
 
-function fail<P extends NativeParser, R>(context: RunContext<P, R>, error: NativeCliError): void {
+function fail<P extends NativeParser, E, R>(
+  context: RunContext<P, E, R>,
+  error: NativeCliError,
+): void {
   if (!context.spec.parser.failure) {
     context.spec.parser.failure = error;
     stop(context);
   }
 }
 
-function emitEvent<P extends NativeParser, R>(context: RunContext<P, R>, event: unknown): void {
+function emitEvent<P extends NativeParser, E, R>(context: RunContext<P, E, R>, event: E): void {
   try {
     context.spec.onEvent?.(event);
   } catch (error) {
@@ -285,7 +291,10 @@ function emitEvent<P extends NativeParser, R>(context: RunContext<P, R>, event: 
   }
 }
 
-function consumeStdout<P extends NativeParser, R>(context: RunContext<P, R>, chunk: Buffer): void {
+function consumeStdout<P extends NativeParser, E, R>(
+  context: RunContext<P, E, R>,
+  chunk: Buffer,
+): void {
   if (context.spec.parser.failure) {
     return;
   }
@@ -316,7 +325,7 @@ function consumeStdout<P extends NativeParser, R>(context: RunContext<P, R>, chu
   }
 }
 
-function parse<P extends NativeParser, R>(context: RunContext<P, R>, line: string): void {
+function parse<P extends NativeParser, E, R>(context: RunContext<P, E, R>, line: string): void {
   context.spec.parseLine(
     line,
     context.spec.parser,
@@ -325,7 +334,10 @@ function parse<P extends NativeParser, R>(context: RunContext<P, R>, line: strin
   );
 }
 
-function consumeStderr<P extends NativeParser, R>(context: RunContext<P, R>, chunk: Buffer): void {
+function consumeStderr<P extends NativeParser, E, R>(
+  context: RunContext<P, E, R>,
+  chunk: Buffer,
+): void {
   if (context.spec.parser.failure) {
     return;
   }
@@ -340,7 +352,7 @@ function consumeStderr<P extends NativeParser, R>(context: RunContext<P, R>, chu
   context.stderr += chunk.toString('utf8');
 }
 
-function abortRun<P extends NativeParser, R>(context: RunContext<P, R>): void {
+function abortRun<P extends NativeParser, E, R>(context: RunContext<P, E, R>): void {
   if (context.aborted) {
     return;
   }
@@ -353,8 +365,8 @@ function abortRun<P extends NativeParser, R>(context: RunContext<P, R>): void {
   context.cancellationTimer = setTimeout(() => finishRun(context, null, null), cancellationWaitMs);
 }
 
-function finishRun<P extends NativeParser, R>(
-  context: RunContext<P, R>,
+function finishRun<P extends NativeParser, E, R>(
+  context: RunContext<P, E, R>,
   exitCode: number | null,
   signal: NodeJS.Signals | null,
 ): void {

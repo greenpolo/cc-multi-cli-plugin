@@ -34,7 +34,10 @@ function collector() {
 }
 
 test('one native run serves every identical request and replays what it already emitted', async () => {
-  const registry = new ExchangeRegistry({ provider: 'Native' });
+  const registry = new ExchangeRegistry<{ mayHaveRun?: boolean }>({
+    provider: 'Native',
+    createMeta: () => ({}),
+  });
   const started = Promise.withResolvers<MessagesResponse>();
   const exchange = registry.start(key, async (_exchange, emit) => {
     emit('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'hi' } });
@@ -58,7 +61,7 @@ test('one native run serves every identical request and replays what it already 
 });
 
 test('the last observer leaving cancels the native run', async () => {
-  const registry = new ExchangeRegistry({ provider: 'Native' });
+  const registry = new ExchangeRegistry({ provider: 'Native', createMeta: () => ({}) });
   const reasons: unknown[] = [];
   const exchange = registry.start(key, (running) => {
     running.controller.signal.addEventListener('abort', () => {
@@ -75,7 +78,7 @@ test('the last observer leaving cancels the native run', async () => {
 });
 
 test('an already aborted observer never subscribes', async () => {
-  const registry = new ExchangeRegistry({ provider: 'Native' });
+  const registry = new ExchangeRegistry({ provider: 'Native', createMeta: () => ({}) });
   const exchange = registry.start(key, async () => answer());
   const controller = new AbortController();
   controller.abort(new Error('gone'));
@@ -86,8 +89,12 @@ test('an already aborted observer never subscribes', async () => {
 });
 
 test('a retained exchange stays addressable and an ordinary one is dropped', async () => {
-  const registry = new ExchangeRegistry({ provider: 'Native' });
-  const retain = (exchange: HarnessExchange) => exchange.meta.mayHaveRun === true;
+  const registry = new ExchangeRegistry<{ mayHaveRun?: boolean }>({
+    provider: 'Native',
+    createMeta: () => ({}),
+  });
+  const retain = (exchange: HarnessExchange<{ mayHaveRun?: boolean }>) =>
+    exchange.meta.mayHaveRun === true;
   const uncertain = registry.start(
     key,
     async (exchange) => {

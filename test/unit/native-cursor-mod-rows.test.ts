@@ -126,6 +126,7 @@ test('ModBridge emits completed rows in order with tool-call-answerable input', 
 
 test('Cursor stream contains ordered display blocks and completed exchange replays without a send', async (t) => {
   const updates: Array<{ update: InteractionUpdate }> = [
+    { update: { type: 'text-delta', text: 'Inspecting. ' } },
     {
       update: {
         type: 'tool-call-started',
@@ -173,6 +174,20 @@ test('Cursor stream contains ordered display blocks and completed exchange repla
     toolUseId: 'read',
   });
   assert.equal(f.sends(), 1);
+  assert.deepEqual(
+    first.events
+      .filter(([name]) => name === 'content_block_start' || name === 'content_block_stop')
+      .map(([name, value]) => [name, (value as { index: number }).index]),
+    [
+      ['content_block_start', 0],
+      ['content_block_stop', 0],
+      ['content_block_start', 1],
+      ['content_block_stop', 1],
+      ['content_block_start', 2],
+      ['content_block_stop', 2],
+    ],
+    'each display/text block closes before the next starts, even before durable completion',
+  );
   const replay = capture();
   await f.harness.handle(
     body,

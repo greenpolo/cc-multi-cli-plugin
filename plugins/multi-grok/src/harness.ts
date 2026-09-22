@@ -2,10 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type {
-  HarnessEvent,
-  HarnessExchange,
-} from '../../multi-core/src/gateway/harness-exchange.ts';
+import {
+  archiveHarnessReply,
+  commitHarnessResponse,
+} from '../../multi-core/src/gateway/harness-completion.ts';
+import type { HarnessExchange } from '../../multi-core/src/gateway/harness-exchange.ts';
 import {
   ExchangeRegistry,
   replayPersisted,
@@ -21,11 +22,10 @@ import {
 import type { HarnessUsageFields } from '../../multi-core/src/gateway/harness-response.ts';
 import { HarnessResponse } from '../../multi-core/src/gateway/harness-response.ts';
 import type {
+  HarnessSession,
   HarnessSessionBase,
-  HarnessSessionRuntime,
 } from '../../multi-core/src/gateway/harness-session.ts';
 import {
-  atomicJson,
   HarnessBusyError,
   HarnessSessionStore,
 } from '../../multi-core/src/gateway/harness-session.ts';
@@ -60,7 +60,7 @@ type GrokSaved = HarnessSessionBase & {
   /** Running total in USD, reported per invocation by the CLI. */
   cost?: number;
 };
-type GrokSession = GrokSaved & HarnessSessionRuntime;
+type GrokSession = HarnessSession<GrokSaved>;
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -72,7 +72,10 @@ export class GrokHarness {
   private readonly run: GrokRunner;
   private readonly checkPermissions: CheckGrokPermissions;
   private readonly store: HarnessSessionStore<GrokSaved>;
-  private readonly exchanges = new ExchangeRegistry({ provider: PROVIDER });
+  private readonly exchanges = new ExchangeRegistry({
+    provider: PROVIDER,
+    createMeta: () => ({}),
+  });
   private closed = false;
 
   constructor(
@@ -103,6 +106,7 @@ export class GrokHarness {
       stateDirectory,
       platform,
       version: 1,
+      runtime: () => ({}),
       fresh: (identity) => ({ version: 1, provider: STORE_PROVIDER, identity, interrupted: false }),
       validate: (saved) =>
         (saved.sessionId === undefined || isUuid(saved.sessionId)) &&
@@ -176,23 +180,33 @@ export class GrokHarness {
     exchange: HarnessExchange,
     emit: Emit,
   ): Promise<MessagesResponse> {
-    let saved: GrokSession;
+    let lease: Awaited<ReturnType<HarnessSessionStore<GrokSaved>['acquireLease']>>;
     try {
-      saved = await this.store.loadOnly(identity);
+      lease = await this.store.acquireLease(identity);
     } catch (error) {
       throw new GrokProviderError(error);
     }
-    const replayed = await replayPersisted({
-      stateDirectory: this.stateDirectory,
-      key,
-      saved,
-      emit,
-      provider: PROVIDER,
-    });
-    if (replayed !== undefined) {
-      return replayed;
+    const session = lease.session;
+    try {
+      const replayed = await replayPersisted({
+        stateDirectory: this.stateDirectory,
+        key,
+        saved: session.saved,
+        emit,
+        provider: PROVIDER,
+      });
+      if (replayed !== undefined) {
+        return replayed;
+      }
+      await archiveHarnessReply({
+        session,
+        stateDirectory: this.stateDirectory,
+        platform: this.platform,
+      });
+      return await this.execute(body, context, selection, cwd, session, key, exchange, emit);
+    } finally {
+      await lease.release();
     }
-    return this.execute(body, context, selection, cwd, identity, key, exchange, emit);
   }
 
   /**
@@ -215,8 +229,8 @@ export class GrokHarness {
   }> {
     // Computed only once the record is held, so a continuation error still releases
     // it in `execute`'s `finally` instead of leaving the session busy forever.
-    const messages = session.sessionId ? continuation(body, PROVIDER) : (body.messages ?? []);
-    const rewound = historyRewound(session, body.messages ?? [], grokHistoryHash);
+    const messages = session.saved.sessionId ? continuation(body, PROVIDER) : (body.messages ?? []);
+    const rewound = historyRewound(session.saved, body.messages ?? [], grokHistoryHash);
     const prepared = prepareGrokRequest({ ...body, messages }, selection.model.id);
     // A run policy is always checked, so an unsupported mode fails before the CLI
     // starts; a compaction turn then replaces it with its own toolless policy.
@@ -233,9 +247,9 @@ export class GrokHarness {
       interrupted: wasInterrupted,
       rewound,
       notice: policy.notice,
-      noticeChanged: !session.response || session.policyIdentity !== policyIdentity,
+      noticeChanged: !session.saved.response || session.saved.policyIdentity !== policyIdentity,
     });
-    session.policyIdentity = policyIdentity;
+    session.saved.policyIdentity = policyIdentity;
     return { prepared, policy, response };
   }
 
@@ -244,19 +258,13 @@ export class GrokHarness {
     context: PermissionContext,
     selection: ReturnType<typeof selectGrokModel>,
     cwd: string,
-    identity: string,
+    session: GrokSession,
     key: string,
     exchange: HarnessExchange,
     emit: Emit,
   ): Promise<MessagesResponse> {
-    let session: GrokSession;
-    try {
-      session = await this.store.acquire(identity);
-    } catch (error) {
-      throw new GrokProviderError(error);
-    }
     const signal = exchange.controller.signal;
-    const wasInterrupted = session.interrupted;
+    const wasInterrupted = session.saved.interrupted;
     let started = false;
     try {
       const { prepared, policy, response } = await this.openTurn(
@@ -269,7 +277,7 @@ export class GrokHarness {
         emit,
       );
       signal.throwIfAborted();
-      const sessionId = session.sessionId ?? randomUUID();
+      const sessionId = session.saved.sessionId ?? randomUUID();
       let startSave: Promise<void> | undefined;
       const startedAt = performance.now();
       const onEvent = (event: GrokStreamEvent) => {
@@ -277,8 +285,8 @@ export class GrokHarness {
           started = true;
           // The native session now exists. Record it before the turn completes so
           // a crash resumes this conversation instead of starting a fresh one.
-          session.sessionId = sessionId;
-          session.interrupted = true;
+          session.saved.sessionId = sessionId;
+          session.saved.interrupted = true;
           startSave = this.store.save(session).catch(() => {
             // The run continues regardless of a failed durability write.
           });
@@ -293,7 +301,9 @@ export class GrokHarness {
             : prepared.prompt,
           model: selection.model.id,
           ...(selection.effort ? { effort: selection.effort } : {}),
-          ...(session.sessionId ? { resume: session.sessionId } : { session: sessionId }),
+          ...(session.saved.sessionId
+            ? { resume: session.saved.sessionId }
+            : { session: sessionId }),
           mode: policy.mode,
           tools: policy.tools,
           disallowedTools: policy.disallowedTools,
@@ -319,17 +329,12 @@ export class GrokHarness {
       // The run ended without a terminal result. If the CLI ever produced output the
       // native turn's completion is unknown, so the next request resumes and says so.
       if (started) {
-        session.interrupted = true;
+        session.saved.interrupted = true;
         await this.store.save(session).catch(() => {
           // The run failure below is the more useful error to surface.
         });
       }
       throw new GrokProviderError(error);
-    } finally {
-      this.store.release(session);
-      if (this.closed) {
-        await this.store.releaseLock(session);
-      }
     }
   }
 
@@ -348,39 +353,31 @@ export class GrokHarness {
     const { session, response, outcome, selection, key, exchange, emit } = run;
     const result = outcome.result;
     // The CLI owns the identity it reports; a mismatch would silently fork history.
-    if (session.sessionId !== undefined && result.sessionId !== session.sessionId) {
+    if (session.saved.sessionId !== undefined && result.sessionId !== session.saved.sessionId) {
       throw new GrokProviderError(
-        `Grok answered on session ${result.sessionId} instead of ${session.sessionId}`,
+        `Grok answered on session ${result.sessionId} instead of ${session.saved.sessionId}`,
       );
     }
-    session.sessionId = result.sessionId;
-    session.interrupted = false;
-    session.cost = (session.cost ?? 0) + (result.costUsd ?? 0);
     appendDiagnostics(response, outcome, elapsedMs);
     const finished = response.finish(
       toHarnessUsage(result.usage),
       selection.model.id,
       selection.effort,
     );
-    const terminalEvents = response.takeTerminalEvents();
-    session.response = finished;
-    session.replay = {
+    return commitHarnessResponse({
+      session,
+      store: this.store,
+      response,
+      finished,
+      exchange,
       key,
-      events: [
-        ...exchange.events,
-        ...terminalEvents.map(([name, value]) => [name, structuredClone(value)] as HarnessEvent),
-      ],
-    };
-    await this.store.save(session);
-    await atomicJson(
-      path.join(this.stateDirectory, `${key}.response.json`),
-      { response: finished, events: session.replay.events },
-      this.platform,
-    );
-    for (const event of terminalEvents) {
-      emit(...event);
-    }
-    return finished;
+      emit,
+      update: (saved) => {
+        saved.sessionId = result.sessionId;
+        saved.interrupted = false;
+        saved.cost = (saved.cost ?? 0) + (result.costUsd ?? 0);
+      },
+    });
   }
 
   async close() {

@@ -3,8 +3,11 @@ import { realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  archiveHarnessReply,
+  commitHarnessResponse,
+} from '../../multi-core/src/gateway/harness-completion.ts';
+import {
   ExchangeRegistry,
-  type HarnessEvent,
   type HarnessExchange,
   replayPersisted,
 } from '../../multi-core/src/gateway/harness-exchange.ts';
@@ -22,10 +25,9 @@ import {
   type HarnessUsageFields,
 } from '../../multi-core/src/gateway/harness-response.ts';
 import {
-  atomicJson,
   HarnessBusyError,
+  type HarnessSession,
   type HarnessSessionBase,
-  type HarnessSessionRuntime,
   HarnessSessionStore,
   isRecord,
 } from '../../multi-core/src/gateway/harness-session.ts';
@@ -66,7 +68,7 @@ type Saved = HarnessSessionBase & {
   conversationId?: string;
   usage?: AntigravityUsage;
 };
-type Session = Saved & HarnessSessionRuntime;
+type Session = HarnessSession<Saved>;
 
 /** Everything one native turn is addressed by, fixed before the exchange starts. */
 type Turn = {
@@ -106,7 +108,7 @@ export class AntigravityHarness {
   private readonly checkPermissions: CheckAntigravityPermissions;
   private readonly platform: NodeJS.Platform;
   private readonly store: HarnessSessionStore<Saved>;
-  private readonly exchanges = new ExchangeRegistry({ provider: TAG });
+  private readonly exchanges = new ExchangeRegistry({ provider: TAG, createMeta: () => ({}) });
   private closed = false;
 
   constructor(
@@ -140,6 +142,7 @@ export class AntigravityHarness {
       stateDirectory,
       platform,
       version: SESSION_VERSION,
+      runtime: () => ({}),
       fresh: (identity) => ({
         version: SESSION_VERSION,
         provider: PROVIDER,
@@ -212,52 +215,61 @@ export class AntigravityHarness {
   }
 
   private async cachedExecute(turn: Turn, exchange: HarnessExchange, emit: Emit) {
-    let saved: Session;
+    let lease: Awaited<ReturnType<HarnessSessionStore<Saved>['acquireLease']>>;
     try {
       // A first-load race is a deterministic conflict, so it must leave here as
       // this provider's own failure: a bare busy error reads as a retryable 502.
-      saved = await this.store.loadOnly(turn.identity);
+      lease = await this.store.acquireLease(turn.identity);
     } catch (error) {
       throw new AntigravityProviderError(error);
     }
-    const replayed = await replayPersisted({
-      stateDirectory: this.stateDirectory,
-      key: turn.key,
-      saved,
-      emit,
-      provider: TAG,
-    });
-    return replayed ?? this.execute(turn, exchange, emit);
+    const session = lease.session;
+    try {
+      const replayed = await replayPersisted({
+        stateDirectory: this.stateDirectory,
+        key: turn.key,
+        saved: session.saved,
+        emit,
+        provider: TAG,
+      });
+      if (replayed) {
+        return replayed;
+      }
+      await archiveHarnessReply({
+        session,
+        stateDirectory: this.stateDirectory,
+        platform: this.platform,
+      });
+      return await this.execute(turn, session, exchange, emit);
+    } finally {
+      await lease.release();
+    }
   }
 
   private async execute(
     turn: Turn,
+    session: Session,
     exchange: HarnessExchange,
     emit: Emit,
   ): Promise<MessagesResponse> {
-    let session: Session | undefined;
     try {
       // Inside the try: a busy agent must be refused with this provider's own
       // failure, whose status is deterministic rather than retryable. The turn is
       // owned from here on, so every exit below releases it.
-      session = await this.store.acquire(turn.identity);
-      const messages = session.conversationId
+      const messages = session.saved.conversationId
         ? continuation(turn.body, TAG)
         : (turn.body.messages ?? []);
-      const rewound = historyRewound(session, turn.body.messages ?? [], antigravityHistoryHash);
+      const rewound = historyRewound(
+        session.saved,
+        turn.body.messages ?? [],
+        antigravityHistoryHash,
+      );
       return await this.runTurn(turn, { session, messages, rewound }, exchange, emit);
     } catch (error) {
       if (error instanceof AntigravityProviderError) {
         throw error;
       }
       throw new AntigravityProviderError(error);
-    } finally {
-      if (session) {
-        this.store.release(session);
-        if (this.closed) {
-          await this.store.releaseLock(session);
-        }
-      }
     }
   }
 
@@ -273,7 +285,7 @@ export class AntigravityHarness {
     let initConversationId: string | undefined;
     try {
       const prepared = prepareAntigravityRequest({ ...body, messages }, model.id);
-      if (session.interrupted) {
+      if (session.saved.interrupted) {
         prepared.prompt = `${interruptedNotice(TAG)}\n\n${prepared.prompt}`;
       }
       const policy = await this.checkPermissions(cwd, context);
@@ -283,12 +295,12 @@ export class AntigravityHarness {
       const policyIdentity = digest({ denied: nativeDenied, plan: policy.plan, notice });
       writeNotices(response, {
         tag: TAG,
-        interrupted: session.interrupted,
+        interrupted: session.saved.interrupted,
         rewound,
         notice,
-        noticeChanged: !session.response || session.policyIdentity !== policyIdentity,
+        noticeChanged: !session.saved.response || session.saved.policyIdentity !== policyIdentity,
       });
-      session.policyIdentity = policyIdentity;
+      session.saved.policyIdentity = policyIdentity;
       signal.throwIfAborted();
       let streamed = '';
       let initSave: Promise<void> | undefined;
@@ -299,7 +311,7 @@ export class AntigravityHarness {
           prompt: prepared.prompt,
           model: model.id,
           effort: modelEffort(model),
-          ...(session.conversationId ? { conversation: session.conversationId } : {}),
+          ...(session.saved.conversationId ? { conversation: session.saved.conversationId } : {}),
           ...(policy.plan ? { mode: 'plan' as const } : {}),
           env: { ...process.env, MULTI_ANTIGRAVITY_DENY: JSON.stringify(nativeDenied) },
           signal,
@@ -311,8 +323,8 @@ export class AntigravityHarness {
                 streamed += text;
               },
               (conversationId) => {
-                session.conversationId = conversationId;
-                session.interrupted = true;
+                session.saved.conversationId = conversationId;
+                session.saved.interrupted = true;
                 initConversationId = conversationId;
                 // Best-effort durability write: if the gateway crashes before a
                 // terminal result arrives, the next request resumes this native
@@ -330,10 +342,10 @@ export class AntigravityHarness {
       );
       await initSave;
       const result = outcome.result;
-      session.conversationId = result.conversation_id;
-      session.interrupted = false;
       appendDiagnostics(response, result, outcome.stderr, performance.now() - startedAt);
       if (result.status !== 'SUCCESS') {
+        session.saved.conversationId = result.conversation_id;
+        session.saved.interrupted = false;
         await this.store.save(session);
         throw new AntigravityProviderError(result.error ?? `Antigravity run ${result.status}`);
       }
@@ -344,7 +356,7 @@ export class AntigravityHarness {
       // native turn's completion is unknown; flag it so the next request can
       // ask agy to report its own state instead of guessing.
       if (!(error instanceof AntigravityProviderError) && initConversationId !== undefined) {
-        session.interrupted = true;
+        session.saved.interrupted = true;
         await this.store.save(session).catch(() => {
           // The run failure below is the more useful error to surface.
         });
@@ -366,30 +378,24 @@ export class AntigravityHarness {
   ): Promise<MessagesResponse> {
     response.text(terminalSuffix(streamed, result.response));
     const finished = response.finish(
-      usageFields(usageDelta(result.usage, session.usage)),
+      usageFields(usageDelta(result.usage, session.saved.usage)),
       model.id,
       modelEffort(model),
     );
-    const terminalEvents = response.takeTerminalEvents();
-    session.usage = result.usage;
-    session.response = finished;
-    session.replay = {
+    return commitHarnessResponse({
+      session,
+      store: this.store,
+      response,
+      finished,
+      exchange,
       key,
-      events: [
-        ...exchange.events,
-        ...terminalEvents.map(([name, value]) => [name, structuredClone(value)] as HarnessEvent),
-      ],
-    };
-    await this.store.save(session);
-    await atomicJson(
-      path.join(this.stateDirectory, `${key}.response.json`),
-      { response: finished, events: session.replay.events },
-      this.platform,
-    );
-    for (const event of terminalEvents) {
-      emit(...event);
-    }
-    return finished;
+      emit,
+      update: (saved) => {
+        saved.conversationId = result.conversation_id;
+        saved.interrupted = false;
+        saved.usage = result.usage;
+      },
+    });
   }
 
   private eventText(

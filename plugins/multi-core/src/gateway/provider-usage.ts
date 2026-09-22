@@ -1,4 +1,3 @@
-import type { CodexQuota } from '../../../multi-openai/src/usage.ts';
 import type { UsageSnapshot } from './receipts.ts';
 
 type UsageProvider = 'openai' | 'cursor' | 'zen' | 'antigravity' | 'grok';
@@ -14,7 +13,7 @@ export interface ProviderUsageView {
   updatedAt: string;
   providers: ProviderUsageRow[];
 }
-interface ProviderUsageOptions {
+export interface ProviderUsageOptions {
   enabled: readonly string[];
   openai?: ProviderUsageReader;
   cursor?: ProviderUsageReader;
@@ -23,7 +22,7 @@ interface ProviderUsageOptions {
   grok?: ProviderUsageReader;
   now?: () => number;
 }
-type ProviderUsageReader = (session: string) => Promise<{
+export type ProviderUsageReader = (session: string) => Promise<{
   summary: string;
   details: string[];
   status?: ProviderUsageRow['status'];
@@ -163,27 +162,4 @@ export class ProviderUsageDashboard {
       })),
     };
   }
-}
-
-export function codexQuotaView(quota: CodexQuota) {
-  const details = quota.windows.map((window) => {
-    const used = Math.max(0, Math.min(100, window.usedPercent));
-    const filled = Math.round((used / 100) * 16);
-    const bar = '█'.repeat(filled) + '░'.repeat(16 - filled);
-    return `${window.label}: ${bar} ${window.usedPercent}% used${window.resetsAt ? ` · resets ${window.resetsAt}` : ''}`;
-  });
-  if (quota.credits) {
-    details.push(
-      quota.credits.unlimited
-        ? 'Credits: unlimited'
-        : `Credits remaining: ${quota.credits.balance ?? 'not reported'}`,
-    );
-  }
-  details.push('Account quota across Codex activity; not API dollar spend.');
-  return {
-    summary: quota.windows.length
-      ? `${quota.plan ? `${quota.plan} · ` : ''}${quota.windows.map((window) => `${window.label}: ${window.usedPercent}% used`).join(' · ')}`
-      : 'No account quota windows reported',
-    details,
-  };
 }

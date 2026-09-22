@@ -25,10 +25,22 @@ export type HarnessSessionBase = {
 };
 
 /** Live state that is never persisted. */
-export type HarnessSessionRuntime = {
-  file: string;
-  busy: boolean;
+export type HarnessSession<S extends HarnessSessionBase, R extends object = object> = {
+  saved: S;
+  runtime: R;
+  readonly identity: string;
+  readonly file: string;
+  readonly busy: boolean;
+};
+
+export type HarnessTurnLease<S extends HarnessSessionBase, R extends object = object> = {
+  session: HarnessSession<S, R>;
   release: () => Promise<void>;
+};
+
+type OwnedSession = {
+  busy: boolean;
+  releases: Array<() => Promise<void>>;
   unlock?: Promise<void>;
 };
 
@@ -48,7 +60,7 @@ export const textContentBlock: ContentBlockCheck = (block) =>
  * flag and the load gate, so a provider cannot re-add queuing without bypassing
  * it: both entry points refuse a busy identity with `HarnessBusyError`.
  */
-export class HarnessSessionStore<S extends HarnessSessionBase> {
+export class HarnessSessionStore<S extends HarnessSessionBase, R extends object = object> {
   private readonly provider: string;
   /** The provider's display name, used only in messages the caller reads. */
   private readonly tag: string;
@@ -58,10 +70,17 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
   private readonly version: number;
   private readonly fresh: (identity: string) => S;
   private readonly validate: (saved: Partial<S>) => boolean;
-  private readonly transient: readonly string[];
-  private readonly records = new Map<string, S & HarnessSessionRuntime>();
-  private readonly creating = new Set<string>();
+  private readonly freshRuntime: (saved: S) => R;
+  private readonly aliasFiles: (identity: string) => string[];
+  private readonly restore?: (options: {
+    identity: string;
+    files: readonly string[];
+    read: (file: string) => Promise<unknown>;
+  }) => Promise<{ saved: unknown; migrated?: boolean }>;
+  private readonly records = new Map<string, HarnessSession<S, R>>();
+  private readonly owned = new WeakMap<HarnessSession<S, R>, OwnedSession>();
   private readonly loading = new Set<string>();
+  private closing = false;
 
   constructor(options: {
     provider: string;
@@ -72,8 +91,15 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     version: number;
     fresh: (identity: string) => S;
     validate: (saved: Partial<S>) => boolean;
-    /** Extra live-only keys a provider hangs on its record; never persisted. */
-    transient?: readonly string[];
+    runtime: (saved: S) => R;
+    /** Additional record aliases whose locks are held for the session lifetime. */
+    aliasFiles?: (identity: string) => string[];
+    /** Provider-owned selection or migration across canonical and alias records. */
+    restore?: (options: {
+      identity: string;
+      files: readonly string[];
+      read: (file: string) => Promise<unknown>;
+    }) => Promise<{ saved: unknown; migrated?: boolean }>;
     /** Accepts the content blocks this provider's replies may carry on replay. */
     validContentBlock?: ContentBlockCheck;
   }) {
@@ -85,31 +111,56 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     this.version = options.version;
     this.fresh = options.fresh;
     this.validate = options.validate;
-    this.transient = options.transient ?? [];
+    this.freshRuntime = options.runtime;
+    this.aliasFiles = options.aliasFiles ?? (() => []);
+    this.restore = options.restore;
   }
 
   /** One turn at a time per agent: take the record and mark it busy, or refuse. */
-  async acquire(identity: string): Promise<S & HarnessSessionRuntime> {
+  async acquireLease(identity: string): Promise<HarnessTurnLease<S, R>> {
+    this.assertOpen();
     const current = this.records.get(identity);
-    if (current?.busy || this.creating.has(identity)) {
+    if (current?.busy || this.loading.has(identity)) {
       throw new HarnessBusyError(
         `A different request is already running for this ${this.tag} agent`,
       );
     }
-    this.creating.add(identity);
+    this.loading.add(identity);
     try {
       const session = current ?? (await this.load(identity));
-      session.busy = true;
-      return session;
+      this.assertOpen();
+      const owned = this.mustOwn(session);
+      owned.busy = true;
+      let released = false;
+      return {
+        session,
+        release: async () => {
+          if (released) {
+            return;
+          }
+          released = true;
+          owned.busy = false;
+          if (this.closing) {
+            await this.releaseLock(session);
+            this.records.delete(identity);
+          }
+        },
+      };
     } finally {
-      this.creating.delete(identity);
+      this.loading.delete(identity);
     }
   }
 
   /** Read the record without taking the turn, for replay decisions. */
-  async loadOnly(identity: string): Promise<S & HarnessSessionRuntime> {
+  async loadOnly(identity: string): Promise<HarnessSession<S, R>> {
+    this.assertOpen();
     const current = this.records.get(identity);
     if (current) {
+      if (current.busy) {
+        throw new HarnessBusyError(
+          `A different request is already running for this ${this.tag} agent`,
+        );
+      }
       return current;
     }
     if (this.loading.has(identity)) {
@@ -123,39 +174,25 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     }
   }
 
-  release(session: S & HarnessSessionRuntime): void {
-    session.busy = false;
-  }
-
-  save(session: S & HarnessSessionRuntime): Promise<void> {
-    const { file: _file, busy: _busy, release: _release, unlock: _unlock, ...saved } = session;
-    const persisted = Object.fromEntries(
-      Object.entries(saved).filter(([key]) => !this.transient.includes(key)),
-    );
-    return atomicJson(session.file, { ...persisted, provider: this.provider }, this.platform);
-  }
-
-  /**
-   * Drop a cached record without touching its file. The caller owns the lock it
-   * took: release it first to hand the identity on, or keep it to hold the scope.
-   */
-  forget(identity: string): void {
-    this.records.delete(identity);
-  }
-
-  releaseLock(session: S & HarnessSessionRuntime): Promise<void> {
-    session.unlock ??= session.release();
-    return session.unlock;
+  async save(session: HarnessSession<S, R>): Promise<void> {
+    const owned = this.mustOwn(session);
+    if (owned.unlock !== undefined) {
+      throw new Error(`${this.tag} session lock has been released`);
+    }
+    await atomicJson(session.file, { ...session.saved, provider: this.provider }, this.platform);
   }
 
   async closeAll(): Promise<void> {
+    this.closing = true;
     for (const session of this.records.values()) {
-      await this.releaseLock(session);
+      if (!session.busy) {
+        await this.releaseLock(session);
+        this.records.delete(session.identity);
+      }
     }
-    this.records.clear();
   }
 
-  sessions(): IterableIterator<S & HarnessSessionRuntime> {
+  sessions(): IterableIterator<HarnessSession<S, R>> {
     return this.records.values();
   }
 
@@ -164,28 +201,54 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     return path.join(this.stateDirectory, `${digest(identity)}.session.json`);
   }
 
-  private async load(identity: string): Promise<S & HarnessSessionRuntime> {
+  private async load(identity: string): Promise<HarnessSession<S, R>> {
     await mkdir(this.stateDirectory, { recursive: true, mode: 0o700 });
     const file = this.sessionFile(identity);
-    const release = await lockStateFile(`${file}.lock`);
+    const files = [
+      file,
+      ...this.aliasFiles(identity).map((item) => resolveStateFile(this.stateDirectory, item)),
+    ];
+    const uniqueFiles = [...new Set(files)];
+    const releases: Array<() => Promise<void>> = [];
     try {
-      const saved = await this.read(file);
-      const session: S & HarnessSessionRuntime = {
-        ...(saved ?? this.fresh(identity)),
+      for (const locked of [...uniqueFiles].sort()) {
+        releases.push(await lockStateFile(`${locked}.lock`, { platform: this.platform }));
+      }
+      const restored = this.restore
+        ? await this.restore({ identity, files: uniqueFiles, read: readJson })
+        : { saved: await readJson(file) };
+      const selected = this.validateSaved(restored.saved, identity);
+      const saved = selected ?? this.fresh(identity);
+      const owned: OwnedSession = { busy: false, releases };
+      const session: HarnessSession<S, R> = {
+        saved,
+        runtime: this.freshRuntime(saved),
+        identity,
         file,
-        busy: false,
-        release,
+        get busy() {
+          return owned.busy;
+        },
       };
+      this.owned.set(session, owned);
+      if (restored.migrated === true && selected !== undefined) {
+        await this.save(session);
+      }
+      if (this.closing) {
+        throw new Error(`${this.tag} session store is closed`);
+      }
       this.records.set(identity, session);
       return session;
     } catch (error) {
-      await release();
+      await Promise.allSettled(releases.map((release) => release()));
       throw error;
     }
   }
 
-  private async read(file: string): Promise<S | undefined> {
-    const saved = (await readJson(file)) as (Partial<S> & { version?: unknown }) | undefined;
+  private validateSaved(value: unknown, identity: string): S | undefined {
+    if (value !== undefined && !isRecord(value)) {
+      throw new Error(`${this.tag} session has invalid state; refusing native replay`);
+    }
+    const saved = value as (Partial<S> & { version?: unknown }) | undefined;
     if (saved === undefined) {
       return undefined;
     }
@@ -196,7 +259,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     }
     if (
       saved.provider !== this.provider ||
-      typeof saved.identity !== 'string' ||
+      saved.identity !== identity ||
       typeof saved.interrupted !== 'boolean' ||
       (saved.policyIdentity !== undefined && !isHash(saved.policyIdentity)) ||
       !validSavedResponse(saved, this.validContentBlock) ||
@@ -206,6 +269,30 @@ export class HarnessSessionStore<S extends HarnessSessionBase> {
     }
     return saved as S;
   }
+
+  private mustOwn(session: HarnessSession<S, R>): OwnedSession {
+    const owned = this.owned.get(session);
+    if (!owned) {
+      throw new Error(`${this.tag} session is not owned by this store`);
+    }
+    return owned;
+  }
+
+  private releaseLock(session: HarnessSession<S, R>): Promise<void> {
+    const owned = this.mustOwn(session);
+    owned.unlock ??= Promise.all(owned.releases.map((release) => release())).then(() => undefined);
+    return owned.unlock;
+  }
+
+  private assertOpen(): void {
+    if (this.closing) {
+      throw new Error(`${this.tag} session store is closed`);
+    }
+  }
+}
+
+function resolveStateFile(directory: string, file: string): string {
+  return path.isAbsolute(file) ? file : path.join(directory, file);
 }
 
 function validSavedResponse(

@@ -46,6 +46,7 @@ async function store(t: test.TestContext) {
     stateDirectory: directory,
     platform: 'linux',
     version: 1,
+    runtime: () => ({}),
     fresh: (identity) => ({ version: 1, provider: 'native', identity, interrupted: false }),
     validate: (saved) => saved.sessionId === undefined || typeof saved.sessionId === 'string',
   });
@@ -55,25 +56,27 @@ async function store(t: test.TestContext) {
 
 test('a busy identity is refused without a queue and without touching the record', async (t) => {
   const { made } = await store(t);
-  const session = await made.acquire('worker-a');
-  session.sessionId = 'native-session';
-  session.interrupted = true;
+  const lease = await made.acquireLease('worker-a');
+  const { session } = lease;
+  session.saved.sessionId = 'native-session';
+  session.saved.interrupted = true;
 
-  await assert.rejects(made.acquire('worker-a'), (error: unknown) => {
+  await assert.rejects(made.acquireLease('worker-a'), (error: unknown) => {
     assert.ok(error instanceof HarnessBusyError);
     assert.match(error.message, /already running for this native agent/);
     return true;
   });
   // The refused request changed nothing: no rewind, no fresh record, still busy.
-  assert.equal(session.sessionId, 'native-session');
-  assert.equal(session.interrupted, true);
+  assert.equal(session.saved.sessionId, 'native-session');
+  assert.equal(session.saved.interrupted, true);
   assert.equal(session.busy, true);
   assert.deepEqual([...made.sessions()], [session]);
 
-  made.release(session);
-  const again = await made.acquire('worker-a');
-  assert.equal(again, session);
-  assert.equal(again.busy, true);
+  await lease.release();
+  const again = await made.acquireLease('worker-a');
+  assert.equal(again.session, session);
+  assert.equal(again.session.busy, true);
+  await again.release();
 });
 
 test('a second loader is refused while the first load is in flight', async (t) => {
@@ -90,15 +93,137 @@ test('a second loader is refused while the first load is in flight', async (t) =
   assert.equal(loaded.value.busy, false);
 });
 
+test('loadOnly refuses a busy turn and mixed first-load acquisition has one winner', async (t) => {
+  const { made } = await store(t);
+  const first = made.acquireLease('worker-mixed');
+  const second = made.loadOnly('worker-mixed');
+  const outcomes = await Promise.allSettled([first, second]);
+  assert.equal(outcomes.filter((item) => item.status === 'fulfilled').length, 1);
+  const rejected = outcomes.find((item) => item.status === 'rejected');
+  assert.ok(rejected?.status === 'rejected' && rejected.reason instanceof HarnessBusyError);
+  if (outcomes[0]?.status === 'fulfilled') {
+    await outcomes[0].value.release();
+  }
+});
+
+test('a record declaring a different identity is refused', async (t) => {
+  const { made } = await store(t);
+  const file = made.sessionFile('worker-owned');
+  await atomicJson(
+    file,
+    { version: 1, provider: 'native', identity: 'worker-other', interrupted: false },
+    'linux',
+  );
+  await assert.rejects(made.loadOnly('worker-owned'), /invalid state/);
+});
+
+test('a restored alias is migrated to the canonical file while both are locked', async (t) => {
+  const { directory } = await store(t);
+  const identity = 'worker-legacy';
+  const legacy = path.join(directory, 'legacy.session.json');
+  await atomicJson(
+    legacy,
+    { version: 1, provider: 'native', identity, interrupted: true, sessionId: 'old' },
+    'linux',
+  );
+  const migrated = new HarnessSessionStore<Saved>({
+    provider: 'native',
+    stateDirectory: directory,
+    platform: 'linux',
+    version: 1,
+    runtime: () => ({}),
+    fresh: (freshIdentity) => ({
+      version: 1,
+      provider: 'native',
+      identity: freshIdentity,
+      interrupted: false,
+    }),
+    validate: () => true,
+    aliasFiles: () => [legacy],
+    restore: async ({ files, read }) => ({ saved: await read(files[1]), migrated: true }),
+  });
+  const session = await migrated.loadOnly(identity);
+  assert.equal(session.saved.sessionId, 'old');
+  assert.deepEqual(await readJson(session.file), session.saved);
+  await migrated.closeAll();
+});
+
+test('close preserves a busy lock until its lease is released', async (t) => {
+  const { directory, made } = await store(t);
+  const lease = await made.acquireLease('worker-closing');
+  await made.closeAll();
+  assert.deepEqual([...made.sessions()], [lease.session]);
+  await lease.release();
+  assert.deepEqual([...made.sessions()], []);
+
+  const replacement = new HarnessSessionStore<Saved>({
+    provider: 'native',
+    stateDirectory: directory,
+    platform: 'linux',
+    version: 1,
+    runtime: () => ({}),
+    fresh: (identity) => ({ version: 1, provider: 'native', identity, interrupted: false }),
+    validate: () => true,
+  });
+  await replacement.loadOnly('worker-closing');
+  await replacement.closeAll();
+});
+
+test('acquisition refuses a record closed between load and lease ownership', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-session-race-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let racing: HarnessSessionStore<Saved>;
+  let closing: Promise<void> | undefined;
+  racing = new HarnessSessionStore<Saved>({
+    provider: 'native',
+    stateDirectory: directory,
+    platform: 'linux',
+    version: 1,
+    runtime: () => {
+      queueMicrotask(() => {
+        closing = racing.closeAll();
+      });
+      return {};
+    },
+    fresh: (identity) => ({ version: 1, provider: 'native', identity, interrupted: false }),
+    validate: () => true,
+  });
+  await assert.rejects(racing.acquireLease('worker-race'), /store is closed/);
+  await closing;
+  assert.deepEqual([...racing.sessions()], []);
+
+  const replacement = new HarnessSessionStore<Saved>({
+    provider: 'native',
+    stateDirectory: directory,
+    platform: 'linux',
+    version: 1,
+    runtime: () => ({}),
+    fresh: (identity) => ({ version: 1, provider: 'native', identity, interrupted: false }),
+    validate: () => true,
+  });
+  await replacement.loadOnly('worker-race');
+  await replacement.closeAll();
+});
+
+test('save refuses released and foreign sessions', async (t) => {
+  const first = await store(t);
+  const second = await store(t);
+  const session = await first.made.loadOnly('worker-save');
+  await assert.rejects(second.made.save(session), /not owned by this store/);
+  await first.made.closeAll();
+  await assert.rejects(first.made.save(session), /lock has been released/);
+});
+
 test('a saved session replays from disk and drops its runtime keys', async (t) => {
   const { directory, made } = await store(t);
-  const session = await made.acquire('worker-c');
-  session.response = answer();
-  session.replay = { key, events };
-  session.sessionId = 'native-session';
-  session.interrupted = true;
+  const lease = await made.acquireLease('worker-c');
+  const { session } = lease;
+  session.saved.response = answer();
+  session.saved.replay = { key, events };
+  session.saved.sessionId = 'native-session';
+  session.saved.interrupted = true;
   await made.save(session);
-  made.release(session);
+  await lease.release();
 
   const written = JSON.parse(await readFile(session.file, 'utf8'));
   assert.deepEqual(Object.keys(written).sort(), [
@@ -116,37 +241,53 @@ test('a saved session replays from disk and drops its runtime keys', async (t) =
     stateDirectory: directory,
     platform: 'linux',
     version: 1,
+    runtime: () => ({}),
     fresh: (identity) => ({ version: 1, provider: 'native', identity, interrupted: false }),
     validate: () => true,
   });
   t.after(() => next.closeAll());
   await made.closeAll();
   const resumed = await next.loadOnly('worker-c');
-  assert.equal(resumed.sessionId, 'native-session');
-  assert.equal(resumed.interrupted, true);
-  assert.deepEqual(resumed.replay, { key, events });
+  assert.equal(resumed.saved.sessionId, 'native-session');
+  assert.equal(resumed.saved.interrupted, true);
+  assert.deepEqual(resumed.saved.replay, { key, events });
 });
 
 test('an unknown version starts fresh and invalid state refuses native replay', async (t) => {
   const { directory, made } = await store(t);
-  const session = await made.acquire('worker-d');
+  const lease = await made.acquireLease('worker-d');
+  const { session } = lease;
   const file = session.file;
   await made.save(session);
+  await lease.release();
   await made.closeAll();
 
+  const reopen = () =>
+    new HarnessSessionStore<Saved>({
+      provider: 'native',
+      stateDirectory: directory,
+      platform: 'linux',
+      version: 1,
+      runtime: () => ({}),
+      fresh: (identity) => ({ version: 1, provider: 'native', identity, interrupted: false }),
+      validate: (saved) => saved.sessionId === undefined || typeof saved.sessionId === 'string',
+    });
+
   await atomicJson(file, { version: 9, provider: 'native', identity: 'worker-d' }, 'linux');
-  const fresh = await made.loadOnly('worker-d');
-  assert.equal(fresh.interrupted, false);
-  assert.equal(fresh.sessionId, undefined);
-  await made.closeAll();
+  const second = reopen();
+  const fresh = await second.loadOnly('worker-d');
+  assert.equal(fresh.saved.interrupted, false);
+  assert.equal(fresh.saved.sessionId, undefined);
+  await second.closeAll();
 
   await atomicJson(
     file,
     { version: 1, provider: 'native', identity: 'worker-d', interrupted: 'yes' },
     'linux',
   );
-  await assert.rejects(made.loadOnly('worker-d'), /native session has invalid state/);
-  await made.closeAll();
+  const third = reopen();
+  await assert.rejects(third.loadOnly('worker-d'), /native session has invalid state/);
+  await third.closeAll();
 
   // A provider field check refuses too, and the lock is released on the way out.
   await atomicJson(
@@ -154,24 +295,19 @@ test('an unknown version starts fresh and invalid state refuses native replay', 
     { version: 1, provider: 'native', identity: 'worker-d', interrupted: false, sessionId: 7 },
     'linux',
   );
-  await assert.rejects(made.loadOnly('worker-d'), /native session has invalid state/);
+  const fourth = reopen();
+  await assert.rejects(fourth.loadOnly('worker-d'), /native session has invalid state/);
+  await fourth.closeAll();
   assert.equal(await readJson(path.join(directory, 'missing.json')), undefined);
 });
 
-test('a released lock is released once and a closed store keeps no records', async (t) => {
+test('closing is idempotent and a closed store keeps no records', async (t) => {
   const { made } = await store(t);
-  const session = await made.acquire('worker-e');
-  let releases = 0;
-  const original = session.release;
-  session.release = () => {
-    releases += 1;
-    return original();
-  };
-  await made.releaseLock(session);
-  await made.releaseLock(session);
-  assert.equal(releases, 1);
+  await made.loadOnly('worker-e');
+  await made.closeAll();
   await made.closeAll();
   assert.deepEqual([...made.sessions()], []);
+  await assert.rejects(made.loadOnly('worker-e'), /store is closed/);
 });
 
 test('persisted state is validated before it is trusted', async (t) => {

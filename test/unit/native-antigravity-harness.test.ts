@@ -300,6 +300,7 @@ test('an init event durably saves the conversation id and interrupted state befo
     undefined,
     context,
   );
+  void pending.catch(() => {});
   // The durability write is fire-and-forget; wait for it to land instead of
   // assuming a fixed delay covers a loaded machine.
   let sessionFile: string | undefined;

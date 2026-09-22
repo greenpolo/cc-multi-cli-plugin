@@ -236,7 +236,7 @@ async function spawnGrok(
   promptFile: string | undefined,
 ): Promise<GrokRunResult> {
   const parser: ParserState = { response: '', forbidden: options.forbiddenTools };
-  const run = await runNativeCli<ParserState, GrokResult>({
+  const run = await runNativeCli<ParserState, GrokResult, GrokStreamEvent>({
     name: 'Grok',
     executable: 'grok',
     configuredPath: options.executable,
@@ -249,7 +249,7 @@ async function spawnGrok(
     maxOutputBytes: options.maxOutputBytes,
     parser,
     parseLine: parseGrokLine,
-    onEvent: options.onEvent ? (event) => options.onEvent?.(event as GrokStreamEvent) : undefined,
+    onEvent: options.onEvent,
     finish: finishValue,
   });
   return {
