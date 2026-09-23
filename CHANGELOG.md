@@ -6,6 +6,20 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Run native harness workers with `isolation: "worktree"`.** A Cursor,
+  Antigravity, or Grok worker started by the Agent tool in a Claude worktree
+  (`.claude/worktrees/<name>`) now binds to its acknowledged spawn and runs in
+  that worktree instead of failing with "no acknowledged spawn". Settings policy
+  stays admitted from the parent checkout. Other working directories are still
+  refused, and a refused worker's error now states why its spawn acknowledgement
+  failed (for example, the parent and start directories).
+
+- **Keep running native harness workers alive across Claude-loop snapshots.** A
+  later prompt or Claude worker boundary in a session with a Claude main model no
+  longer revokes an already acknowledged Cursor, Antigravity, or Grok worker with
+  "settings policy has not been admitted"; the worker keeps its admitted settings
+  restrictions, while the main loop and new harness spawns still require admission.
+
 ## 0.2.1 — 2026-09-22
 
 - Explain missing native worker spawn acknowledgements with the unsupported
