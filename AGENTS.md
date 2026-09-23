@@ -70,9 +70,10 @@ Run `npm run check`. It checks the generated banner, Biome lint, Knip, strict
 type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
 test suite. Use Node 24.12 or newer and avoid `DEP0190` warnings.
 
-For Claude Mods hook or surface changes, also run `npm run test:mod`. It runs
-`claude plugin test` with the installed Claude executable, without provider
-inference. It is separate from `npm run check` and the current CI matrix.
+For Claude Mods hook or surface changes, also run `npm run test:mod`. It type-checks
+the hooks against `.claude/types` (write them with `/plugin-types` first; they are
+gitignored) and runs `claude plugin test` with the installed Claude executable,
+without provider inference. It is separate from `npm run check` and the current CI matrix.
 
 | Command | Check | Login needed |
 | --- | --- | --- |
