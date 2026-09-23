@@ -165,3 +165,85 @@ test('a completed identical request replays from its response file', async (t) =
     /Invalid persisted Native response/,
   );
 });
+
+test('evictSettled drops only finished exchanges and stops once unsettled work remains', async () => {
+  const registry = new ExchangeRegistry<{ keep: boolean }>({
+    provider: 'Native',
+    createMeta: () => ({ keep: false }),
+  });
+  const retain = (exchange: HarnessExchange<{ keep: boolean }>) => exchange.meta.keep;
+  const gate = Promise.withResolvers<void>();
+  const keys = ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)];
+  const pending = registry.start(
+    keys[0],
+    async (exchange) => {
+      exchange.meta.keep = true;
+      await gate.promise;
+      return answer('pending');
+    },
+    { retain },
+  );
+  const settledOne = registry.start(
+    keys[1],
+    async (exchange) => {
+      exchange.meta.keep = true;
+      return answer('one');
+    },
+    { retain },
+  );
+  const settledTwo = registry.start(
+    keys[2],
+    async (exchange) => {
+      exchange.meta.keep = true;
+      return answer('two');
+    },
+    { retain },
+  );
+  await settledOne.result;
+  await settledTwo.result;
+  assert.equal(registry.size, 3);
+  assert.equal(pending.settled, false);
+  assert.equal(settledOne.settled, true);
+  assert.equal(settledTwo.settled, true);
+
+  assert.equal(registry.evictSettled(), true);
+  assert.equal(registry.size, 2);
+  assert.equal(registry.evictSettled(), true);
+  assert.equal(registry.size, 1);
+  assert.equal(registry.get(keys[0]), pending);
+  assert.equal(registry.evictSettled(), false);
+  assert.equal(registry.size, 1);
+  gate.resolve();
+  await pending.result;
+});
+
+test('a concurrency cap refuses new keys but still observes an identical in-flight key', async () => {
+  const registry = new ExchangeRegistry({ provider: 'Cursor', createMeta: () => ({}) });
+  const cap = 2;
+  const admit = (requestKey: string) => {
+    let exchange = registry.get(requestKey);
+    if (!exchange) {
+      if (registry.size >= cap && !registry.evictSettled()) {
+        throw new Error('Too many concurrent Cursor requests');
+      }
+      exchange = registry.start(requestKey, async () => new Promise<MessagesResponse>(() => {}));
+    }
+    return exchange;
+  };
+  const firstKey = 'd'.repeat(64);
+  const secondKey = 'e'.repeat(64);
+  const thirdKey = 'f'.repeat(64);
+  const first = admit(firstKey);
+  const second = admit(secondKey);
+  assert.throws(() => admit(thirdKey), /Too many concurrent Cursor requests/);
+  const joined = admit(firstKey);
+  assert.equal(joined, first);
+  const leave = new AbortController();
+  const observed = registry.observe(joined, leave.signal);
+  assert.equal(joined.observers, 1);
+  assert.equal(registry.size, 2);
+  assert.equal(second.settled, false);
+  leave.abort(new Error('leave'));
+  await assert.rejects(observed, /leave/);
+  await assert.rejects(registry.observe(second, AbortSignal.timeout(20)), /timed out|Timeout/i);
+});

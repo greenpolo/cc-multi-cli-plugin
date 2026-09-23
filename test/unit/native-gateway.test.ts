@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
 import { AgentCatalog } from '../../plugins/multi-core/src/gateway/agent-catalog.ts';
+import { NativeApprovalBridge } from '../../plugins/multi-core/src/gateway/approval.ts';
 import type { GatewayFetch } from '../../plugins/multi-core/src/gateway/fetch.ts';
 import type {
   MessagesRequest,
@@ -13,7 +14,9 @@ import type {
   StreamEventBody,
   StreamEventName,
 } from '../../plugins/multi-core/src/gateway/messages.ts';
+import { PermissionModes } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { ReceiptLedger } from '../../plugins/multi-core/src/gateway/receipts.ts';
+import type { GatewayEvent, GatewayOptions } from '../../plugins/multi-core/src/gateway/server.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import { estimateInputTokens } from '../../plugins/multi-core/src/gateway/tokens.ts';
 import {
@@ -424,7 +427,7 @@ test('fragmented SSE and truncated or failed responses never become successful c
 async function gateway(
   t: TestContext,
   fetchImpl: GatewayFetch,
-  options: { timeoutMs?: number; agentCatalog?: AgentCatalog; receipts?: ReceiptLedger } = {},
+  options: Partial<GatewayOptions> = {},
 ) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'native-gateway-test-'));
   const authFile = path.join(cwd, 'auth.json');
@@ -1289,4 +1292,248 @@ test('an explicit OpenAI timeout aborts upstream inference', async (t) => {
   assert.equal(response.status, 502);
   assert.equal(aborted, true);
   assert.match(await response.text(), /timeout|timed out/i);
+});
+
+const harnessReply = (model: string, text = 'native'): MessagesResponse => ({
+  id: 'msg_harness',
+  type: 'message',
+  role: 'assistant',
+  model,
+  content: [{ type: 'text', text }],
+  stop_reason: 'end_turn',
+  stop_sequence: null,
+  usage: { input_tokens: 3, output_tokens: 2 },
+});
+
+async function harnessPermissionModes(session = 'routing-session') {
+  const modes = new PermissionModes(async () => ({}));
+  await modes.record({
+    hook_event_name: 'UserPromptSubmit',
+    session_id: session,
+    permission_mode: 'auto',
+    prompt: 'route',
+  });
+  return modes;
+}
+
+test('provider routing sends each external model to one handler route', async (t) => {
+  const session = 'routing-session';
+  const modes = await harnessPermissionModes(session);
+  const hits = {
+    cursor: 0,
+    antigravity: 0,
+    grok: 0,
+    openai: 0,
+    zen: 0,
+    anthropic: 0,
+  };
+  const routes: GatewayEvent['route'][] = [];
+  const endpoints: string[] = [];
+  const call = await gateway(
+    t,
+    async (url) => {
+      if (url.includes('api.anthropic.com')) {
+        hits.anthropic++;
+        return Response.json({ content: [{ type: 'text', text: 'claude' }] });
+      }
+      if (url.includes('opencode.ai')) {
+        hits.zen++;
+        return new Response(
+          `data: ${JSON.stringify({
+            type: 'response.completed',
+            response: {
+              id: 'zen_route',
+              output: [{ type: 'message', content: [{ type: 'output_text', text: 'zen' }] }],
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+          })}\n\n`,
+        );
+      }
+      hits.openai++;
+      return new Response(sse(textEvents));
+    },
+    {
+      permissionModes: modes,
+      zen: { apiKey: 'zen-route-fixture' },
+      onEvent: (event) => {
+        if (event.path === '/v1/messages') {
+          routes.push(event.route);
+        }
+        if (event.endpoint) {
+          endpoints.push(event.endpoint);
+        }
+      },
+      cursor: {
+        validate: () => 4,
+        handle: async () => {
+          hits.cursor++;
+          return harnessReply('multi/cursor/auto');
+        },
+      },
+      antigravity: {
+        validate: () => 4,
+        handle: async () => {
+          hits.antigravity++;
+          return harnessReply('multi/antigravity/gemini-test-low');
+        },
+      },
+      grok: {
+        validate: () => 4,
+        handle: async () => {
+          hits.grok++;
+          return harnessReply('multi/grok/grok-4.6');
+        },
+      },
+    },
+  );
+  const headers = { 'x-claude-code-session-id': session };
+  const cases: {
+    label: string;
+    payload: Record<string, unknown>;
+    route: GatewayEvent['route'];
+    endpoint?: string;
+    hit: keyof typeof hits;
+  }[] = [
+    {
+      label: 'cursor',
+      payload: { messages: [{ role: 'user', content: 'hi' }], model: 'multi/cursor/auto' },
+      route: 'cursor',
+      endpoint: '@cursor/sdk',
+      hit: 'cursor',
+    },
+    {
+      label: 'antigravity',
+      payload: {
+        messages: [{ role: 'user', content: 'hi' }],
+        model: 'multi/antigravity/gemini-test-low',
+      },
+      route: 'antigravity',
+      endpoint: 'agy',
+      hit: 'antigravity',
+    },
+    {
+      label: 'grok',
+      payload: {
+        messages: [{ role: 'user', content: 'hi' }],
+        model: 'multi/grok/grok-4.6',
+      },
+      route: 'grok',
+      endpoint: 'grok',
+      hit: 'grok',
+    },
+    {
+      label: 'zen',
+      payload: {
+        messages: [{ role: 'user', content: 'hi' }],
+        model: 'multi/zen/gpt-5.6-luna',
+      },
+      route: 'zen',
+      hit: 'zen',
+    },
+    {
+      label: 'openai',
+      payload: { ...body, model: 'multi/openai/gpt-6-astra' },
+      route: 'openai',
+      hit: 'openai',
+    },
+    {
+      label: 'claude',
+      payload: { messages: [{ role: 'user', content: 'hi' }], model: 'claude-opus-4-6' },
+      route: 'anthropic',
+      hit: 'anthropic',
+    },
+    {
+      label: 'missing model',
+      payload: { messages: [{ role: 'user', content: 'hi' }] },
+      route: 'anthropic',
+      hit: 'anthropic',
+    },
+  ];
+  for (const row of cases) {
+    const before = { ...hits };
+    routes.length = 0;
+    endpoints.length = 0;
+    const response = await call(row.payload, headers);
+    assert.equal(response.status, 200, row.label);
+    await response.text();
+    assert.equal(routes.at(-1), row.route, row.label);
+    if (row.endpoint) {
+      assert.equal(endpoints.at(-1), row.endpoint, row.label);
+    }
+    const touched = Object.keys(hits).filter(
+      (key) => hits[key as keyof typeof hits] > before[key as keyof typeof hits],
+    );
+    assert.deepEqual(touched, [row.hit], row.label);
+  }
+});
+
+test('OpenAI streaming records tool memory from SSE observation, not rememberResult', async (t) => {
+  const streamSession = JSON.stringify({ session_id: 'stream-tool-session' });
+  const bufferedSession = JSON.stringify({ session_id: 'buffered-tool-session' });
+  const command = 'node stream-tool-memory.js';
+  const toolId = 'call_stream_tool_memory';
+  const toolItem: SseEvent = {
+    type: 'function_call',
+    call_id: toolId,
+    name: 'Bash',
+    arguments: JSON.stringify({ command }),
+  };
+  const upstream: GatewayFetch = async () => new Response(sse(events(toolItem)));
+  let reviews = 0;
+  const bridge = new NativeApprovalBridge(async () => {
+    reviews++;
+    return { outcome: 'allow', model: 'codex-auto-review' };
+  });
+  const call = await gateway(t, upstream, {
+    guardAuto: true,
+    approvalBridge: bridge,
+    blockAnthropic: true,
+  });
+  const inference = {
+    model,
+    metadata: { user_id: bufferedSession },
+    messages: [{ role: 'user', content: command }],
+    tools: [
+      {
+        name: 'Bash',
+        input_schema: { type: 'object', properties: { command: { type: 'string' } } },
+      },
+    ],
+  };
+  const classify = (streamed: boolean) =>
+    call(
+      {
+        model: 'claude-sonnet-5',
+        metadata: { user_id: streamed ? streamSession : bufferedSession },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: '<transcript>\n' },
+              { type: 'text', text: `${JSON.stringify({ Bash: command })}\n` },
+              { type: 'text', text: '</transcript>\n' },
+              { type: 'text', text: 'Stage 1 does NOT apply user intent\n<severity>N</severity>' },
+            ],
+          },
+        ],
+      },
+      streamed ? { 'x-claude-code-agent-id': 'stream-worker' } : {},
+    );
+
+  const buffered = await call({ ...inference, stream: false });
+  assert.equal(buffered.status, 200);
+  const bufferedMessage = await readMessage(buffered);
+  const bufferedTool = bufferedMessage.content.find((block) => block.type === 'tool_use');
+  assert(bufferedTool?.type === 'tool_use');
+  assert.equal(bufferedTool.id, toolId);
+  assert.equal((await classify(false)).status, 200);
+  assert.equal(reviews, 1);
+
+  const worker = { 'x-claude-code-agent-id': 'stream-worker' };
+  const streamed = await call({ ...inference, stream: true }, worker);
+  assert.equal(streamed.status, 200);
+  assert.match(streamed.headers.get('content-type') ?? '', /event-stream/);
+  await streamed.text();
+  assert.equal((await classify(true)).status, 400);
+  assert.equal(reviews, 1);
 });

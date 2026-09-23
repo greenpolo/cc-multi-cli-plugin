@@ -29,13 +29,26 @@ async function start(
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function request(base: string, route: string, body?: unknown, method = 'POST') {
+async function request(
+  base: string,
+  route: string,
+  body?: unknown,
+  method = 'POST',
+  token = 'mod-token',
+) {
   const response = await fetch(base + route, {
     method,
-    headers: { 'x-multi-gateway-token': 'mod-token', 'content-type': 'application/json' },
+    headers: { 'x-multi-gateway-token': token, 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  const text = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = {};
+  }
+  return { status: response.status, body: parsed as Record<string, unknown> };
 }
 
 test('mod mode snapshots acknowledge generations and reject stale updates', async (t) => {
@@ -384,4 +397,39 @@ test('a session start snapshot still records without carrying a permission mode'
   });
   assert.equal(started.status, 200);
   assert.equal(started.body.accepted, true);
+});
+
+test('wrong tokens cannot update sessions, acknowledge workers, or authorize compaction', async (t) => {
+  const modes = new PermissionModes(async () => ({ worker: { model: 'multi/cursor/auto' } }));
+  await modes.precompute('/workspace');
+  const base = await start(t, modes);
+  const rejectedSession = await request(
+    base,
+    '/multi/mod/session',
+    { sessionId: 'unauthorized', event: 'start', cwd: '/workspace' },
+    'POST',
+    'wrong-token',
+  );
+  assert.equal(rejectedSession.status, 401);
+  assert.throws(() => modes.resolve('unauthorized'), /unavailable/);
+
+  const rejectedWorker = await request(
+    base,
+    '/multi/mod/worker',
+    { sessionId: 'unauthorized', agentId: 'child', subagentType: 'worker', cwd: '/workspace' },
+    'POST',
+    'wrong-token',
+  );
+  assert.equal(rejectedWorker.status, 401);
+  assert.throws(() => modes.resolve('unauthorized', 'child'), /unavailable/);
+
+  const rejectedCompaction = await request(
+    base,
+    '/multi/mod/compact/authorize',
+    { sessionId: 'unauthorized', generation: 1 },
+    'POST',
+    'wrong-token',
+  );
+  assert.equal(rejectedCompaction.status, 401);
+  assert.throws(() => modes.resolve('unauthorized'), /unavailable/);
 });

@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import {
   setup as installSetup,
   uninstall as installUninstall,
+  readInstallation,
 } from '../../plugins/multi-core/src/install/installation.ts';
 import {
   providerSelection,
@@ -361,4 +362,24 @@ test('provider selection and native settings arguments preserve explicit disable
     ['--settings={"enabledPlugins":{}}', '--setting-sources', 'user'],
   );
   assert.throws(() => settingsArguments(['--settings']), /requires a value/);
+});
+
+test('readInstallation rejects relative persisted executable and shell paths', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'multi-install-state-'));
+  t.after(() => removeTemporary(directory));
+  const valid = {
+    claude: path.resolve('claude'),
+    node: path.resolve('node'),
+    shellFile: path.resolve('shell'),
+    block: 'block',
+  };
+  for (const field of ['claude', 'node', 'shellFile'] as const) {
+    await writeFile(
+      path.join(directory, 'state.json'),
+      JSON.stringify({ ...valid, [field]: 'relative/path' }),
+    );
+    await assert.rejects(readInstallation(directory), {
+      message: 'Invalid Multi installation state',
+    });
+  }
 });
