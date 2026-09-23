@@ -4,6 +4,7 @@ import { setImmediate } from 'node:timers/promises';
 import { ModBridge } from '../../plugins/multi-core/src/gateway/mod-bridge.ts';
 import { PermissionModes } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
+import { workerCatalog } from '../../plugins/multi-core/src/launcher.ts';
 
 async function start(
   t: test.TestContext,
@@ -301,6 +302,69 @@ test('worker route authenticates catalog and generation before child-start ackno
     true,
   );
   assert.deepEqual(modes.resolve('s', 'child').tools, ['Read']);
+});
+
+test('a provider worker is admitted on the model its Agent call named, not its default', async (t) => {
+  const workers = workerCatalog(
+    ['multi/cursor/default', 'multi/cursor/composer-2.5', 'multi/zen/kimi-k3'].map((model) => ({
+      model,
+    })),
+  );
+  const modes = new PermissionModes(
+    async () => ({ 'multi-cursor': { model: 'multi/cursor/default', tools: ['Read'] } }),
+    undefined,
+    { workers },
+  );
+  const base = await start(t, modes);
+  const generation = await admit(base);
+  const spawn = {
+    sessionId: 's',
+    cwd: '/workspace',
+    generation,
+    parentModel: 'multi/antigravity/model',
+    permissionMode: 'bypassPermissions',
+    subagentType: 'multi-cursor',
+  };
+  const named = await request(base, '/multi/mod/worker-model', { ...spawn, model: 'composer-2.5' });
+  assert.equal(named.status, 200);
+  assert.equal(named.body.model, 'multi/cursor/composer-2.5');
+  assert.equal(named.body.execution, 'harness');
+  assert.deepEqual(named.body.worker, {
+    type: 'multi-cursor',
+    provider: 'cursor',
+    label: 'Cursor',
+    id: 'composer-2.5',
+    model: 'multi/cursor/composer-2.5',
+  });
+  const omitted = await request(base, '/multi/mod/worker-model', spawn);
+  assert.equal(omitted.body.model, 'multi/cursor/default');
+  const refused = await request(base, '/multi/mod/worker-model', { ...spawn, model: 'kimi-k3' });
+  assert.equal(refused.status, 400);
+  assert.match(
+    String(refused.body.error),
+    /multi-cursor has no model "kimi-k3"\. "kimi-k3" belongs to multi-zen\. Cursor models: default, composer-2\.5\./,
+  );
+  // The prepare route accepts the resolved model although the definition names the default.
+  const prepared = await request(base, '/multi/mod/worker', {
+    ...spawn,
+    model: 'multi/cursor/composer-2.5',
+  });
+  assert.equal(prepared.body.accepted, true);
+  const started = await request(base, '/multi/mod/worker', {
+    sessionId: 's',
+    agentId: 'child',
+    cwd: '/workspace',
+    subagentType: 'multi-cursor',
+  });
+  assert.equal(started.body.model, 'multi/cursor/composer-2.5');
+  assert.equal(
+    modes.resolveHarness('s', 'child', 'multi/cursor/composer-2.5').model,
+    'multi/cursor/composer-2.5',
+  );
+  assert.equal(
+    (await request(base, '/multi/mod/worker', { ...spawn, model: 'multi/zen/kimi-k3' })).status,
+    400,
+  );
 });
 
 test('model effort telemetry is scoped observation and cannot change policy', async (t) => {

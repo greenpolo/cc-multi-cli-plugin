@@ -6,6 +6,16 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Replace one worker per model and effort with one worker type per provider.**
+  The Agent tool now offers five types, `multi-openai`, `multi-zen`,
+  `multi-cursor`, `multi-antigravity`, `multi-grok`, instead of about twenty
+  per-model, per-effort types. `model` picks the model, as a short id or the
+  full `multi/<provider>/<id>`, resolved against the `/model` catalog at spawn;
+  an unknown, wrong-provider, or effort-suffixed id is refused, naming that
+  provider's available models. Omitting `model` runs the provider default.
+  Effort is never part of a name. The Agent row, the running-agents list and
+  the task notification show `<description> · <provider> · <model>`.
+
 - **Run native harness workers with `isolation: "worktree"`.** A Cursor,
   Antigravity, or Grok worker started by the Agent tool in a Claude worktree
   (`.claude/worktrees/<name>`) now binds to its acknowledged spawn and runs in

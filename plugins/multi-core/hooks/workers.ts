@@ -1,4 +1,4 @@
-import type { EngineInterface, Register } from 'claude-code';
+import type { AgentSpawnInput, EngineInterface, Register } from 'claude-code';
 import {
   ensureHarnessPolicy,
   type PolicyClient,
@@ -6,6 +6,7 @@ import {
   type PolicyState,
 } from './policy.ts';
 import { isHarnessModel } from './provider.ts';
+import { isProviderWorker, labelled, register as registerWorkerRows } from './worker-rows.ts';
 
 const maxBody = 32000;
 const issues =
@@ -30,6 +31,25 @@ type GatewayResponse = PolicyResponse & {
   known?: boolean;
   model?: string;
 };
+
+type SpawnEvent = AgentSpawnInput;
+
+/**
+ * The model an Agent call named for a provider worker, by tool_use_id. The Agent tool's
+ * schema only admits Claude aliases, so `tool.call` (which runs before the engine checks
+ * the input) takes the value out and `agent.spawn` resolves it against the catalog.
+ */
+const requestedModels = new Map<string, string>();
+
+/** Bounded like the other per-call records: the oldest entry makes room. */
+export function rememberBounded<T>(entries: Map<string, T>, key: string, value: T, limit = 256) {
+  entries.delete(key);
+  const oldest = entries.keys().next();
+  if (entries.size >= limit && !oldest.done) {
+    entries.delete(oldest.value);
+  }
+  entries.set(key, value);
+}
 
 // A refused reply keeps only the reason: a non-2xx status never carries an
 // acknowledgement, so every caller still fails closed on the HTTP status alone.
@@ -57,7 +77,35 @@ export const register = (
   _options: Parameters<Register>[1],
   agentModels: Map<string, string> = new Map(),
   policyState: PolicyState = {},
+  spawnModels: Map<string, string> = new Map(),
 ) => {
+  /** The resolved model of each provider-worker spawn, by its Agent call's tool_use_id. */
+  registerWorkerRows(on, agentModels, spawnModels);
+  on('tool.describe', { tool: 'Agent' }, async ($, event, next) => {
+    const described = await next(event);
+    if (!(await active($))) {
+      return described;
+    }
+    return {
+      ...described,
+      description: `${described.description}\n\nFor a multi-* agent type (multi-cursor, multi-openai, ...), \`model\` names one of that provider's models from the type's description, not a Claude alias; omit it for the provider's default.`,
+    };
+  });
+  on('tool.call', { tool: 'Agent' }, async ($, event, next) => {
+    if (event.tool !== 'Agent' || event.model === undefined) {
+      return next(event);
+    }
+    if (!isProviderWorker(event.subagent_type) || !(await active($))) {
+      return next(event);
+    }
+    rememberBounded(requestedModels, event.tool_use_id, String(event.model));
+    const { model: _named, ...call } = event;
+    try {
+      return await next(call);
+    } finally {
+      requestedModels.delete(event.tool_use_id);
+    }
+  });
   on('agent.offer', async ($, event, next) => {
     if (!(await active($))) {
       return next(event);
@@ -99,44 +147,95 @@ export const register = (
     if (!(await active($))) {
       return next(event);
     }
-    const payload = {
-      sessionId: await $.session.id(),
-      parentAgentId: event.parentAgentId,
-      permissionMode: event.permissionMode,
-      subagentType: event.subagentType,
-      cwd: event.cwd ?? (await $.session.cwd()),
-      model: event.model,
-      parentModel: event.parentModel,
-      fork: event.fork,
-      background: event.background,
-    };
-    const selection = await request($, payload, '/multi/mod/worker-model');
-    const harness = harnessSpawn(event, selection);
-    if (harness) {
-      await prepareHarness($, policyState);
-      const mode = await request(
-        $,
-        {},
-        `/multi/mod/mode?sessionId=${encodeURIComponent(payload.sessionId)}`,
-      );
-      const response = await request($, { ...payload, generation: mode?.generation });
-      if (!response?.accepted) {
-        return {
-          deny: reportable(response?.error ?? 'Multi harness worker policy was not acknowledged.'),
-        };
-      }
-    } else {
-      // Keep context for a possible later harness child, but never veto the
-      // engine's native worker because Multi could not reconstruct its policy.
-      await request($, payload);
+    const resolved = await providerSpawn($, event);
+    if ('deny' in resolved) {
+      return { deny: resolved.deny };
     }
-    const result = await next(event);
+    const spawn = resolved.event;
+    if (spawn.model && spawn !== event) {
+      rememberBounded(spawnModels, event.tool_use_id, spawn.model);
+      $.ui.invalidate('ui.render');
+    }
+    const denial = await admit($, spawn, resolved.selection, policyState);
+    if (denial) {
+      return { deny: denial };
+    }
+    const result = await next(spawn);
     if (result.agentId && result.model) {
       agentModels.set(result.agentId, result.model);
     }
     return result;
   });
 };
+
+async function spawnPayload($: EngineInterface, event: SpawnEvent) {
+  return {
+    sessionId: await $.session.id(),
+    parentAgentId: event.parentAgentId,
+    permissionMode: event.permissionMode,
+    subagentType: event.subagentType,
+    cwd: event.cwd ?? (await $.session.cwd()),
+    model: event.model,
+    parentModel: event.parentModel,
+    fork: event.fork,
+    background: event.background,
+  };
+}
+
+/**
+ * Resolve a provider worker's model: the one its Agent call named, else the provider's
+ * default. An unknown or other provider's model refuses the spawn with the gateway's
+ * reason, which names the provider's models. Every other spawn keeps its own model.
+ */
+async function providerSpawn(
+  $: EngineInterface,
+  event: SpawnEvent,
+): Promise<{ deny: string } | { event: SpawnEvent; selection: GatewayResponse | undefined }> {
+  const provider = isProviderWorker(event.subagentType) && !event.fork;
+  const named = provider ? (requestedModels.get(event.tool_use_id) ?? event.model) : event.model;
+  const payload = { ...(await spawnPayload($, event)), model: named };
+  const selection = await request($, payload, '/multi/mod/worker-model');
+  if (!provider) {
+    return { event, selection };
+  }
+  if (!selection) {
+    return {
+      deny: reportable(`The Multi gateway did not resolve the ${event.subagentType} model.`),
+    };
+  }
+  if (selection.refused || !selection.model) {
+    return { deny: selection.error ?? `The ${event.subagentType} model was not resolved.` };
+  }
+  // The task's description is what the running-agents list and its notification show.
+  const description = labelled(event.description, selection.model);
+  return { event: { ...event, model: selection.model, description }, selection };
+}
+
+/** Admit a harness spawn against the current policy generation; undefined admits it. */
+async function admit(
+  $: EngineInterface,
+  event: SpawnEvent,
+  selection: GatewayResponse | undefined,
+  policyState: PolicyState,
+): Promise<string | undefined> {
+  const payload = await spawnPayload($, event);
+  if (!harnessSpawn(event, selection)) {
+    // Keep context for a possible later harness child, but never veto the
+    // engine's native worker because Multi could not reconstruct its policy.
+    await request($, payload);
+    return undefined;
+  }
+  await prepareHarness($, policyState);
+  const mode = await request(
+    $,
+    {},
+    `/multi/mod/mode?sessionId=${encodeURIComponent(payload.sessionId)}`,
+  );
+  const response = await request($, { ...payload, generation: mode?.generation });
+  return response?.accepted
+    ? undefined
+    : reportable(response?.error ?? 'Multi harness worker policy was not acknowledged.');
+}
 
 function harnessSpawn(
   event: { fork?: boolean; model?: string; parentModel?: string },

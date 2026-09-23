@@ -12,7 +12,7 @@
 [![Linux · macOS · Windows](https://img.shields.io/badge/platforms-Linux_%C2%B7_macOS_%C2%B7_Windows-555)](docs/platform-support.md)
 [![Stars](https://img.shields.io/github/stars/greenpolo/cc-multi-cli-plugin?style=social)](https://github.com/greenpolo/cc-multi-cli-plugin/stargazers)
 
-Multi brings external models and coding harnesses into one Claude Code session through the `/model` picker and named native workers, with each provider's own login and permissions. Providers are OpenAI (ChatGPT via Codex login), Cursor (official SDK), OpenCode Zen (API key), Antigravity (official CLI), and Grok (official Grok Build CLI).
+Multi brings external models and coding harnesses into one Claude Code session through the `/model` picker and provider workers started from the Agent tool, with each provider's own login and permissions. Providers are OpenAI (ChatGPT via Codex login), Cursor (official SDK), OpenCode Zen (API key), Antigravity (official CLI), and Grok (official Grok Build CLI).
 
 [Quick start](#install) · [Providers](#providers) · [Documentation](#documentation) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
@@ -23,7 +23,7 @@ Multi brings external models and coding harnesses into one Claude Code session t
 ## Why Multi?
 
 - **Choose your model in place.** Switch through `/model` and select supported reasoning effort with `/effort`.
-- **Delegate to named workers.** Run provider-specific subagents with progress, elapsed time, and cancellation.
+- **Delegate to provider workers.** Run a provider's own model from the Agent tool (`multi-openai`, `multi-cursor`, `multi-zen`, `multi-antigravity`, `multi-grok`); with progress, elapsed time, and cancellation.
 - **Keep native execution.** OpenAI and Zen use Claude Code's tools; Cursor, Antigravity and Grok run their own SDK or CLI tools.
 - **Carry your session forward.** Resume saved sessions while keeping provider credentials and native state separate.
 - **Stay in control.** Claude's permission mode and explicit tool restrictions govern provider dispatch.
@@ -68,7 +68,7 @@ Paste this into any coding agent:
 
 ## Use
 
-Launch with `claude-multi`. `/model` lists the external models next to Claude's; `/effort` sets effort where the model supports it. Named workers run as subagents with live progress, elapsed time and cancellation. Claude's permission mode governs every provider; see [permissions](docs/permissions.md). Resume a saved session with `claude-multi --resume <session-id>`.
+Launch with `claude-multi`. `/model` lists the external models next to Claude's; `/effort` sets effort where the model supports it. Provider workers run as subagents with live progress, elapsed time and cancellation; the Agent tool's `model` parameter picks which model of that provider runs. Claude's permission mode governs every provider; see [permissions](docs/permissions.md). Resume a saved session with `claude-multi --resume <session-id>`.
 
 Use `/multi-usage` to open a provider usage menu with quotas, billed spend where
 available, session tokens, and worker receipts. Set `MULTI_RECEIPTS_FILE` before

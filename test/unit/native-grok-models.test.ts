@@ -28,14 +28,12 @@ test('parses the advertised Grok catalog and ignores its prose', () => {
       id: 'grok-4.6',
       model: 'multi/grok/grok-4.6',
       label: 'Grok 4.6',
-      worker: 'grok-4-6',
       default: true,
     },
     {
       id: 'grok-4.5',
       model: 'multi/grok/grok-4.5',
       label: 'Grok 4.5',
-      worker: 'grok-4-5',
       default: false,
     },
   ]);

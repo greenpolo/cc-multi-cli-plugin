@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { terminateProcessTree } from '../../plugins/multi-core/src/gateway/process-tree.ts';
-import { OPENAI_WORKERS } from '../../plugins/multi-openai/src/models.ts';
+import { MODELS, OPENAI_WORKER_EFFORT } from '../../plugins/multi-openai/src/models.ts';
 import { isolatedEnvironment } from './environment.ts';
 
 interface Event {
@@ -31,19 +31,19 @@ interface Trace {
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
   console.log(
-    'Usage: npm run test:live:compaction -- [openai-luna] [--manual-only]\nRuns real manual/repeated/automatic compaction and disk resume using Claude and OpenAI subscriptions. Native Cursor compaction is not supported by this test.',
+    'Usage: npm run test:live:compaction -- [gpt-6-luna] [--manual-only]\nRuns real manual/repeated/automatic compaction and disk resume using Claude and OpenAI subscriptions. Native Cursor compaction is not supported by this test.',
   );
   process.exit(0);
 }
 const manualOnly = args.includes('--manual-only');
 const positional = args.filter((arg) => arg !== '--manual-only');
-const worker = positional[0] ?? 'openai-luna';
-assert(positional.length <= 1, 'Expected one model/worker and optional --manual-only');
+const worker = positional[0] ?? 'gpt-6-luna';
+assert(positional.length <= 1, 'Expected one OpenAI model and optional --manual-only');
 assert(
-  Object.hasOwn(OPENAI_WORKERS, worker),
-  'Expected an OpenAI worker; native Cursor compaction is not supported by this test.',
+  Object.values(MODELS).includes(worker),
+  'Expected an OpenAI model; native Cursor compaction is not supported by this test.',
 );
-const selection = OPENAI_WORKERS[worker];
+const selection = { model: worker, effort: OPENAI_WORKER_EFFORT };
 const target = {
   ...selection,
   route: 'openai-request',

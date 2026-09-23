@@ -29,15 +29,19 @@ and a failed run says to run `grok login`.
 
 The picker reads the models advertised by `grok models`.
 
-| Picker entry | Route | Named worker |
-| --- | --- | --- |
-| Advertised model | `multi/grok/<id>` | `grok-<id>` |
+| Picker entry | Route |
+| --- | --- |
+| Advertised model | `multi/grok/<id>` |
 
 `MULTI_GROK_MODELS` restricts the rows to a comma-separated list of advertised
 IDs, leaving other providers unchanged. `/effort` accepts `low`, `medium`,
 `high`, `xhigh`, and `max`; the CLI also supports `none` and `minimal`, which
 have no Claude row and are refused explicitly. The model that answers is not
 always the row's name — usage and receipts report the model the CLI billed.
+
+Workers: the Agent tool's `multi-grok` type runs any row above; pass `model:
+<id>` to pick one, or omit `model` to run the CLI's `(default)`-marked model.
+Effort is never part of the model name; the session's `/effort` applies.
 
 ## Execution and permissions
 

@@ -53,7 +53,6 @@ test('Antigravity picker groups exact suffix families and resolves only advertis
     ['gemini', 'sonnet', 'sonnet-thinking', 'single'],
   );
   assert.equal(picker[0].label, 'Antigravity · Gemini');
-  assert.equal(picker[0].worker, 'antigravity-gemini');
   assert.equal(selectAntigravityModel(models, picker[0].model).id, 'gemini-medium');
   for (const effort of ['low', 'medium', 'high']) {
     assert.equal(selectAntigravityModel(models, picker[0].model, effort).id, `gemini-${effort}`);

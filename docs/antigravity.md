@@ -26,23 +26,34 @@ and does not read provider tokens or call Antigravity model endpoints.
 
 The picker reads the models advertised by `agy`.
 
-| Picker entry | Route | Named worker |
-| --- | --- | --- |
-| Advertised base family | `multi/antigravity/<base>` | `antigravity-<base>` |
-| Advertised `-low`, `-medium`, or `-high` variant | `multi/antigravity/<id>` | `antigravity-<id>` |
-| Unsuffixed advertised model | `multi/antigravity/<id>` | `antigravity-<id>` |
+| Picker entry | Route |
+| --- | --- |
+| Advertised base family | `multi/antigravity/<base>` |
+| Advertised `-low`, `-medium`, or `-high` variant | `multi/antigravity/<id>` |
+| Unsuffixed advertised model | `multi/antigravity/<id>` |
 
 Suffix variants group behind a base row when no independent base model exists.
 The default variant order is medium, high, then low. `/effort` accepts only an
 advertised low, medium, or high variant. Unknown models and unavailable effort
 variants fail explicitly.
 
+Workers: the Agent tool's `multi-antigravity` type runs any row above, except
+an id that only adds an effort suffix to another listed row (`<base>-high`
+beside `<base>`) — that stays selectable through `/effort`, not through
+`model`. Pass `model: <id>` (for example `model: gemini-3.8-flash`) to pick a
+model, or omit `model` to run the newest Gemini generation, Pro before Flash
+at the same version (for example `gemini-3.8-flash` when 3.8 is newest).
+Effort is never part of the model name: the session's `/effort` applies, and
+Antigravity picks its advertised low/medium/high variant from it.
+
 ### Context window
 
-Gemini rows and their workers carry a `[1m]` tag on the model ID, so Claude sizes
-the session to the million input tokens Gemini 3.x accepts. The tag is Claude-side
-display metadata: `agy` never sees it, both spellings select the same native model,
-and `/effort` still offers only the advertised low, medium, and high variants.
+Gemini picker rows carry a `[1m]` tag on the model ID, so Claude sizes the
+session to the million input tokens Gemini 3.x accepts; a `multi-antigravity`
+worker resolved to one of these rows keeps the tag on its spawned model. The
+tag is Claude-side display metadata: `agy` never sees it, both spellings select
+the same native model, and `/effort` still offers only the advertised low,
+medium, and high variants.
 
 Other advertised models keep Claude's 200K default, because their window is smaller
 or unestablished: GPT-OSS 120B accepts 131,072 tokens, and the Claude models served

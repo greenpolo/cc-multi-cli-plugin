@@ -9,8 +9,9 @@ usage. Provider setup and limits are documented in [docs/installation.md](docs/i
 ## Overview
 
 The plugin puts external models and coding harnesses inside one Claude Code
-session. The launcher registers provider models and named workers. The Node
-gateway routes requests, preserves Claude passthrough, and coordinates sessions.
+session. The launcher registers provider models and one Agent-tool worker type
+per provider. The Node gateway routes requests, preserves Claude passthrough,
+and coordinates sessions.
 Claude Mods provide the in-engine control plane for model rows, worker rows,
 permission state, progress, and compaction. [The local Mods reference](docs/claude-mods.md)
 is required reading for changes to Claude Code UI or extensibility. Provider adapters own their model
@@ -32,9 +33,27 @@ Claude Code session (/model, workers, prompts)
 
 Claude Code sends Anthropic Messages traffic and provider requests to the gateway.
 The gateway passes Anthropic traffic through and translates direct-provider
-requests. `/model` exposes provider model and effort rows. Named workers expose
-explicit provider choices. Each run reports a visible lifecycle: row, elapsed
-time, streamed progress, completion, failure, and cancellation.
+requests. `/model` exposes provider model and effort rows. Each connected
+provider's Agent-tool worker type runs that provider's picker rows; the Agent
+tool's `model` parameter picks which. Each run reports a visible lifecycle: row,
+elapsed time, streamed progress, completion, failure, and cancellation.
+
+## Worker types
+
+The Agent tool offers exactly one type per signed-in or enabled provider:
+`multi-openai`, `multi-zen`, `multi-cursor`, `multi-antigravity`, and
+`multi-grok`. A type's models are exactly that provider's rows in the session's
+`/model` picker, so `--models`, `MULTI_MODELS`, and the provider-specific
+`_EXTRA_MODELS`/`_MODELS` environment variables bound them. The Agent tool's
+`model` parameter names a model as a short id (`composer-2.5`, `gpt-6-luna`) or
+the full `multi/<provider>/<id>`; a Multi mod hook takes it out before Claude's
+Agent schema check and resolves it against the catalog at spawn, rewriting the
+spawn to the full id. An unknown id, another provider's model, a Claude alias,
+or an effort-suffixed name (`gpt-6-luna-high`) refuses the spawn, naming the
+provider's available models. Omitting `model` runs the provider default.
+Effort is never part of a type or model name: OpenAI and Zen workers carry one
+provider-wide default effort, while Cursor, Antigravity, and Grok workers apply
+the session's `/effort`, validated by the provider.
 
 ## Execution contracts per provider
 

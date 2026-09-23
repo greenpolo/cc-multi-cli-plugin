@@ -1,12 +1,9 @@
-import { createHash } from 'node:crypto';
 import type { ModelListItem, ModelSelection } from '@cursor/sdk';
 
 export interface CursorModelOption {
   model: string;
   label: string;
   description: string;
-  worker: string;
-  nativeWorker: boolean;
   selection: ModelSelection;
   catalog: ModelListItem;
 }
@@ -55,21 +52,6 @@ function modelVariants(item: ModelListItem): CursorModelOption[] {
         .sort()
         .join(',');
       const model = `multi/cursor/${encodeURIComponent(item.id)}${!base && suffix ? `/${suffix}` : ''}`;
-      const slug = item.id
-        .toLowerCase()
-        .replace(/[^a-z0-9-]/g, '-')
-        .slice(0, 40);
-      const changed =
-        params?.filter(
-          (param) => baseParams?.find((value) => value.id === param.id)?.value !== param.value,
-        ) ?? [];
-      const nativeWorker =
-        base || (changed.length === 1 && ['effort', 'reasoning_effort'].includes(changed[0].id));
-      const preset = (nativeWorker ? changed : params)
-        ?.map((param) => `${param.id}-${param.value}`)
-        .join('-')
-        .toLowerCase()
-        .replace(/[^a-z0-9-]/g, '-');
       const effort = params?.find(
         (param) => param.id === 'effort' || param.id === 'reasoning_effort',
       )?.value;
@@ -77,8 +59,6 @@ function modelVariants(item: ModelListItem): CursorModelOption[] {
         model,
         label: `${label} via Cursor`,
         description: `${label} via Cursor${effort ? ` · ${effort} effort` : ''}`,
-        worker: `cursor-${slug}${!base && preset ? `-${preset}` : ''}`.slice(0, 90),
-        nativeWorker,
         selection: { id: item.id, ...(params?.length ? { params } : {}) },
         catalog: item,
       };
@@ -88,23 +68,21 @@ function modelVariants(item: ModelListItem): CursorModelOption[] {
 /** Only expose models and parameter presets actually advertised to this account. */
 export function cursorModelOptions(catalog: ModelListItem[]): CursorModelOption[] {
   const options = new Map<string, CursorModelOption>();
-  const workers = new Set<string>();
   for (const item of catalog) {
     for (const option of modelVariants(item)) {
       if (options.has(option.model)) {
         continue; // Empty-parameter presets must not replace the base row (notably Auto).
       }
-      if (workers.has(option.worker)) {
-        option.worker += `-${createHash('sha256').update(option.model).digest('hex').slice(0, 8)}`;
-      }
-      workers.add(option.worker);
       options.set(option.model, option);
     }
   }
   return [...options.values()];
 }
 
-/** Curated picker lineup; full catalog routes and worker definitions stay available. */
+/** The model a `multi-cursor` worker runs when the Agent call names none: Cursor's Auto. */
+export const CURSOR_DEFAULT_WORKER_MODEL = 'default';
+
+/** Curated picker lineup; the full catalog stays routable. */
 export function cursorPickerOptions(
   options: CursorModelOption[],
   extraModels = '',
@@ -120,8 +98,8 @@ export function cursorPickerOptions(
       );
     }
   }
-  return [...new Set(['default', 'grok-4.7', 'composer-2.5', ...extras])].flatMap((id) =>
-    options.filter((option) => option.model === `multi/cursor/${encodeURIComponent(id)}`),
+  return [...new Set([CURSOR_DEFAULT_WORKER_MODEL, 'grok-4.7', 'composer-2.5', ...extras])].flatMap(
+    (id) => options.filter((option) => option.model === `multi/cursor/${encodeURIComponent(id)}`),
   );
 }
 

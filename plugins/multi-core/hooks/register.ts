@@ -54,6 +54,7 @@ export const register: Register = (on, options) => {
   // Detaching makes the gateway forget this session's mode; keeping its generation
   // here would leave every later prompt stale against a gateway holding nothing.
   const agentModels = new Map<string, string>();
+  const spawnModels = new Map<string, string>();
   registerLifecycle(
     on,
     options,
@@ -64,9 +65,10 @@ export const register: Register = (on, options) => {
       policyState.preparing = undefined;
     },
     agentModels,
+    spawnModels,
   );
   registerCompaction(on, options, agentModels);
-  registerWorkers(on, options, agentModels, policyState);
+  registerWorkers(on, options, agentModels, policyState, spawnModels);
   for (const [name, _description] of displayTools) {
     const tool = `${prefix}${name}` as const;
     on('tool.call', { tool }, async (_$, event) => {

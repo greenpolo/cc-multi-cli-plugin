@@ -26,7 +26,7 @@ import {
 } from '../../plugins/multi-core/src/gateway/tools.ts';
 import { readCodexAuth } from '../../plugins/multi-openai/src/auth.ts';
 import { openaiInstructions } from '../../plugins/multi-openai/src/instructions.ts';
-import { OPENAI_WORKERS } from '../../plugins/multi-openai/src/models.ts';
+import { MODELS, OPENAI_WORKER_EFFORT } from '../../plugins/multi-openai/src/models.ts';
 import type {
   ResponsesInputContent,
   ResponsesInputItem,
@@ -779,15 +779,10 @@ test('all registered model and reasoning choices reach OpenAI without substituti
     assert.equal(request.reasoning.effort, effort);
     return new Response(sse(textEvents));
   });
-  for (const [name, slug] of [
-    ['openai-native', 'gpt-6-astra'],
-    ['openai-sol', 'gpt-6-sol'],
-    ['openai-terra', 'gpt-5.6-terra'],
-    ['openai-luna', 'gpt-6-luna'],
-  ]) {
-    assert.deepEqual(OPENAI_WORKERS[name], { model: slug, effort: 'medium' });
+  assert.equal(OPENAI_WORKER_EFFORT, 'medium');
+  for (const slug of ['gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
+    assert(Object.values(MODELS).includes(slug), slug);
     for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
-      assert.deepEqual(OPENAI_WORKERS[`${name}-${effort}`], { model: slug, effort });
       const response = await call(
         { ...body, model: `multi/openai/${slug}`, output_config: { effort } },
         { 'x-claude-code-agent-id': `${slug}:${effort}` },

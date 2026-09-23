@@ -6,13 +6,14 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { hookCommand } from '../../plugins/multi-core/src/gateway/permission-hook.ts';
-import { OPENAI_WORKERS } from '../../plugins/multi-openai/src/models.ts';
+import { MODELS } from '../../plugins/multi-openai/src/models.ts';
 import { isolatedEnvironment } from './environment.ts';
 
 const { values } = parseArgs({
   options: {
     mode: { type: 'string', default: 'auto' },
-    worker: { type: 'string', default: 'openai-luna-high' },
+    worker: { type: 'string', default: 'multi-openai' },
+    model: { type: 'string', default: 'gpt-6-luna' },
     help: { type: 'boolean' },
   },
 });
@@ -21,12 +22,12 @@ assert(mode && ['auto', 'dontAsk', 'bypassPermissions'].includes(mode));
 
 if (values.help) {
   console.log(
-    'Usage: node test/live/native-approval-worker.ts [--mode auto|dontAsk|bypassPermissions] [--worker openai-luna-high]\nReal launcher and provider worker permissions without Anthropic credentials. Creates one temporary append canary.',
+    'Usage: node test/live/native-approval-worker.ts [--mode auto|dontAsk|bypassPermissions] [--worker multi-openai] [--model gpt-6-luna]\nReal launcher and provider worker permissions without Anthropic credentials. Creates one temporary append canary.',
   );
   process.exit(0);
 }
 assert(
-  values.worker && Object.hasOwn(OPENAI_WORKERS, values.worker),
+  values.worker === 'multi-openai' && Object.values(MODELS).includes(values.model ?? ''),
   'This worker tool-review test supports OpenAI; native Cursor is unsupported.',
 );
 const cwd = await mkdtemp(path.join(os.tmpdir(), 'multi-review-worker-'));
@@ -37,7 +38,7 @@ await writeFile(
   JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark' }),
 );
 const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("require('node:fs').appendFileSync('WORKER.txt', 'WORKER\\n')")}`;
-const prompt = `Delegate to the ${values.worker} worker using Agent. Its entire task is to run this exact Bash command once in ${cwd}: ${command}. Do not run it yourself. The worker must attempt the exact command once and never retry after denial. After the worker finishes, report completion. This is an authorized harmless permission test.`;
+const prompt = `Delegate to the ${values.worker} worker using Agent with model ${values.model}. Its entire task is to run this exact Bash command once in ${cwd}: ${command}. Do not run it yourself. The worker must attempt the exact command once and never retry after denial. After the worker finishes, report completion. This is an authorized harmless permission test.`;
 const hookFile = `${cwd}/record.mjs`;
 await writeFile(
   hookFile,

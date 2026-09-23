@@ -20,7 +20,7 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-core/src/gateway/messages.ts`, `fetch.ts`, `tools.ts` | Shared protocol, outbound fetch, and tool aliases. |
 | `plugins/multi-core/src/gateway/executable.ts`, `process-tree.ts` | Resolves executables and manages child processes. |
 | `plugins/multi-core/src/gateway/atomic-write.ts`, `state-lock.ts` | Protects files and serializes native state. |
-| `plugins/multi-core/src/gateway/cursor-settings.ts`, `mode-hook.ts`, `agent-definitions.ts` | Admits settings and maps prompt and worker permissions. |
+| `plugins/multi-core/src/gateway/cursor-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Admits settings, maps prompt and worker permissions, and resolves the Agent tool's `model` against each provider's worker catalog. |
 | `plugins/multi-core/src/gateway/approval.ts`, `permission-hook.ts` | Approval protocol and capability checks. |
 | `plugins/multi-core/src/gateway/mod-*.ts`, `tool-observer.ts` | Claude Mods control-plane routes, compaction, policy, and progress observation. |
 | `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, and notices shared by Cursor, Antigravity, and Grok; CLI process runner and text prompt preparation shared by Antigravity and Grok. |

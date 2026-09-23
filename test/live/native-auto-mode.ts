@@ -6,13 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { terminateProcessTree } from '../../plugins/multi-core/src/gateway/process-tree.ts';
-import { OPENAI_WORKERS } from '../../plugins/multi-openai/src/models.ts';
+import { MODELS, OPENAI_WORKER_EFFORT } from '../../plugins/multi-openai/src/models.ts';
 import { isolatedEnvironment } from './environment.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
   console.log(
-    'Usage: node test/live/native-auto-mode.ts [sonnet|openai-luna-high] [--worker]\nDefault: sonnet control, OpenAI main/worker. Uses native logins and real usage. Keeps temporary evidence; no global settings changes.',
+    'Usage: node test/live/native-auto-mode.ts [sonnet|gpt-6-luna] [--worker]\nDefault: sonnet control, OpenAI main/worker. Uses native logins and real usage. Keeps temporary evidence; no global settings changes.',
   );
   process.exit(0);
 }
@@ -27,14 +27,14 @@ assert(
   '--worker requires an external worker name',
 );
 assert(
-  names.every((name) => name === 'sonnet' || Object.hasOwn(OPENAI_WORKERS, name)),
+  names.every((name) => name === 'sonnet' || Object.values(MODELS).includes(name)),
   'This Claude tool-review test supports only Claude/OpenAI; native Cursor is unsupported.',
 );
 const cases = names.length
   ? [{ name: names[0], worker: args.includes('--worker') }]
   : [
       { name: 'sonnet', worker: false },
-      ...['openai-luna-high'].flatMap((name) => [
+      ...['gpt-6-luna'].flatMap((name) => [
         { name, worker: false },
         { name, worker: true },
       ]),
@@ -58,8 +58,8 @@ try {
     await mkdir(cwd);
     let model = 'sonnet';
     if (item.name !== 'sonnet') {
-      assert(Object.hasOwn(OPENAI_WORKERS, item.name), `Unknown worker: ${item.name}`);
-      model = `multi/openai/${OPENAI_WORKERS[item.name].model}`;
+      assert(Object.values(MODELS).includes(item.name), `Unknown OpenAI model: ${item.name}`);
+      model = `multi/openai/${item.name}`;
     }
     // These are classifier prose rules, not permissions.allow/deny tool shortcuts.
     const settings = {
@@ -82,7 +82,7 @@ try {
       `node -e 'require("node:fs").writeFileSync("AUTO_MODE_${kind}_CANARY.txt", "${kind}\\n")'`;
     const task = `Use Bash to attempt these two exact commands, separately, in order:\n${command('ALLOW')}\n${command('DENY')}\nThis is a permission integration test with harmless temporary files. Submit each tool request once and let the harness decide. If denied, report the denial and stop; do not retry, change commands, or use another tool. Keep both calls in the foreground. Report both results.`;
     const prompt = item.worker
-      ? `Delegate this task to ${item.name} and wait for completion. Do not execute commands yourself:\n${task}`
+      ? `Delegate this task to the multi-openai agent type with model ${item.name} and wait for completion. Do not execute commands yourself:\n${task}`
       : task;
     const debugFile = path.join(cwd, 'debug.log');
     const cliArgs = [
@@ -109,8 +109,8 @@ try {
       '--debug-file',
       debugFile,
     ];
-    if (!item.worker && item.name.startsWith('openai-')) {
-      cliArgs.push('--effort', OPENAI_WORKERS[item.name].effort);
+    if (!item.worker && item.name !== 'sonnet') {
+      cliArgs.push('--effort', OPENAI_WORKER_EFFORT);
     }
     const child = spawn(process.execPath, [launcher, ...cliArgs], {
       cwd,

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cursorModelOptions } from '../../plugins/multi-cursor/src/models.ts';
-import { OPENAI_WORKERS } from '../../plugins/multi-openai/src/models.ts';
+import { MODELS, OPENAI_WORKER_EFFORT } from '../../plugins/multi-openai/src/models.ts';
 import { removeTemporary } from '../temporary.ts';
 import { isolatedEnvironment } from './environment.ts';
 
@@ -29,16 +29,19 @@ interface TraceEvent {
   effort?: string;
 }
 
-const worker = process.argv[2] ?? 'openai-native';
-const parent = process.argv[3] ?? 'sonnet';
-const cursor = worker.startsWith('cursor-')
-  ? cursorModelOptions(await (await import('@cursor/sdk')).Cursor.models.list()).find(
-      (option) => option.nativeWorker && option.worker === worker,
-    )
-  : undefined;
+// `<worker type> <model>`: multi-openai with an OpenAI model, or multi-cursor with a Cursor id.
+const worker = process.argv[2] ?? 'multi-openai';
+const workerModel = process.argv[3] ?? (worker === 'multi-cursor' ? 'composer-2.5' : 'gpt-6-astra');
+const parent = process.argv[4] ?? 'sonnet';
+const cursor =
+  worker === 'multi-cursor'
+    ? cursorModelOptions(await (await import('@cursor/sdk')).Cursor.models.list()).find(
+        (option) => option.model === `multi/cursor/${encodeURIComponent(workerModel)}`,
+      )
+    : undefined;
 assert(
-  cursor || Object.hasOwn(OPENAI_WORKERS, worker),
-  'Pass a registered native worker name (--cursor-models lists Cursor workers)',
+  cursor || (worker === 'multi-openai' && Object.values(MODELS).includes(workerModel)),
+  'Pass multi-openai or multi-cursor and one of its models (--cursor-models lists Cursor ids)',
 );
 if (cursor) {
   assert.equal(
@@ -59,7 +62,7 @@ try {
       launcher,
       '--',
       '-p',
-      `Delegate to ${worker}: read fixture.txt, then use Edit to replace alpha with beta while preserving the remaining text. Have the worker report the exact resulting line. Wait for completion. Do not read or edit the file yourself.`,
+      `Delegate to the ${worker} agent type with model ${workerModel}: read fixture.txt, then use Edit to replace alpha with beta while preserving the remaining text. Have the worker report the exact resulting line. Wait for completion. Do not read or edit the file yourself.`,
       '--model',
       parent,
       '--effort',
@@ -149,7 +152,7 @@ try {
   );
   const { model, effort } = cursor
     ? { model: cursor.model, effort: undefined }
-    : OPENAI_WORKERS[worker];
+    : { model: workerModel, effort: OPENAI_WORKER_EFFORT };
   const routeModel = cursor ? model : `multi/openai/${model}`;
   assert(diagnostics.includes(`"model":"${routeModel}"`));
   const requests: TraceEvent[] = diagnostics

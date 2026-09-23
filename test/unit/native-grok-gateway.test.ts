@@ -4,14 +4,13 @@ import { isHarnessModel } from '../../plugins/multi-core/hooks/provider.ts';
 import type { MessagesResponse } from '../../plugins/multi-core/src/gateway/messages.ts';
 import { PermissionModes } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
-import { workerDefinitions } from '../../plugins/multi-core/src/launcher.ts';
+import { workerCatalog, workerDefinitions } from '../../plugins/multi-core/src/launcher.ts';
 import type { GrokModel } from '../../plugins/multi-grok/src/models.ts';
 
 const model: GrokModel = {
   id: 'grok-4.6',
   model: 'multi/grok/grok-4.6',
   label: 'Grok 4.6',
-  worker: 'grok-4-6',
   default: true,
 };
 
@@ -103,14 +102,16 @@ test('a Grok route without a configured harness fails as a bad request', async (
   assert.match(JSON.stringify(await response.json()), /Grok is unavailable/);
 });
 
-test('the launcher registers one native worker per discovered Grok model', () => {
-  const agents = workerDefinitions(false, [], false, [], [model]);
-  assert.deepEqual(Object.keys(agents), ['grok-4-6']);
-  assert.equal(agents['grok-4-6'].model, model.model);
-  assert.match(agents['grok-4-6'].description, /Native Grok Build CLI/);
-  assert.deepEqual(agents['grok-4-6'].tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
+test('the launcher registers one Grok worker whose default is the CLI default', () => {
+  const other = { ...model, id: 'grok-4.5', model: 'multi/grok/grok-4.5', default: false };
+  const agents = workerDefinitions(workerCatalog([other, model], [other, model]));
+  assert.deepEqual(Object.keys(agents), ['multi-grok']);
+  assert.equal(agents['multi-grok'].model, model.model);
+  assert.match(agents['multi-grok'].description, /^Grok worker \(native Grok Build CLI\)/);
+  assert.match(agents['multi-grok'].description, /omit it for grok-4\.6\.$/);
+  assert.deepEqual(agents['multi-grok'].tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
   // Rows the session does not show register no worker.
-  assert.deepEqual(workerDefinitions(false, [], false, [], [model], []), {});
+  assert.deepEqual(workerDefinitions(workerCatalog([], [model])), {});
 });
 
 test('the control plane treats every harness provider as one', () => {

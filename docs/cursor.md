@@ -16,16 +16,21 @@ keeps Fast off unless an explicit Fast preset is selected.
 The launcher discovers the account catalog. `/model` shows these default Cursor
 rows when available:
 
-| Picker row | Route | Named worker |
-| --- | --- | --- |
-| Auto | `multi/cursor/default` | `cursor-default` |
-| Grok 4.7 | `multi/cursor/grok-4.7` | `cursor-grok-4-7` |
-| Composer 2.5 | `multi/cursor/composer-2.5` | `cursor-composer-2-5` |
+| Picker row | Route |
+| --- | --- |
+| Auto | `multi/cursor/default` |
+| Grok 4.7 | `multi/cursor/grok-4.7` |
+| Composer 2.5 | `multi/cursor/composer-2.5` |
 
 Unavailable rows are omitted. `MULTI_CURSOR_EXTRA_MODELS` adds advertised
-`selection.id` values. `--cursor-models` prints full routes and worker names.
-Named workers follow the picker rows; full catalog routes remain callable through
-`/model multi/cursor/<id>` and do not multiply worker registrations for presets.
+`selection.id` values. `--cursor-models` prints full routes.
+
+Workers: the Agent tool's `multi-cursor` type runs any row above; pass `model:
+<id>` (for example `model: composer-2.5`) to pick one, or omit `model` to run
+the default, `default` (Auto). Full catalog routes, including parameter
+presets (`multi/cursor/<id>/<params>`), remain callable through `/model
+multi/cursor/<id>`, but a preset's parameters are not part of a worker model
+and do not register a separate `multi-cursor` model.
 
 ## Execution
 

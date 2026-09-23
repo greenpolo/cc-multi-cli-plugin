@@ -14,6 +14,7 @@ import {
 } from '../../multi-antigravity/src/hooks.ts';
 import {
   type AntigravityModel,
+  antigravityDefaultWorkerModel,
   antigravityPickerOptions,
   discoverAntigravityModels,
   nativeSpelling,
@@ -22,7 +23,11 @@ import { antigravityPermissionPolicy } from '../../multi-antigravity/src/permiss
 import { antigravityUsageReader } from '../../multi-antigravity/src/usage-adapter.ts';
 import { CursorHarness } from '../../multi-cursor/src/harness.ts';
 import type { CursorModelOption } from '../../multi-cursor/src/models.ts';
-import { cursorModelOptions, cursorPickerOptions } from '../../multi-cursor/src/models.ts';
+import {
+  CURSOR_DEFAULT_WORKER_MODEL,
+  cursorModelOptions,
+  cursorPickerOptions,
+} from '../../multi-cursor/src/models.ts';
 import {
   cursorPermissionPolicy,
   mergeCursorPermissions,
@@ -33,19 +38,25 @@ import { GrokHarness } from '../../multi-grok/src/harness.ts';
 import {
   discoverGrokModels,
   type GrokModel,
+  grokDefaultWorkerModel,
   grokPickerOptions,
 } from '../../multi-grok/src/models.ts';
 import { grokPermissionPolicy } from '../../multi-grok/src/permissions.ts';
 import { grokUsageReader } from '../../multi-grok/src/usage-adapter.ts';
 import { createOpenAIApproval, discoverOpenAIReviewer } from '../../multi-openai/src/approval.ts';
 import { readCodexAuth } from '../../multi-openai/src/auth.ts';
-import { MODELS, OPENAI_WORKERS } from '../../multi-openai/src/models.ts';
+import {
+  MODELS,
+  OPENAI_DEFAULT_WORKER_MODEL,
+  OPENAI_WORKER_EFFORT,
+} from '../../multi-openai/src/models.ts';
 import type { Effort } from '../../multi-openai/src/responses.ts';
 import { openAIUsageReader } from '../../multi-openai/src/usage-adapter.ts';
 import { readZenKey } from '../../multi-zen/src/auth.ts';
 import {
+  ZEN_DEFAULT_WORKER_MODEL,
   ZEN_MODELS,
-  ZEN_WORKERS,
+  ZEN_WORKER_EFFORT,
   zenModelOptions,
   zenPickerOptions,
 } from '../../multi-zen/src/models.ts';
@@ -65,6 +76,12 @@ import type { ProviderUsageReader } from './gateway/provider-usage.ts';
 import { ReceiptLedger } from './gateway/receipts.ts';
 import type { GatewayEvent } from './gateway/server.ts';
 import { createNativeGateway } from './gateway/server.ts';
+import {
+  buildWorkerCatalog,
+  type WorkerCatalog,
+  type WorkerProvider,
+  workerDescription,
+} from './gateway/worker-catalog.ts';
 
 import { providerSelection } from './install/plugins.ts';
 
@@ -78,6 +95,8 @@ const claudeExecutable = process.env.MULTI_REAL_CLAUDE;
  * provider profiles and Claude's native subagent prompt govern them.
  */
 const WORKER_PROMPT = 'Complete the delegated task.';
+
+const CLAUDE_WORKER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write'];
 
 /** One `--agents` entry: an external worker using Claude Code's native tools. */
 interface AgentDefinition {
@@ -161,14 +180,8 @@ async function main() {
     callerSettings,
   );
   const usageReaders = providerUsageReaders(authFile, zenKey, { cursor, antigravity, grok });
-  const agents = workerDefinitions(
-    codexSignedIn,
-    cursorPicker,
-    Boolean(zenKey),
-    antigravityModels,
-    grokModels,
-    settings.modelPicker.options.map((option) => option.model),
-  );
+  const workers = workerCatalog(settings.modelPicker.options, grokModels);
+  const agents = workerDefinitions(workers);
   const modBridge = new ModBridge();
   const settingsDir = await mkdtemp(path.join(os.tmpdir(), 'multi-native-settings-'));
   const callerSettingsFile = path.join(settingsDir, 'caller-settings.json');
@@ -182,6 +195,7 @@ async function main() {
         pluginInventory,
       ),
     nativeSettingsCheck({ cursor, antigravity, grok }, args, callerSettings),
+    { workers },
   );
   await permissionModes.precompute(process.cwd());
   const { approvalBridge, approvalProviders } = await discoverApprovals(
@@ -643,90 +657,48 @@ export function sharedAdmission(harnesses: {
   return { validate: cursorPermissionPolicy, cursorToolRules: true };
 }
 
-export function workerDefinitions(
-  codexSignedIn: boolean,
-  cursorPicker: CursorModelOption[],
-  zen: boolean,
-  antigravityModels: AntigravityModel[],
-  grokModels: GrokModel[],
-  selectedModels?: readonly string[],
-) {
-  const agents: Record<string, AgentDefinition> = Object.fromEntries(
-    Object.entries(codexSignedIn ? OPENAI_WORKERS : {}).map(([name, { model, effort }]) => [
-      name,
-      {
-        description: `${model}, ${effort} reasoning. Native coding, investigation, and review.`,
-        prompt: WORKER_PROMPT,
-        model: `multi/openai/${model}`,
-        tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write'],
-        effort,
-      },
-    ]),
-  );
-  for (const option of cursorPicker) {
-    agents[option.worker] = {
-      description: option.description,
-      prompt: WORKER_PROMPT,
-      model: option.model,
-      tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write'],
-    };
-  }
-  for (const [name, option] of Object.entries(zen ? ZEN_WORKERS : {})) {
-    agents[name] = {
-      description: `OpenCode Zen ${option.model}${option.effort ? `, ${option.effort} effort` : ''}. Uses native Claude Code tools.`,
-      prompt: WORKER_PROMPT,
-      model: option.model,
-      tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write'],
-      ...(option.effort ? { effort: option.effort } : {}),
-    };
-  }
-  for (const option of [...antigravityModels, ...antigravityPickerOptions(antigravityModels)]) {
-    const effort = option.id.match(/-(low|medium|high)$/)?.[1] as Effort | undefined;
-    agents[option.worker] = {
-      description: `${option.label}. Native Antigravity CLI coding worker.`,
-      prompt: WORKER_PROMPT,
-      // Tagged like the picker row so a delegated worker reads the same window.
-      model: oneMillionContext(option.model, option.id),
-      tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write'],
-      ...(effort ? { effort } : {}),
-    };
-  }
-  for (const option of grokModels) {
-    agents[option.worker] = {
-      description: `${option.label}. Native Grok Build CLI coding worker.`,
-      prompt: WORKER_PROMPT,
-      model: option.model,
-      tools: ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write'],
-    };
-  }
-  return selectWorkers(agents, antigravityModels, selectedModels);
+/** The five provider workers resolve their models from the session's picker rows. */
+export function workerCatalog(
+  pickerModels: readonly { model: string }[],
+  grokModels: readonly GrokModel[] = [],
+): WorkerCatalog {
+  return buildWorkerCatalog(pickerModels, {
+    openai: { defaultId: () => OPENAI_DEFAULT_WORKER_MODEL, effort: OPENAI_WORKER_EFFORT },
+    zen: { defaultId: () => ZEN_DEFAULT_WORKER_MODEL, effort: ZEN_WORKER_EFFORT },
+    cursor: { defaultId: () => CURSOR_DEFAULT_WORKER_MODEL },
+    antigravity: { defaultId: antigravityDefaultWorkerModel },
+    grok: { defaultId: () => grokDefaultWorkerModel(grokModels) },
+  });
 }
 
-function selectWorkers(
-  agents: Record<string, AgentDefinition>,
-  antigravityModels: readonly AntigravityModel[],
-  selectedModels: readonly string[] | undefined,
-) {
-  if (selectedModels === undefined) {
-    return agents;
-  }
-  // Selections arrive in the picker's spelling, which may carry the context tag; native
-  // model IDs never do. Compare both in the untagged spelling.
-  const selected = new Set(selectedModels.map((model) => nativeSpelling(model) ?? model));
-  const nativeModels = new Set(antigravityModels.map((option) => option.model));
-  for (const option of antigravityModels) {
-    const base = option.model.replace(/-(low|medium|high)$/, '');
-    // Synthesized picker rows own their native effort variants. Independently
-    // advertised base and variant rows remain separate selections.
-    if (!nativeModels.has(base) && selected.has(base)) {
-      selected.add(option.model);
+const WORKER_RUNS: Readonly<Record<WorkerProvider, string>> = {
+  openai: "Claude Code's tools",
+  zen: "Claude Code's tools",
+  cursor: 'native Cursor agent',
+  antigravity: 'native Antigravity CLI',
+  grok: 'native Grok Build CLI',
+};
+
+/**
+ * One Agent type per signed-in provider. The definition's model is the provider's
+ * default; an Agent call's `model` selects another, resolved by the mod at spawn.
+ */
+export function workerDefinitions(catalog: WorkerCatalog): Record<string, AgentDefinition> {
+  const agents: Record<string, AgentDefinition> = {};
+  for (const worker of Object.values(catalog)) {
+    const model = worker.models.find((entry) => entry.id === worker.defaultId)?.model;
+    if (!model) {
+      continue;
     }
+    agents[worker.type] = {
+      description: workerDescription(worker, WORKER_RUNS[worker.provider]),
+      prompt: WORKER_PROMPT,
+      model,
+      tools: CLAUDE_WORKER_TOOLS,
+      ...(worker.effort ? { effort: worker.effort as Effort } : {}),
+    };
   }
-  return Object.fromEntries(
-    Object.entries(agents).filter(([, worker]) =>
-      selected.has(nativeSpelling(worker.model) ?? worker.model),
-    ),
-  );
+  return agents;
 }
 
 interface LauncherInvocation {
@@ -992,7 +964,7 @@ async function handleCommand(command?: string) {
   }
   if (command === '--help') {
     console.log(
-      'Usage: node plugins/multi-core/src/launcher.ts [--cursor-login | --cursor-models | --zen-models | --antigravity-models | --antigravity-setup] [-- <claude arguments>]\nLaunch Claude with external models and native coding workers.\n--cursor-login: official Cursor SDK browser sign-in\n--cursor-models: list account model choices and worker names\n--zen-models: list supported Zen models and capabilities\nMULTI_ANTIGRAVITY=1: enable native Antigravity models and workers\n--antigravity-setup: install the scoped native permission hook\n--antigravity-models: inspect the official Antigravity CLI catalog (native login required)\n--grok-models: list the Grok Build catalog (native login required)\nMULTI_GROK_MODELS: comma-separated Grok model IDs to show, leaving other providers unchanged\nOPENCODE_API_KEY: Zen key (or use OpenCode /connect)\nMULTI_ZEN_MODELS: comma-separated Zen model IDs to show, leaving other providers unchanged\nMULTI_MODELS: comma-separated full model IDs to show in /model (unset: defaults; empty: hide external rows)\nMULTI_CURSOR_EXTRA_MODELS: comma-separated Cursor model IDs to add to Auto, Grok 4.6, and Composer 2.5 in /model',
+      'Usage: node plugins/multi-core/src/launcher.ts [--cursor-login | --cursor-models | --zen-models | --antigravity-models | --antigravity-setup] [-- <claude arguments>]\nLaunch Claude with external models and native coding workers.\n--cursor-login: official Cursor SDK browser sign-in\n--cursor-models: list account model choices\n--zen-models: list supported Zen models and capabilities\nMULTI_ANTIGRAVITY=1: enable native Antigravity models and workers\n--antigravity-setup: install the scoped native permission hook\n--antigravity-models: inspect the official Antigravity CLI catalog (native login required)\n--grok-models: list the Grok Build catalog (native login required)\nMULTI_GROK_MODELS: comma-separated Grok model IDs to show, leaving other providers unchanged\nOPENCODE_API_KEY: Zen key (or use OpenCode /connect)\nMULTI_ZEN_MODELS: comma-separated Zen model IDs to show, leaving other providers unchanged\nMULTI_MODELS: comma-separated full model IDs to show in /model (unset: defaults; empty: hide external rows)\nMULTI_CURSOR_EXTRA_MODELS: comma-separated Cursor model IDs to add to Auto, Grok 4.6, and Composer 2.5 in /model',
     );
     process.exit(0);
   }
@@ -1056,12 +1028,7 @@ function printCursorModels(cursorModels: CursorModelOption[], cursorSignedIn: bo
   }
   console.log(
     JSON.stringify(
-      cursorModels.map(({ model, label, worker, selection, nativeWorker }) => ({
-        model,
-        label,
-        worker: nativeWorker ? worker : undefined,
-        selection,
-      })),
+      cursorModels.map(({ model, label, selection }) => ({ model, label, selection })),
       null,
       2,
     ),

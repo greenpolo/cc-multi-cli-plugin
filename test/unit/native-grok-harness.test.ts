@@ -15,7 +15,6 @@ const model: GrokModel = {
   id: 'grok-4.6',
   model: 'multi/grok/grok-4.6',
   label: 'Grok 4.6',
-  worker: 'grok-4-6',
   default: true,
 };
 

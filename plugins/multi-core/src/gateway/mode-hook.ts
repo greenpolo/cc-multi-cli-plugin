@@ -4,6 +4,7 @@ import { nativeSpelling } from '../../../multi-antigravity/src/models.ts';
 import { mergeCursorPermissions } from '../../../multi-cursor/src/permissions.ts';
 import type { WorkerPermissions } from './agent-definitions.ts';
 import { ModPolicies } from './mod-policy.ts';
+import { type ResolvedWorker, resolveWorker, type WorkerCatalog } from './worker-catalog.ts';
 
 const MODES = ['default', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions', 'plan'] as const;
 type PermissionMode = (typeof MODES)[number];
@@ -61,14 +62,17 @@ export class PermissionModes {
   private readonly refusals = new Map<string, { reason: string; at: number }>();
   private readonly definitions: (cwd: string) => Promise<Record<string, WorkerPermissions>>;
   private readonly platform: NodeJS.Platform;
+  /** The provider worker types, whose Agent-call `model` is resolved here. */
+  private readonly workerCatalog: WorkerCatalog;
 
   constructor(
     definitions: (cwd: string) => Promise<Record<string, WorkerPermissions>>,
     restrictions: (cwd: string) => Promise<WorkerPermissions> = async () => ({}),
-    options: { platform?: NodeJS.Platform } = {},
+    options: { platform?: NodeJS.Platform; workers?: WorkerCatalog } = {},
   ) {
     this.definitions = definitions;
     this.platform = options.platform ?? process.platform;
+    this.workerCatalog = options.workers ?? {};
     this.policies = new ModPolicies(async (cwd) => ({
       cwd,
       workers: await definitions(cwd),
@@ -195,7 +199,8 @@ export class PermissionModes {
     const model = selection.model;
     if (selection.execution === 'harness') {
       this.resolveHarness(session);
-      validateWorkerDefinition(definition, input);
+      // A provider worker's model was resolved against its catalog, not its default.
+      validateWorkerDefinition(definition, input, !selection.worker);
       if (parent.nativePermissionError) {
         throw new Error(parent.nativePermissionError);
       }
@@ -215,11 +220,16 @@ export class PermissionModes {
     return token;
   }
 
-  /** Classify from the catalog and pinned parent model, never from a worker name. */
+  /**
+   * Classify from the catalog and pinned parent model, never from a worker name. A
+   * provider worker's model is the Agent call's `model` resolved against its catalog;
+   * an unknown or other provider's model throws with the provider's models named.
+   */
   workerSelection(input: Record<string, unknown>): {
     model?: string;
     execution: WorkerExecution;
     known: boolean;
+    worker?: ResolvedWorker;
   } {
     const type = requiredString(input.subagentType, 'subagentType');
     const cwd = requiredString(input.cwd, 'cwd');
@@ -231,6 +241,15 @@ export class PermissionModes {
     const definition = this.catalogs.get(cwd)?.[type];
     if (input.fork === true) {
       return { model: parent, execution: executionForModel(parent), known: true };
+    }
+    if (Object.hasOwn(this.workerCatalog, type)) {
+      const worker = resolveWorker(this.workerCatalog, type, explicit);
+      return {
+        model: worker.model,
+        execution: executionForModel(worker.model),
+        known: definition !== undefined,
+        worker,
+      };
     }
     const fixed =
       definition?.model && definition.model !== 'inherit' ? definition.model : undefined;
@@ -469,11 +488,16 @@ function sameModel(left: unknown, right: unknown): boolean {
   return nativeSpelling(left) === nativeSpelling(right);
 }
 
-function validateWorkerDefinition(definition: WorkerPermissions, input: Record<string, unknown>) {
+function validateWorkerDefinition(
+  definition: WorkerPermissions,
+  input: Record<string, unknown>,
+  fixedModel = true,
+) {
   if (definition.nativePermissionError) {
     throw new Error(definition.nativePermissionError);
   }
   if (
+    fixedModel &&
     definition.model &&
     definition.model !== 'inherit' &&
     input.model !== undefined &&

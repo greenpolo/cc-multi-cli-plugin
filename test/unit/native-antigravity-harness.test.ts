@@ -28,7 +28,6 @@ const model = {
   id: 'gemini-test-low',
   model: 'multi/antigravity/gemini-test-low',
   label: 'Test',
-  worker: 'antigravity-test',
 };
 const context: PermissionContext = { permissionMode: 'auto', cwd: process.cwd() };
 const policy = async () => ({
