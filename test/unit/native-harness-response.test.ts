@@ -18,20 +18,12 @@ import {
   HarnessSessionStore,
 } from '../../plugins/multi-core/src/gateway/harness-session.ts';
 import type { Emit } from '../../plugins/multi-core/src/gateway/messages.ts';
-import type { ModDisplayEvent } from '../../plugins/multi-core/src/gateway/mod-bridge.ts';
 
 function collector() {
   const events: HarnessEvent[] = [];
   const emit: Emit = (name, value) => events.push([name, structuredClone(value)]);
   return { events, emit };
 }
-
-const row: ModDisplayEvent = {
-  sequence: 1,
-  toolUseId: 'toolu_1',
-  tool: 'NativeProgress',
-  input: { description: 'read file', output: 'ok', isError: false, toolUseId: 'toolu_1' },
-};
 
 test('streamed text becomes one assistant block and its terminal events are held back', () => {
   const { events, emit } = collector();
@@ -149,48 +141,22 @@ test('a failed completion write rolls state back and emits no terminal events', 
   await store.closeAll();
 });
 
-test('a display row interrupts the text block and carries no executable tool input', () => {
+test('a native response constructs text blocks only, never a tool block', () => {
   const { events, emit } = collector();
-  const response = new HarnessResponse('native-1', 3, emit, { multiBlock: true });
-  response.text('before');
-  response.displayRow(row);
-  response.text('after');
-  const finished = response.finish({ input: 1, output: 1 });
-  assert.deepEqual(finished.content, [
-    { type: 'text', text: 'before' },
-    { type: 'tool_use', id: 'toolu_1', name: 'NativeProgress', input: row.input },
-    { type: 'text', text: 'after' },
-  ]);
-  // The row opens with an empty input, so a partial stream can never be executed.
-  const start = events.find(
-    ([name, value]) => name === 'content_block_start' && 'index' in value && value.index === 1,
-  );
-  assert.deepEqual(start?.[1], {
-    index: 1,
-    content_block: { type: 'tool_use', id: 'toolu_1', name: 'NativeProgress', input: {} },
-  });
-  assert.deepEqual(
-    events.map(([name]) => name),
-    [
-      'message_start',
-      'content_block_start',
-      'content_block_delta',
-      'content_block_stop',
-      'content_block_start',
-      'content_block_delta',
-      'content_block_stop',
-      'content_block_start',
-      'content_block_delta',
-      'content_block_stop',
-    ],
-  );
-  assert.equal(finished.content.at(-1)?.type, 'text');
-});
-
-test('a single-block response refuses display rows', () => {
-  const { emit } = collector();
   const response = new HarnessResponse('native-1', 3, emit);
-  assert.throws(() => response.displayRow(row), /does not emit native display rows/);
+  response.text('before');
+  response.text(' after');
+  const finished = response.finish({ input: 1, output: 1 });
+  assert.deepEqual(finished.content, [{ type: 'text', text: 'before after' }]);
+  assert.equal(
+    events.some(
+      ([name, value]) =>
+        name === 'content_block_start' &&
+        'content_block' in value &&
+        (value.content_block as { type?: string }).type === 'tool_use',
+    ),
+    false,
+  );
 });
 
 test('output beyond the safety limit fails the run instead of buffering it', () => {

@@ -21,6 +21,10 @@ import {
   writeNotices,
 } from '../../multi-core/src/gateway/harness-notices.ts';
 import {
+  NativeActionTracker,
+  type NativeProgressObserver,
+} from '../../multi-core/src/gateway/harness-progress.ts';
+import {
   HarnessResponse,
   type HarnessUsageFields,
 } from '../../multi-core/src/gateway/harness-response.ts';
@@ -50,6 +54,7 @@ import { antigravitySettingsFile } from './hooks.ts';
 import type { AntigravityModel } from './models.ts';
 import { nativeSpelling, selectAntigravityModel } from './models.ts';
 import { type AntigravityPolicy, antigravityCompactionDenyList } from './permissions.ts';
+import { observeAntigravityInit, observeAntigravityStep } from './progress.ts';
 import { antigravityHistoryHash, prepareAntigravityRequest } from './request.ts';
 
 export type AntigravityRunner = (options: AntigravityRunOptions) => Promise<AntigravityRunResult>;
@@ -78,6 +83,7 @@ type Turn = {
   cwd: string;
   identity: string;
   key: string;
+  observe?: NativeProgressObserver;
 };
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -110,6 +116,7 @@ export class AntigravityHarness {
   private readonly store: HarnessSessionStore<Saved>;
   private readonly exchanges = new ExchangeRegistry({ provider: TAG, createMeta: () => ({}) });
   private closed = false;
+  private unindexedSteps = 0;
 
   constructor(
     models: readonly AntigravityModel[],
@@ -162,12 +169,19 @@ export class AntigravityHarness {
     return prepareAntigravityRequest(body, model.id).inputTokens;
   }
 
+  /** The scope's last reply from its session record, located as `handle` locates it. */
+  async recordedResponse(scope: string, context?: PermissionContext) {
+    const cwd = await realpath(context?.cwd ?? this.defaultCwd);
+    return this.store.recordedResponse(`${cwd}\0${scope}`);
+  }
+
   async handle(
     body: MessagesRequest,
     scope: string,
     signal: AbortSignal,
     emit?: Emit,
     context?: PermissionContext,
+    observe?: NativeProgressObserver,
   ): Promise<MessagesResponse> {
     if (this.closed) {
       throw new Error('Antigravity harness is closed');
@@ -201,7 +215,7 @@ export class AntigravityHarness {
         compaction: context.compaction,
       },
     ]);
-    const turn: Turn = { body, context, model, cwd, identity, key };
+    const turn: Turn = { body, context, model, cwd, identity, key, observe };
     let exchange = this.exchanges.get(key);
     if (!exchange) {
       if (this.exchanges.size >= 256) {
@@ -305,6 +319,11 @@ export class AntigravityHarness {
       let streamed = '';
       let initSave: Promise<void> | undefined;
       const startedAt = performance.now();
+      // Each finished tool step becomes a display row in this reply, named after
+      // agy's own tool; the terse summary is written when the run commits.
+      const actions = new NativeActionTracker(TAG, turn.observe, (block) =>
+        response.displayRow(block),
+      );
       const outcome = await settleOrAbort(
         this.run({
           cwd,
@@ -319,6 +338,7 @@ export class AntigravityHarness {
             this.eventText(
               event,
               response,
+              actions,
               (text) => {
                 streamed += text;
               },
@@ -349,7 +369,16 @@ export class AntigravityHarness {
         await this.store.save(session);
         throw new AntigravityProviderError(result.error ?? `Antigravity run ${result.status}`);
       }
-      return await this.commit(session, response, result, exchange, key, model, streamed, emit);
+      return await this.commit(
+        session,
+        response,
+        result,
+        exchange,
+        key,
+        model,
+        { streamed, summary: actions.text() },
+        emit,
+      );
     } catch (error) {
       // The run ended without a terminal result (abort, kill, or a CLI/parse
       // failure). If agy ever reported a conversation id for this attempt, the
@@ -373,10 +402,11 @@ export class AntigravityHarness {
     exchange: HarnessExchange,
     key: string,
     model: AntigravityModel,
-    streamed: string,
+    text: { streamed: string; summary: string },
     emit: Emit,
   ): Promise<MessagesResponse> {
-    response.text(terminalSuffix(streamed, result.response));
+    response.text(terminalSuffix(text.streamed, result.response));
+    response.text(text.summary);
     const finished = response.finish(
       usageFields(usageDelta(result.usage, session.saved.usage)),
       model.id,
@@ -401,11 +431,13 @@ export class AntigravityHarness {
   private eventText(
     event: AntigravityStreamEvent,
     response: HarnessResponse,
+    actions: NativeActionTracker,
     add: (text: string) => void,
     init: (conversationId: string) => void,
   ) {
     if (event.event === 'init') {
       init(event.conversation_id);
+      observeAntigravityInit(event.init, actions);
       return;
     }
     if (event.event !== 'step_update') {
@@ -415,16 +447,9 @@ export class AntigravityHarness {
     if (typeof update.text_delta === 'string') {
       add(update.text_delta);
       response.text(update.text_delta);
-    } else if (typeof update.tool_name === 'string') {
-      const detail = [
-        update.step_type,
-        update.duration_seconds !== undefined ? `${update.duration_seconds}s` : undefined,
-        update.tool_info ? safeText(JSON.stringify(update.tool_info)) : undefined,
-      ]
-        .filter(Boolean)
-        .join(' · ');
-      response.text(`\n[${TAG}] ${update.tool_name}${detail ? ` (${detail})` : ''}\n`);
+      return;
     }
+    observeAntigravityStep(update, actions, () => `tool-${++this.unindexedSteps}`);
   }
 
   async close() {

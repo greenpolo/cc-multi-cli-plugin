@@ -1,0 +1,306 @@
+{
+  "version": 3,
+  "provider": "Cursor",
+  "identity": "[\"/home/walshlab/Software/cc-multi-cli-plugin\",\"[\\\"7e10bbe5-1095-43d1-bf35-57b93c46c41f\\\",\\\"a02d1c66336cfdea4\\\"]\"]",
+  "interrupted": false,
+  "agentId": "agent-795d24de-9056-4234-8ee3-54f0d310cc14",
+  "response": {
+    "id": "msg_93326532-219f-4d75-a0b1-b692664b6858",
+    "type": "message",
+    "role": "assistant",
+    "model": "multi/cursor/composer-2.5",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_multi_26123b032667439887a2c4c3fb2acd07",
+        "name": "mcp__multi-core__grep",
+        "input": {
+          "kind": "Grep",
+          "pattern": "beta",
+          "path": "/work/project",
+          "native": { "pattern": "beta", "path": "/work/project", "offset": 0 },
+          "multi_row": "11a5dd3f4f27936fe3b84133f4fbba9b"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_multi_a41d64bcde8f40c59f270640f18a465e",
+        "name": "mcp__multi-core__glob",
+        "input": {
+          "kind": "Glob",
+          "pattern": "*.txt",
+          "path": "/work/project",
+          "native": { "globPattern": "*.txt", "targetDirectory": "/work/project" },
+          "multi_row": "fa8c9e4cce466e0f3e2d0bb93a3da3c3"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_multi_eb36220e05ce4489b12b602e804621c3",
+        "name": "mcp__multi-core__read",
+        "input": {
+          "kind": "Read",
+          "file_path": "/work/project/sample.txt",
+          "native": { "path": "/work/project/sample.txt" },
+          "multi_row": "64e2085c803e6145b00121aa9029e75b"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_multi_134d9fa362f04a7aa02c561f5e25f044",
+        "name": "mcp__multi-core__shell",
+        "input": {
+          "kind": "Bash",
+          "command": "ls -la /work/project",
+          "native": { "command": "ls -la /work/project", "timeout": 30000 },
+          "multi_row": "f295390073f262e02bcc0b0e26005793"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_multi_3f104e0243194c2bba4243fb53c04206",
+        "name": "mcp__multi-core__edit",
+        "input": {
+          "kind": "Edit",
+          "file_path": "/work/project/sample.txt",
+          "native": { "path": "/work/project/sample.txt" },
+          "multi_row": "c8053c2375f2b05fc9f8cedef0e41c1c"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_multi_3bf5d7c999bc4297a7c238a3f608ef77",
+        "name": "mcp__multi-core__edit",
+        "input": {
+          "kind": "Edit",
+          "file_path": "/work/project/created.txt",
+          "native": { "path": "/work/project/created.txt" },
+          "multi_row": "4229e644b5268289c19d66d2de5ea80e"
+        }
+      },
+      {
+        "type": "tool_use",
+        "id": "toolu_multi_4c6cee977777479882dfff82c586cdde",
+        "name": "mcp__multi-core__shell",
+        "input": {
+          "kind": "Bash",
+          "command": "cat /work/project/created.txt",
+          "native": { "command": "cat /work/project/created.txt", "timeout": 30000 },
+          "multi_row": "611abe7d0fe46065c92f4b21f0503cab"
+        }
+      }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 35447,
+      "output_tokens": 787,
+      "cache_read_input_tokens": 25551,
+      "cache_creation_input_tokens": 0
+    },
+    "multi_followup": "All seven steps completed: read, grep, glob, list, edit (`beta`→`BETA`), write `created.txt`, and `cat` printed `hello`.\n\n[Cursor] 7 native actions: 2 search, 1 read, 2 shell, 2 edit.\n[Cursor] Changed: /work/project/created.txt.\n",
+    "multi_usage": {
+      "source": "provider",
+      "model": "composer-2.5",
+      "consumed_input_tokens": 35447,
+      "consumed_output_tokens": 787,
+      "consumed_cache_read_tokens": 25551,
+      "consumed_cache_creation_tokens": 0,
+      "total_tokens": 61785
+    }
+  },
+  "replay": {
+    "key": "db97ec3bd7504e16add96a04ac538b7fbdba7e806fb42272c23be02f42e98104",
+    "events": [
+      [
+        "message_start",
+        {
+          "message": {
+            "id": "msg_93326532-219f-4d75-a0b1-b692664b6858",
+            "type": "message",
+            "role": "assistant",
+            "model": "multi/cursor/composer-2.5",
+            "content": [],
+            "stop_reason": null,
+            "stop_sequence": null,
+            "usage": { "input_tokens": 4816, "output_tokens": 0 }
+          }
+        }
+      ],
+      [
+        "content_block_start",
+        {
+          "index": 0,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_multi_26123b032667439887a2c4c3fb2acd07",
+            "name": "mcp__multi-core__grep",
+            "input": {}
+          }
+        }
+      ],
+      [
+        "content_block_delta",
+        {
+          "index": 0,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"kind\":\"Grep\",\"pattern\":\"beta\",\"path\":\"/work/project\",\"native\":{\"pattern\":\"beta\",\"path\":\"/work/project\",\"offset\":0},\"multi_row\":\"11a5dd3f4f27936fe3b84133f4fbba9b\"}"
+          }
+        }
+      ],
+      ["content_block_stop", { "index": 0 }],
+      [
+        "content_block_start",
+        {
+          "index": 1,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_multi_a41d64bcde8f40c59f270640f18a465e",
+            "name": "mcp__multi-core__glob",
+            "input": {}
+          }
+        }
+      ],
+      [
+        "content_block_delta",
+        {
+          "index": 1,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"kind\":\"Glob\",\"pattern\":\"*.txt\",\"path\":\"/work/project\",\"native\":{\"globPattern\":\"*.txt\",\"targetDirectory\":\"/work/project\"},\"multi_row\":\"fa8c9e4cce466e0f3e2d0bb93a3da3c3\"}"
+          }
+        }
+      ],
+      ["content_block_stop", { "index": 1 }],
+      [
+        "content_block_start",
+        {
+          "index": 2,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_multi_eb36220e05ce4489b12b602e804621c3",
+            "name": "mcp__multi-core__read",
+            "input": {}
+          }
+        }
+      ],
+      [
+        "content_block_delta",
+        {
+          "index": 2,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"kind\":\"Read\",\"file_path\":\"/work/project/sample.txt\",\"native\":{\"path\":\"/work/project/sample.txt\"},\"multi_row\":\"64e2085c803e6145b00121aa9029e75b\"}"
+          }
+        }
+      ],
+      ["content_block_stop", { "index": 2 }],
+      [
+        "content_block_start",
+        {
+          "index": 3,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_multi_134d9fa362f04a7aa02c561f5e25f044",
+            "name": "mcp__multi-core__shell",
+            "input": {}
+          }
+        }
+      ],
+      [
+        "content_block_delta",
+        {
+          "index": 3,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"kind\":\"Bash\",\"command\":\"ls -la /work/project\",\"native\":{\"command\":\"ls -la /work/project\",\"timeout\":30000},\"multi_row\":\"f295390073f262e02bcc0b0e26005793\"}"
+          }
+        }
+      ],
+      ["content_block_stop", { "index": 3 }],
+      [
+        "content_block_start",
+        {
+          "index": 4,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_multi_3f104e0243194c2bba4243fb53c04206",
+            "name": "mcp__multi-core__edit",
+            "input": {}
+          }
+        }
+      ],
+      [
+        "content_block_delta",
+        {
+          "index": 4,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"kind\":\"Edit\",\"file_path\":\"/work/project/sample.txt\",\"native\":{\"path\":\"/work/project/sample.txt\"},\"multi_row\":\"c8053c2375f2b05fc9f8cedef0e41c1c\"}"
+          }
+        }
+      ],
+      ["content_block_stop", { "index": 4 }],
+      [
+        "content_block_start",
+        {
+          "index": 5,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_multi_3bf5d7c999bc4297a7c238a3f608ef77",
+            "name": "mcp__multi-core__edit",
+            "input": {}
+          }
+        }
+      ],
+      [
+        "content_block_delta",
+        {
+          "index": 5,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"kind\":\"Edit\",\"file_path\":\"/work/project/created.txt\",\"native\":{\"path\":\"/work/project/created.txt\"},\"multi_row\":\"4229e644b5268289c19d66d2de5ea80e\"}"
+          }
+        }
+      ],
+      ["content_block_stop", { "index": 5 }],
+      [
+        "content_block_start",
+        {
+          "index": 6,
+          "content_block": {
+            "type": "tool_use",
+            "id": "toolu_multi_4c6cee977777479882dfff82c586cdde",
+            "name": "mcp__multi-core__shell",
+            "input": {}
+          }
+        }
+      ],
+      [
+        "content_block_delta",
+        {
+          "index": 6,
+          "delta": {
+            "type": "input_json_delta",
+            "partial_json": "{\"kind\":\"Bash\",\"command\":\"cat /work/project/created.txt\",\"native\":{\"command\":\"cat /work/project/created.txt\",\"timeout\":30000},\"multi_row\":\"611abe7d0fe46065c92f4b21f0503cab\"}"
+          }
+        }
+      ],
+      ["content_block_stop", { "index": 6 }],
+      [
+        "message_delta",
+        {
+          "delta": { "stop_reason": "end_turn", "stop_sequence": null },
+          "usage": {
+            "input_tokens": 35447,
+            "output_tokens": 787,
+            "cache_read_input_tokens": 25551,
+            "cache_creation_input_tokens": 0
+          }
+        }
+      ],
+      ["message_stop", {}]
+    ]
+  }
+}

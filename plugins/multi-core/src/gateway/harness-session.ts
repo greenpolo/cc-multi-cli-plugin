@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from './atomic-write.ts';
+import { isDisplayTool } from './display-rows.ts';
 import type { HarnessEvent } from './harness-exchange.ts';
 import type { MessagesResponse } from './messages.ts';
 import { lockStateFile } from './state-lock.ts';
@@ -55,6 +56,17 @@ export type ContentBlockCheck = (block: Record<string, unknown>) => boolean;
 export const textContentBlock: ContentBlockCheck = (block) =>
   block.type === 'text' && typeof block.text === 'string';
 
+/** A display row the gateway wrote for a native action (see `display-rows.ts`). */
+const displayContentBlock: ContentBlockCheck = (block) =>
+  block.type === 'tool_use' &&
+  typeof block.id === 'string' &&
+  isDisplayTool(block.name) &&
+  isRecord(block.input);
+
+/** What a native harness reply holds: text, and display rows. */
+const harnessContentBlock: ContentBlockCheck = (block) =>
+  textContentBlock(block) || displayContentBlock(block);
+
 /**
  * The only way to reach a native session record. It owns the lock file, the busy
  * flag and the load gate, so a provider cannot re-add queuing without bypassing
@@ -105,7 +117,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
   }) {
     this.provider = options.provider;
     this.tag = options.tag ?? options.provider;
-    this.validContentBlock = options.validContentBlock ?? textContentBlock;
+    this.validContentBlock = options.validContentBlock ?? harnessContentBlock;
     this.stateDirectory = options.stateDirectory;
     this.platform = options.platform;
     this.version = options.version;
@@ -188,6 +200,33 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
       return true;
     } finally {
       this.loading.delete(session.identity);
+    }
+  }
+
+  /**
+   * The last reply the identity's record holds, read without taking its lock or
+   * loading it: the live record when attached, else the durable file. An absent
+   * or unreadable record holds none.
+   */
+  async recordedResponse(identity: string): Promise<MessagesResponse | undefined> {
+    const live = this.records.get(identity);
+    if (live) {
+      return live.saved.response;
+    }
+    const file = this.sessionFile(identity);
+    const files = [
+      ...new Set([
+        file,
+        ...this.aliasFiles(identity).map((item) => resolveStateFile(this.stateDirectory, item)),
+      ]),
+    ];
+    try {
+      const restored = this.restore
+        ? await this.restore({ identity, files, read: readJson })
+        : { saved: await readJson(file) };
+      return this.validateSaved(restored.saved, identity)?.response;
+    } catch {
+      return undefined;
     }
   }
 
@@ -334,7 +373,7 @@ export function optionalCount(value: unknown): boolean {
 
 export function validMessagesResponse(
   value: unknown,
-  validContentBlock: ContentBlockCheck = textContentBlock,
+  validContentBlock: ContentBlockCheck = harnessContentBlock,
 ): value is MessagesResponse {
   if (!isRecord(value)) {
     return false;
@@ -349,6 +388,7 @@ export function validMessagesResponse(
     response.content.every((block) => isRecord(block) && validContentBlock(block)) &&
     (response.stop_reason === null || response.stop_reason === 'end_turn') &&
     (response.stop_sequence === null || typeof response.stop_sequence === 'string') &&
+    (response.multi_followup === undefined || typeof response.multi_followup === 'string') &&
     validResponseUsage(response.usage)
   );
 }
@@ -369,7 +409,7 @@ function validResponseUsage(value: unknown): value is MessagesResponse['usage'] 
 
 export function validPersistedResponse(
   value: unknown,
-  validContentBlock: ContentBlockCheck = textContentBlock,
+  validContentBlock: ContentBlockCheck = harnessContentBlock,
 ): value is { response: MessagesResponse; events: HarnessEvent[] } {
   if (!isRecord(value)) {
     return false;

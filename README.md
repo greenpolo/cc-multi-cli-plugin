@@ -23,7 +23,7 @@ Multi brings external models and coding harnesses into one Claude Code session t
 ## Why Multi?
 
 - **Choose your model in place.** Switch through `/model` and select supported reasoning effort with `/effort`.
-- **Delegate to provider workers.** Run a provider's own model from the Agent tool (`multi-openai`, `multi-cursor`, `multi-zen`, `multi-antigravity`, `multi-grok`); with progress, elapsed time, and cancellation.
+- **Delegate to provider workers.** Run a provider's own model from the Agent tool (`multi-openai`, `multi-cursor`, `multi-zen`, `multi-antigravity`, `multi-grok`); native actions appear as tool rows under the harness's own tool names, with elapsed time and cancellation.
 - **Keep native execution.** OpenAI and Zen use Claude Code's tools; Cursor, Antigravity and Grok run their own SDK or CLI tools.
 - **Carry your session forward.** Resume saved sessions while keeping provider credentials and native state separate.
 - **Stay in control.** Claude's permission mode and explicit tool restrictions govern provider dispatch.

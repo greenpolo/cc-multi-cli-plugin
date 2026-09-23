@@ -35,12 +35,16 @@ and do not register a separate `multi-cursor` model.
 ## Execution
 
 Cursor's SDK owns native tools, its system prompt, conversation state, and native
-review. Claude Code displays streamed progress, tool status, elapsed time, shell
-output, exit status, and bounded edit details. External actions are displayed and
-never replayed as executable Claude tools. Cursor task, child-agent, and MCP
+review. Each finished SDK tool call is a row under Cursor's tool type (`shell`,
+`read`, `edit`, `grep`, ...) with its native arguments and output (stdout/stderr and
+exit code, file content, diff), in the `/model` Cursor session or inside the Cursor
+worker's transcript. The transcript also keeps streamed text, context-compaction
+notices, and one closing summary of action counts, changed files, and failed or
+denied actions. External actions are displayed and never replayed as executable
+Claude tools. Cursor task, child-agent, and MCP
 capabilities are disabled.
 
-Claude and OpenAI parents can spawn named Cursor workers. Each worker has its own
+Claude and OpenAI parents can spawn Cursor workers. Each worker has its own
 SDK state. Worktree workers use their canonical workspace for SDK execution and
 policy checks. Cancellation reaches the native SDK run.
 
@@ -52,9 +56,9 @@ policy checks. Cancellation reaches the native SDK run.
 | Plan | Native plan mode with read, grep, glob, and directory-listing tools. Shell and edit capabilities are excluded. |
 | Bypass | Native agent mode with Auto review disabled. Explicit tool restrictions and SDK sandbox settings still apply. |
 
-Modes apply at prompt boundaries. Worker modes inherit from the parent and named
-worker definitions. Settings, plugin policies, tool lists, and managed policy are
-admitted per operating system; see [docs/permissions.md](permissions.md).
+Modes apply at prompt boundaries. Worker modes inherit from the parent and the
+worker type's definition. Settings, plugin policies, tool lists, and managed
+policy are admitted per operating system; see [docs/permissions.md](permissions.md).
 Unsupported modes, unknown workers, ignored Cursor permission files, ask rules,
 sandbox policy, unsupported argument or path rules, and unsupported managed
 controls fail explicitly. SDK events provide native action observations for Claude

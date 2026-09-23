@@ -20,6 +20,7 @@ import {
   nativeSpelling,
 } from '../../multi-antigravity/src/models.ts';
 import { antigravityPermissionPolicy } from '../../multi-antigravity/src/permissions.ts';
+import { ANTIGRAVITY_TOOLS } from '../../multi-antigravity/src/progress.ts';
 import { antigravityUsageReader } from '../../multi-antigravity/src/usage-adapter.ts';
 import { CursorHarness } from '../../multi-cursor/src/harness.ts';
 import type { CursorModelOption } from '../../multi-cursor/src/models.ts';
@@ -32,6 +33,7 @@ import {
   cursorPermissionPolicy,
   mergeCursorPermissions,
 } from '../../multi-cursor/src/permissions.ts';
+import { CURSOR_TOOLS } from '../../multi-cursor/src/progress.ts';
 import { cursorUsageReader } from '../../multi-cursor/src/usage-adapter.ts';
 import { CursorWorkspaces } from '../../multi-cursor/src/workspaces.ts';
 import { GrokHarness } from '../../multi-grok/src/harness.ts';
@@ -41,7 +43,7 @@ import {
   grokDefaultWorkerModel,
   grokPickerOptions,
 } from '../../multi-grok/src/models.ts';
-import { grokPermissionPolicy } from '../../multi-grok/src/permissions.ts';
+import { GROK_TOOLS, grokPermissionPolicy } from '../../multi-grok/src/permissions.ts';
 import { grokUsageReader } from '../../multi-grok/src/usage-adapter.ts';
 import { createOpenAIApproval, discoverOpenAIReviewer } from '../../multi-openai/src/approval.ts';
 import { readCodexAuth } from '../../multi-openai/src/auth.ts';
@@ -68,6 +70,7 @@ import {
   pluginPermissions,
 } from './gateway/agent-definitions.ts';
 import { type CursorSettingsOptions, checkCursorSettings } from './gateway/cursor-settings.ts';
+import { DISPLAY_TOOL_SERVER } from './gateway/display-rows.ts';
 import { executableInvocation, resolveExecutable } from './gateway/executable.ts';
 import { ModBridge } from './gateway/mod-bridge.ts';
 import { PermissionModes } from './gateway/mode-hook.ts';
@@ -96,7 +99,15 @@ const claudeExecutable = process.env.MULTI_REAL_CLAUDE;
  */
 const WORKER_PROMPT = 'Complete the delegated task.';
 
+/**
+ * A native harness worker's tools. The Claude tools bound what the harness may
+ * do natively; `mcp__multi-core` admits the display rows the gateway writes into
+ * the worker's own transcript (Claude Code runs a subagent's tool_use only for a
+ * tool its definition lists). The permission mappers drop that entry: it grants
+ * no native capability, and the mod refuses any row the gateway did not issue.
+ */
 const CLAUDE_WORKER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write'];
+const HARNESS_WORKER_TOOLS = [...CLAUDE_WORKER_TOOLS, DISPLAY_TOOL_SERVER];
 
 /** One `--agents` entry: an external worker using Claude Code's native tools. */
 interface AgentDefinition {
@@ -218,6 +229,7 @@ async function main() {
     enabledProviders,
     authFile,
     modBridge,
+    displayTools: { cursor: CURSOR_TOOLS, antigravity: ANTIGRAVITY_TOOLS, grok: GROK_TOOLS },
     cursor,
     antigravity,
     grok,
@@ -250,7 +262,7 @@ async function main() {
   configureApproval(settings, approvalProviders, selectedModel, { antigravity, grok }, anthropic);
   await writeFile(settingsFile, JSON.stringify(settings), { mode: 0o600 });
   const definitions = JSON.stringify(agents);
-  const childEnvironment = gatewayEnvironment(address.port, token, anthropic, Boolean(cursor));
+  const childEnvironment = gatewayEnvironment(address.port, token, anthropic);
   const claudePath = resolveExecutable('claude', {
     configuredPath: claudeExecutable,
     env: childEnvironment,
@@ -686,6 +698,7 @@ const WORKER_RUNS: Readonly<Record<WorkerProvider, string>> = {
 export function workerDefinitions(catalog: WorkerCatalog): Record<string, AgentDefinition> {
   const agents: Record<string, AgentDefinition> = {};
   for (const worker of Object.values(catalog)) {
+    const direct = worker.provider === 'openai' || worker.provider === 'zen';
     const model = worker.models.find((entry) => entry.id === worker.defaultId)?.model;
     if (!model) {
       continue;
@@ -694,7 +707,7 @@ export function workerDefinitions(catalog: WorkerCatalog): Record<string, AgentD
       description: workerDescription(worker, WORKER_RUNS[worker.provider]),
       prompt: WORKER_PROMPT,
       model,
-      tools: CLAUDE_WORKER_TOOLS,
+      tools: direct ? CLAUDE_WORKER_TOOLS : HARNESS_WORKER_TOOLS,
       ...(worker.effort ? { effort: worker.effort as Effort } : {}),
     };
   }
@@ -1158,7 +1171,7 @@ function translateTrafficPolicy(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
-function gatewayEnvironment(port: number, token: string, anthropic: boolean, cursor: boolean) {
+function gatewayEnvironment(port: number, token: string, anthropic: boolean) {
   const env = translateTrafficPolicy({ ...process.env });
   delete env.OPENCODE_API_KEY;
   return {
@@ -1172,7 +1185,6 @@ function gatewayEnvironment(port: number, token: string, anthropic: boolean, cur
     // We forward Claude tool references; preserve an explicit user preference.
     ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH ?? 'auto',
     MULTI_GATEWAY_TOKEN: token,
-    MULTI_CURSOR_DISPLAY_TOOLS: cursor ? '1' : '0',
     CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1',
     MULTI_MOD_GATEWAY_URL: `http://127.0.0.1:${port}`,
     ...(!anthropic ? { ANTHROPIC_AUTH_TOKEN: token } : {}),

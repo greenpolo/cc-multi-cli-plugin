@@ -1,13 +1,7 @@
-import type { MessagesRequest } from './messages.ts';
+import type { NativeObservation } from './harness-progress.ts';
 
-export type NativeRowKind = 'read' | 'search' | 'edit' | 'shell' | 'other' | 'note';
-export type NativeObservation =
-  | { type: 'text'; text: string }
-  | { type: 'started'; id: string; kind: NativeRowKind; description: string }
-  | { type: 'completed'; id: string; text: string; error: boolean };
-
-const MAX_EVENTS = 128;
-const MAX_TEXT = 4096;
+const MAX_LINE = 160;
+const MAX_ERROR = 240;
 const MAX_KEYS = 128;
 
 type Effective = {
@@ -22,37 +16,44 @@ type Snapshot = {
   cwd?: string;
 };
 
-type PendingObservation = {
-  kind: NativeRowKind;
-  description: string;
+type Lifecycle = {
+  model: string;
+  startedAt: number;
+  state: string;
+  detail: string;
+  run: number;
+  attached: number;
+  error?: string;
 };
 
-export type ModDisplayEvent = {
-  sequence: number;
-  toolUseId: string;
-  tool: string;
-  input: {
-    description: string;
-    output: string;
-    isError: boolean;
-    toolUseId: string;
-  };
-};
+const escapeCharacter = String.fromCharCode(27);
+const bell = String.fromCharCode(7);
+const terminalSequence = new RegExp(
+  `${escapeCharacter}(?:\\[[0-?]*[ -/]*[@-~]|\\][^${escapeCharacter}${bell}]*(?:${bell}|${escapeCharacter}\\\\))`,
+  'g',
+);
 
-function bounded(value: string, limit = MAX_TEXT) {
-  return value.slice(0, limit);
+/**
+ * One terminal-safe line: escape sequences, control and format characters are
+ * removed and whitespace collapsed, so provider or gateway text cannot restyle
+ * or break the Claude Code surface that shows it.
+ */
+export function displayLine(value: string, limit = MAX_LINE) {
+  return value
+    .replaceAll(terminalSequence, '')
+    .replaceAll(/[\p{Cc}]/gu, ' ')
+    .replaceAll(/[\p{Cf}]/gu, '')
+    .replaceAll(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit);
 }
 
 export class ModBridge {
   private generation = 0;
   private readonly snapshots = new Map<string, Snapshot>();
-  private sequence = 0;
-  private readonly lifecycle = new Map<
-    string,
-    { model: string; startedAt: number; state: string; detail: string }
-  >();
+  private run = 0;
+  private readonly lifecycle = new Map<string, Lifecycle>();
   private readonly telemetry = new Map<string, { model: string; effort?: string | number }>();
-  private readonly pending = new Map<string, Map<string, PendingObservation>>();
 
   recordSession(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
     return this.record(key, value);
@@ -60,13 +61,6 @@ export class ModBridge {
 
   mode(key: string) {
     return this.snapshots.get(key);
-  }
-
-  available(body: MessagesRequest) {
-    const tools = new Set(body.tools?.map((tool) => tool.name));
-    return ['read', 'search', 'edit', 'shell', 'other', 'note'].every((name) =>
-      tools.has(`mcp__multi-core__cursor_${name}`),
-    );
   }
 
   private record(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
@@ -92,66 +86,92 @@ export class ModBridge {
     return snapshot;
   }
 
-  observe(key: string, observation: NativeObservation): ModDisplayEvent | undefined {
-    if (observation.type === 'text') {
-      return undefined;
+  /**
+   * Keeps the newest action of the run `begin` returned as its status detail; an
+   * observation from a superseded or finished run is dropped. Nothing is replayed.
+   */
+  observe(key: string, generation: number, observation: NativeObservation): void {
+    const run = this.lifecycle.get(key);
+    if (!run || run.run !== generation || run.state !== 'running') {
+      return;
     }
     if (observation.type === 'started') {
-      if (!this.pending.has(key) && this.pending.size >= MAX_KEYS) {
-        return undefined;
-      }
-      let actions = this.pending.get(key);
-      if (!actions) {
-        actions = new Map();
-        this.pending.set(key, actions);
-      }
-      actions.set(observation.id, {
-        kind: observation.kind,
-        description: bounded(observation.description, 160),
-      });
-      while (actions.size > MAX_EVENTS) {
-        actions.delete(actions.keys().next().value as string);
-      }
-      const lifecycle = this.lifecycle.get(key);
-      if (lifecycle) {
-        lifecycle.detail = bounded(observation.description, 160);
-      }
-      return undefined;
+      run.detail = displayLine(observation.description);
     }
-    const action = this.pending.get(key)?.get(observation.id);
-    if (!action) {
-      return undefined;
-    }
-    this.pending.get(key)?.delete(observation.id);
-    const output = bounded(observation.text);
-    const event: ModDisplayEvent = {
-      sequence: ++this.sequence,
-      toolUseId: observation.id,
-      tool: `mcp__multi-core__cursor_${action.kind}`,
-      input: {
-        description: action.description,
-        output,
-        isError: observation.error,
-        toolUseId: observation.id,
-      },
-    };
-    return event;
   }
 
-  begin(key: string, model: string) {
-    if (!this.lifecycle.has(key) && this.lifecycle.size >= MAX_KEYS) {
-      const completed = [...this.lifecycle].find(([, value]) => value.state !== 'running');
-      if (!completed) {
-        throw new Error('Native lifecycle capacity reached; restart the gateway');
-      }
-      this.lifecycle.delete(completed[0]);
+  /**
+   * Starts a run for the scope, or attaches to the one still running there: a
+   * harness runs one native exchange per identity, so an identical retry observes
+   * that run and a conflicting request is refused without disturbing its actions.
+   */
+  begin(key: string, model: string): number {
+    const current = this.lifecycle.get(key);
+    if (current?.state === 'running') {
+      current.attached++;
+      return current.run;
     }
-    this.lifecycle.set(key, { model, startedAt: Date.now(), state: 'running', detail: '' });
+    if (!current && !this.makeRoom()) {
+      throw new Error('Native lifecycle capacity reached; restart the gateway');
+    }
+    this.lifecycle.set(key, {
+      model,
+      startedAt: Date.now(),
+      state: 'running',
+      detail: '',
+      run: ++this.run,
+      attached: 1,
+    });
+    return this.run;
+  }
+
+  /**
+   * Records a harness request the gateway refused before any native run began
+   * (policy admission, an unavailable provider, an invalid request), so the
+   * status line and the refused request can say why instead of a bare failure. A run that
+   * is still running in the scope is never replaced.
+   */
+  refuse(key: string, model: string, error: string) {
+    const current = this.lifecycle.get(key);
+    if (current?.state === 'running' || (!current && !this.makeRoom())) {
+      return;
+    }
+    this.lifecycle.set(key, {
+      model,
+      startedAt: Date.now(),
+      state: 'failed',
+      detail: '',
+      run: ++this.run,
+      attached: 0,
+      error: displayLine(error, MAX_ERROR) || 'Request refused',
+    });
+  }
+
+  private makeRoom() {
+    if (this.lifecycle.size < MAX_KEYS) {
+      return true;
+    }
+    const completed = [...this.lifecycle].find(([, value]) => value.state !== 'running');
+    if (!completed) {
+      return false;
+    }
+    this.lifecycle.delete(completed[0]);
+    return true;
   }
 
   status(key: string) {
     const value = this.lifecycle.get(key);
-    return value ? { ...value, elapsedMs: Date.now() - value.startedAt } : undefined;
+    if (!value) {
+      return undefined;
+    }
+    return {
+      model: value.model,
+      startedAt: value.startedAt,
+      state: value.state,
+      detail: value.detail,
+      ...(value.error ? { error: value.error } : {}),
+      elapsedMs: Date.now() - value.startedAt,
+    };
   }
 
   step(key: string) {
@@ -165,16 +185,31 @@ export class ModBridge {
     this.telemetry.set(key, value);
   }
 
-  complete(key: string, state = 'completed') {
+  /**
+   * Ends one attachment. A failed or cancelled request that still shares its run
+   * with another observer leaves that run running; success settles it at once.
+   * `error` is the reason a failed run ended, kept as one sanitised line.
+   */
+  complete(key: string, state = 'completed', generation?: number, error?: string) {
     const value = this.lifecycle.get(key);
-    if (value) {
-      value.state = state;
+    if (value?.state !== 'running') {
+      return;
     }
-    this.pending.delete(key);
+    if (generation !== undefined && value.run !== generation) {
+      return;
+    }
+    value.attached = Math.max(0, value.attached - 1);
+    if (state !== 'completed' && value.attached > 0) {
+      return;
+    }
+    value.state = state;
+    if (state !== 'completed' && error) {
+      value.error = displayLine(error, MAX_ERROR);
+    }
   }
 
   forgetSession(session: string) {
-    for (const entries of [this.snapshots, this.pending, this.lifecycle, this.telemetry]) {
+    for (const entries of [this.snapshots, this.lifecycle, this.telemetry]) {
       for (const key of entries.keys()) {
         if (JSON.parse(key)[0] === session) {
           entries.delete(key);

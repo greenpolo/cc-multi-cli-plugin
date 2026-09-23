@@ -73,17 +73,24 @@ review stays with the originating OpenAI account. Zen never borrows Codex
 review. Missing GPT review fails explicitly.
 
 Cursor, Antigravity and Grok are harness integrations. Their SDK or CLI executes
-tools, keeps native state, and applies provider authentication. Claude displays external
-actions and progress; it never replays those actions as executable Claude tool
-calls. Cursor supports Auto, Plan, and Bypass. Antigravity uses its native CLI
+tools, keeps native state, and applies provider authentication. Each finished native
+action becomes a display row in the harness's own reply: a tool_use block named after
+the native tool (`mcp__multi-core__run_command`) with the native parameters and a
+gateway-issued token, answered by the Multi mod with the native output, so the row
+sits in the transcript of the `/model` session or worker that ran it. Display tools
+are never model tools: the gateway strips them from every provider's tools and
+history, the mod defers them and refuses any call without an issued token, and the
+gateway answers the engine's follow-up request with the reply's remaining text
+without a native run. Nothing is replayed or re-executed. Cursor supports Auto, Plan, and Bypass. Antigravity uses its native CLI
 with Claude policy enforcement at the prompt boundary. Grok carries the same
 policy in its own run arguments, and each announced toolset is checked against
 it because an unknown removal is accepted and ignored by that CLI.
 
 All three harnesses share their session store, in-flight exchange registry,
-response builder, durable completion, and notices from
+response builder, durable completion, notices, and the transcript action summary from
 `plugins/multi-core/src/gateway/harness-*.ts`. Grok and Antigravity additionally
-share native process execution and text prompt preparation; Cursor retains its
+share native process execution, text prompt preparation, and the native action
+tracker (Cursor uses it too) that turns native actions into display rows; Cursor retains its
 SDK and image-aware prompt format. Each provider still owns
 its own event grammar, CLI argument construction, usage accounting, and (for
 Cursor) SDK agent lifecycle. The shared layer owns turn leases, lock lifetime,
@@ -165,9 +172,9 @@ Handles with an in-flight billed usage query are not evicted. A detached SDK
 record's `running` status is not a live ownership claim: the existing interrupted
 continuation notice remains the fallback when no terminal result can be recovered.
 
-Replay validation is provider-parameterized: Cursor's replies may carry the
-display-only `tool_use` blocks a Claude Mods row produces, while Grok and
-Antigravity stay text-only. `gateway/conversation.ts` normalizes Messages content
+Replay validation is provider-parameterized: new replies from every harness are
+text-only, and Cursor still accepts the display-only `tool_use` blocks that the
+retired pseudo-MCP rows wrote into records before 0.2.2, so those records replay. `gateway/conversation.ts` normalizes Messages content
 and media for Cursor and OpenAI without coupling Cursor to OpenAI request
 construction; provider-specific reasoning decoding stays with OpenAI.
 

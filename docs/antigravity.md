@@ -69,8 +69,15 @@ Claude's window governs when the session compacts. It is separate from the nativ
 Claude's permission mode and tool rules take precedence. `agy` runs with native
 permissions skipped. The namespaced global hook reads `MULTI_ANTIGRAVITY_DENY`
 and denies Claude-excluded native tools. Native children and MCP tools are always
-denied. External actions appear as display text and are never replayed as
-executable Claude tools. Claude and OpenAI parents can spawn named Antigravity
+denied. Each finished tool step is a row under agy's own tool name (`view_file`,
+`run_command`, ...) with its native parameters and `tool_info.output`, in the
+`/model` Antigravity session or inside the Antigravity worker's transcript; the
+names come from agy's `init` toolset. Rows are never replayed as executable Claude
+tools. `agy` does not distinguish a failed tool step: a failing command such as
+`cat /nonexistent/file` ends `DONE` with the error only in its output and no exit
+code, so the row shows as done and its output carries the error; Multi does not
+guess failure from the text. The transcript keeps streamed text, run diagnostics,
+and one closing summary of action counts, changed files, and failed steps. Claude and OpenAI parents can spawn Antigravity
 workers.
 
 Every run selects its native workspace explicitly with `--add-dir`; subprocess

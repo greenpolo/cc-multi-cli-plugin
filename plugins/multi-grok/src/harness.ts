@@ -15,10 +15,11 @@ import {
   continuation,
   historyRewound,
   interruptedNotice,
-  safeText,
   stderrDiagnostics,
   writeNotices,
 } from '../../multi-core/src/gateway/harness-notices.ts';
+import type { NativeProgressObserver } from '../../multi-core/src/gateway/harness-progress.ts';
+import { NativeActionTracker } from '../../multi-core/src/gateway/harness-progress.ts';
 import type { HarnessUsageFields } from '../../multi-core/src/gateway/harness-response.ts';
 import { HarnessResponse } from '../../multi-core/src/gateway/harness-response.ts';
 import type {
@@ -42,6 +43,7 @@ import { grokFailureAdvice } from './errors.ts';
 import type { GrokModel } from './models.ts';
 import { selectGrokModel } from './models.ts';
 import { type GrokPolicy, grokCompactionPolicy } from './permissions.ts';
+import { observeGrokEvent } from './progress.ts';
 import { grokHistoryHash, prepareGrokRequest } from './request.ts';
 
 export type GrokRunner = (options: GrokRunOptions) => Promise<GrokRunResult>;
@@ -123,12 +125,19 @@ export class GrokHarness {
     return prepareGrokRequest(body, selection.model.id).inputTokens;
   }
 
+  /** The scope's last reply from its session record, located as `handle` locates it. */
+  async recordedResponse(scope: string, context?: PermissionContext) {
+    const cwd = await realpath(context?.cwd ?? this.defaultCwd);
+    return this.store.recordedResponse(`${cwd}\0${scope}`);
+  }
+
   async handle(
     body: MessagesRequest,
     scope: string,
     signal: AbortSignal,
     emit?: Emit,
     context?: PermissionContext,
+    observe?: NativeProgressObserver,
   ): Promise<MessagesResponse> {
     if (this.closed) {
       throw new Error('Grok harness is closed');
@@ -164,7 +173,7 @@ export class GrokHarness {
         throw new Error('Too many concurrent Grok requests');
       }
       exchange = this.exchanges.start(key, (startedExchange, forward) =>
-        this.serve(body, context, selection, cwd, identity, key, startedExchange, forward),
+        this.serve(body, context, selection, cwd, identity, key, startedExchange, forward, observe),
       );
     }
     return this.exchanges.observe(exchange, signal, emit);
@@ -179,6 +188,7 @@ export class GrokHarness {
     key: string,
     exchange: HarnessExchange,
     emit: Emit,
+    observe?: NativeProgressObserver,
   ): Promise<MessagesResponse> {
     let lease: Awaited<ReturnType<HarnessSessionStore<GrokSaved>['acquireLease']>>;
     try {
@@ -203,7 +213,17 @@ export class GrokHarness {
         stateDirectory: this.stateDirectory,
         platform: this.platform,
       });
-      return await this.execute(body, context, selection, cwd, session, key, exchange, emit);
+      return await this.execute(
+        body,
+        context,
+        selection,
+        cwd,
+        session,
+        key,
+        exchange,
+        emit,
+        observe,
+      );
     } finally {
       await lease.release();
     }
@@ -262,6 +282,7 @@ export class GrokHarness {
     key: string,
     exchange: HarnessExchange,
     emit: Emit,
+    observe?: NativeProgressObserver,
   ): Promise<MessagesResponse> {
     const signal = exchange.controller.signal;
     const wasInterrupted = session.saved.interrupted;
@@ -280,6 +301,11 @@ export class GrokHarness {
       const sessionId = session.saved.sessionId ?? randomUUID();
       let startSave: Promise<void> | undefined;
       const startedAt = performance.now();
+      // Each finished tool call becomes a display row in this reply, named after
+      // Grok's own tool; the terse summary is written when the run settles.
+      const actions = new NativeActionTracker(PROVIDER, observe, (block) =>
+        response.displayRow(block),
+      );
       const onEvent = (event: GrokStreamEvent) => {
         if (!started) {
           started = true;
@@ -291,7 +317,7 @@ export class GrokHarness {
             // The run continues regardless of a failed durability write.
           });
         }
-        eventText(event, response);
+        eventText(event, response, actions);
       };
       const outcome = await settleOrAbort(
         this.run({
@@ -317,7 +343,7 @@ export class GrokHarness {
       );
       await startSave;
       return await this.settle(
-        { session, response, outcome, selection, key, exchange, emit },
+        { session, response, outcome, selection, key, exchange, emit, actions },
         performance.now() - startedAt,
       );
     } catch (error) {
@@ -347,10 +373,11 @@ export class GrokHarness {
       key: string;
       exchange: HarnessExchange;
       emit: Emit;
+      actions: NativeActionTracker;
     },
     elapsedMs: number,
   ): Promise<MessagesResponse> {
-    const { session, response, outcome, selection, key, exchange, emit } = run;
+    const { session, response, outcome, selection, key, exchange, emit, actions } = run;
     const result = outcome.result;
     // The CLI owns the identity it reports; a mismatch would silently fork history.
     if (session.saved.sessionId !== undefined && result.sessionId !== session.saved.sessionId) {
@@ -358,6 +385,7 @@ export class GrokHarness {
         `Grok answered on session ${result.sessionId} instead of ${session.saved.sessionId}`,
       );
     }
+    response.text(actions.text(result.turns));
     appendDiagnostics(response, outcome, elapsedMs);
     const finished = response.finish(
       toHarnessUsage(result.usage),
@@ -395,39 +423,18 @@ export class GrokHarness {
 }
 
 /**
- * Native activity is displayed, never replayed: a tool call becomes one line of text
- * in the assistant answer and never a Claude tool block.
+ * Assistant text streams; native tool calls become display rows.
  */
-function eventText(event: GrokStreamEvent, response: HarnessResponse) {
+function eventText(
+  event: GrokStreamEvent,
+  response: HarnessResponse,
+  actions: NativeActionTracker,
+) {
   if (event.event === 'text') {
     response.text(event.text);
     return;
   }
-  if (event.event === 'tool_call') {
-    response.text(`\n[Grok] ${event.call.toolName ?? event.call.title ?? 'tool'}\n`);
-    return;
-  }
-  if (event.event === 'tool_update' && event.call.status === 'failed') {
-    // A policy denial and an ordinary tool error both arrive as `failed`; only
-    // the text tells them apart, and calling an error a refusal would misreport
-    // what the policy did.
-    const detail = safeText(contentText(event.call.content));
-    const refused = /denied by permission policy/i.test(detail);
-    response.text(`[Grok] ${refused ? 'refused' : 'failed'}: ${detail}\n`);
-  }
-}
-
-function contentText(content: unknown): string {
-  if (!Array.isArray(content)) {
-    return '';
-  }
-  return content
-    .map((entry) => {
-      const inner = isRecord(entry) && isRecord(entry.content) ? entry.content.text : undefined;
-      return typeof inner === 'string' ? inner : '';
-    })
-    .filter(Boolean)
-    .join(' ');
+  observeGrokEvent(event, actions);
 }
 
 function toHarnessUsage(usage: GrokUsage | undefined): HarnessUsageFields | undefined {
@@ -460,10 +467,6 @@ function appendDiagnostics(response: HarnessResponse, outcome: GrokRunResult, el
   if (diagnostics) {
     response.text(`[Grok] ${diagnostics}\n`);
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isUuid(value: unknown): value is string {

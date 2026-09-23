@@ -15,7 +15,19 @@ import { zenRequest } from '../../../multi-zen/src/request.ts';
 import type { AgentCatalog } from './agent-catalog.ts';
 import type { ApprovalContext, NativeApprovalBridge } from './approval.ts';
 import { approvalCwdForComparison, isApprovalRequest, parseApprovalRequest } from './approval.ts';
+import {
+  DisplayRows,
+  displayFollowUp,
+  FollowUpRefused,
+  FollowUpUnavailable,
+  followUpFallback,
+  isDisplayTool,
+  recordedFollowUp,
+  unavailableFollowUp,
+  withoutDisplayTools,
+} from './display-rows.ts';
 import type { GatewayFetch } from './fetch.ts';
+import type { NativeObservation } from './harness-progress.ts';
 import type { Emit, MessagesRequest, MessagesResponse, StopReason } from './messages.ts';
 import { ModBridge } from './mod-bridge.ts';
 import { ModCompactions } from './mod-compaction.ts';
@@ -105,6 +117,9 @@ export interface GatewayOptions {
   permissionModes?: PermissionModes;
   agentCatalog?: AgentCatalog;
   modBridge?: ModBridge;
+  /** Display rows for native harness actions; the native tool names each harness is known to have. */
+  displayRows?: DisplayRows;
+  displayTools?: Partial<Record<'cursor' | 'antigravity' | 'grok', readonly string[]>>;
 }
 
 /** Rejected before any provider call; answered as HTTP 400 rather than 502. */
@@ -180,6 +195,8 @@ export function createNativeGateway({
   permissionModes,
   agentCatalog,
   modBridge = new ModBridge(),
+  displayRows = new DisplayRows(),
+  displayTools = {},
   receipts = new ReceiptLedger(),
   usageDashboard,
   billedUsage,
@@ -218,6 +235,12 @@ export function createNativeGateway({
     validateZenKey(zen.apiKey);
   }
   const fallbackSession = randomUUID();
+  // Offer the mod rows only for the harnesses this gateway runs.
+  for (const [provider, names] of Object.entries(displayTools)) {
+    if ({ cursor, antigravity, grok }[provider as keyof typeof displayTools] && names) {
+      displayRows.announce(names);
+    }
+  }
   const approvalContexts = new Map<string, ApprovalContext>();
   const pendingTools = new Map<string, PendingApprovalTool>();
   const reviewCandidates = new Map<
@@ -369,6 +392,19 @@ export function createNativeGateway({
     return provider === 'grok' ? grok : undefined;
   }
 
+  function harnessScope({ identity, agentId }: ProviderRequest) {
+    return identity.scope ?? JSON.stringify([fallbackSession, agentId ?? 'main']);
+  }
+  /**
+   * A harness request refused before its native run starts still reaches the
+   * status line with its reason; a failure alone tells the user nothing.
+   */
+  function refuseHarness(exchange: ProviderRequest, provider: string, error: unknown) {
+    if (exchange.url.pathname === '/v1/messages') {
+      modBridge.refuse(harnessScope(exchange), exchange.body.model ?? provider, reason(error));
+    }
+    return error;
+  }
   async function handleHarness(
     exchange: ProviderRequest,
     provider: 'cursor' | 'antigravity' | 'grok',
@@ -382,11 +418,16 @@ export function createNativeGateway({
           'Antigravity is unavailable. Install and connect the multi-antigravity plugin.',
         grok: 'Grok is unavailable. Install Grok Build, run grok login, and relaunch.',
       };
-      throw new BadRequest(unavailable[provider]);
+      throw refuseHarness(exchange, provider, new BadRequest(unavailable[provider]));
     }
-    const scope = identity.scope ?? JSON.stringify([fallbackSession, agentId ?? 'main']);
+    const scope = harnessScope(exchange);
     const nativeBody = exchange.body;
-    const inputTokens = validateHarness(exchange, provider, bridge);
+    let inputTokens: number;
+    try {
+      inputTokens = validateHarness(exchange, provider, bridge);
+    } catch (error) {
+      throw refuseHarness(exchange, provider, error);
+    }
     if (url.pathname === '/v1/messages/count_tokens') {
       res.writeHead(200, {
         'content-type': 'application/json',
@@ -395,8 +436,19 @@ export function createNativeGateway({
       return res.end(JSON.stringify({ input_tokens: inputTokens }));
     }
     exchange.startStream();
-    const displayRows = provider === 'cursor' && modBridge.available(nativeBody);
-    modBridge.begin(scope, body.model ?? provider);
+    // Each finished native action becomes a display row in this reply, so it
+    // anchors in this session's (or this worker's) own transcript.
+    const run = modBridge.begin(scope, body.model ?? provider);
+    const observe = (observation: NativeObservation) => {
+      if (observation.type === 'toolset') {
+        displayRows.announce(observation.tools);
+        return undefined;
+      }
+      modBridge.observe(scope, run, observation);
+      return observation.type === 'completed'
+        ? displayRows.issue(scope, observation.row)
+        : undefined;
+    };
     const result = await bridge
       .handle(
         nativeBody,
@@ -404,10 +456,10 @@ export function createNativeGateway({
         signal,
         body.stream ? emit : undefined,
         exchange.permissionContext,
-        displayRows ? (observation) => modBridge.observe(scope, observation) : undefined,
+        observe,
       )
       .catch((error: unknown) => {
-        modBridge.complete(scope, signal.aborted ? 'cancelled' : 'failed');
+        modBridge.complete(scope, signal.aborted ? 'cancelled' : 'failed', run, reason(error));
         throw error;
       });
     permissionModes?.finishModCompaction(
@@ -415,10 +467,97 @@ export function createNativeGateway({
       agentId,
       exchange.permissionContext?.compaction,
     );
+    if (result.multi_followup !== undefined) {
+      displayRows.rememberFollowUp(
+        { scope, provider },
+        {
+          id: result.id,
+          rows: result.content.flatMap((block) =>
+            block.type === 'tool_use' && isDisplayTool(block.name) ? [block.id] : [],
+          ),
+          text: result.multi_followup,
+          usage: result.usage,
+        },
+      );
+    }
     rememberResult(exchange, result);
     onEvent(completionEvent(exchange, result, provider, harnessEndpoint(provider)));
     sendResult(exchange, result);
-    modBridge.complete(scope);
+    modBridge.complete(scope, 'completed', run);
+  }
+  /**
+   * The engine ran a reply's display rows and asks for the turn's next message.
+   * That message is the text the reply deferred; no provider is called, so the
+   * rows' results never reach a model.
+   */
+  async function answerFollowUp(
+    exchange: ProviderRequest,
+    ids: readonly string[],
+    external: string | null,
+  ) {
+    const { body, emit } = exchange;
+    const followUp = await pendingFollowUp(exchange, ids, providerRoute(external));
+    // An empty deferral is the reply's own choice; the turn's last message still says something.
+    const text = followUp.text || followUpFallback;
+    // The reply's context carries over, so the window's fill does not read as empty
+    // after a turn with rows; the reply already reported its output and its spend.
+    const context = followUp.usage;
+    const result: MessagesResponse = {
+      id: `msg_${randomUUID()}`,
+      type: 'message',
+      role: 'assistant',
+      model: body.model ?? '',
+      content: [{ type: 'text', text }],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      usage: context ? { ...context, output_tokens: 0 } : { input_tokens: 0, output_tokens: 0 },
+    };
+    if (body.stream) {
+      exchange.startStream();
+      emit('message_start', { message: { ...result, content: [], stop_reason: null } });
+      emit('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
+      emit('content_block_delta', { index: 0, delta: { type: 'text_delta', text } });
+      emit('content_block_stop', { index: 0 });
+      emit('message_delta', {
+        delta: { stop_reason: 'end_turn', stop_sequence: null },
+        usage: result.usage,
+      });
+      emit('message_stop', {});
+    }
+    sendResult(exchange, result);
+  }
+  /**
+   * The deferred answer the rows' own reply holds, for the scope and provider that
+   * wrote them only: from this gateway, or after a restart or an eviction from the
+   * harness's durable record of that reply. Anything else is an explicit error.
+   */
+  async function pendingFollowUp(
+    exchange: ProviderRequest,
+    ids: readonly string[],
+    provider: ReturnType<typeof providerRoute>,
+  ) {
+    const scope = harnessScope(exchange);
+    const held = displayRows.followUp({ scope, provider }, ids);
+    if (held) {
+      return held;
+    }
+    const harness = provider === 'cursor' ? cursor : grokOrAntigravity(provider);
+    const recorded = await harness
+      ?.recordedResponse?.(scope, followUpContext(exchange))
+      .catch(() => undefined);
+    const recovered = recordedFollowUp(recorded, ids);
+    if (!recovered) {
+      throw new FollowUpUnavailable(unavailableFollowUp);
+    }
+    return recovered;
+  }
+  /** The admitted context that locates a harness record; its default cwd without one. */
+  function followUpContext({ identity, agentId, body }: ProviderRequest) {
+    try {
+      return permissionModes?.resolveHarness(identity.session, agentId, body.model);
+    } catch {
+      return undefined;
+    }
   }
   async function handleOpenAI(exchange: ProviderRequest, externalModel: string) {
     const { req, res, body, url, signal, abort, agentId, emit } = exchange;
@@ -741,7 +880,7 @@ export function createNativeGateway({
         );
         exchange.permissionContext = permissionContext;
       } catch (error) {
-        throw new BadRequest(reason(error));
+        throw refuseHarness(exchange, route, new BadRequest(reason(error)));
       }
     }
     onEvent({
@@ -814,7 +953,8 @@ export function createNativeGateway({
         return;
       }
       const url = new URL(req.url ?? '', 'http://localhost');
-      const { raw, parsed, body } = await readRequest(req, agentCatalog);
+      const request = await readRequest(req, agentCatalog);
+      const { parsed } = request;
       if (url.pathname.startsWith('/multi/mod/')) {
         return handleModRoute(
           req,
@@ -827,8 +967,10 @@ export function createNativeGateway({
           receipts,
           billedUsage,
           dashboard,
+          displayRows,
         );
       }
+      const { body, raw, followUp } = displayRowsRemoved(url, request);
       const external = externalModel(body.model);
       assertProviderEnabled(external, enabledProviders);
       const signal = providerSignal(abort.signal, external, timeoutMs);
@@ -866,6 +1008,9 @@ export function createNativeGateway({
       if (url.pathname === '/multi/permission') {
         return sendPermissionDecision(exchange);
       }
+      if (followUp) {
+        return await answerFollowUp(exchange, followUp, external);
+      }
       await dispatch(exchange, metadata, external);
     } catch (error) {
       abort.abort();
@@ -877,6 +1022,23 @@ export function createNativeGateway({
 }
 
 class RequestTooLarge extends Error {}
+
+/**
+ * Display rows are Claude Code UI: no provider sees them as tools or history. A
+ * request that only answers a reply's rows is marked as that reply's follow-up.
+ */
+function displayRowsRemoved(
+  url: URL,
+  request: { raw: Buffer; parsed: Record<string, unknown>; body: MessagesRequest },
+) {
+  if (isApprovalRequest(request.parsed)) {
+    return { body: request.body, raw: request.raw, followUp: undefined };
+  }
+  const followUp = url.pathname === '/v1/messages' ? displayFollowUp(request.body) : undefined;
+  const body = withoutDisplayTools(request.body);
+  const raw = body === request.body ? request.raw : Buffer.from(JSON.stringify(body));
+  return { body, raw, followUp };
+}
 
 function providerSignal(disconnected: AbortSignal, model: string | null, timeoutMs?: number) {
   // Native harness runs follow the client connection rather than an HTTP deadline.
@@ -949,6 +1111,12 @@ function errorStatus(error: unknown): number {
   }
   if (error instanceof BadRequest) {
     return 400;
+  }
+  if (error instanceof FollowUpRefused) {
+    return 403;
+  }
+  if (error instanceof FollowUpUnavailable) {
+    return 404;
   }
   if (error instanceof UpstreamFailure) {
     return error.status;
@@ -1102,6 +1270,8 @@ function authorizeRequest(
       '/multi/mod/offer',
       '/multi/mod/telemetry',
       '/multi/mod/lifecycle',
+      '/multi/mod/display',
+      '/multi/mod/display-tools',
       '/multi/mod/usage',
       '/multi/mod/usage/complete',
       '/multi/mod/receipts',

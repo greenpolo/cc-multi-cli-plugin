@@ -204,20 +204,19 @@ test('mod routes reject browser origins, invalid methods and invalid worker iden
   );
 });
 
-test('display observations retain only bounded pending actions and lifecycle state', () => {
+test('native observations update only their own run and settle with the lifecycle', () => {
   const bridge = new ModBridge();
   const key = JSON.stringify(['s', 'worker']);
-  bridge.begin(key, 'multi/cursor/auto');
-  bridge.observe(key, { type: 'started', id: 'row', kind: 'read', description: 'file' });
+  const run = bridge.begin(key, 'multi/cursor/auto');
+  const started = { type: 'started', id: 'row', kind: 'read', tool: 'read' } as const;
+  bridge.observe(key, run, { ...started, description: 'file' });
   assert.equal(bridge.status(key)?.detail, 'file');
-  const row = bridge.observe(key, { type: 'completed', id: 'row', text: 'result', error: false });
-  assert.equal(row?.input.output, 'result');
-  assert.equal(
-    bridge.observe(key, { type: 'completed', id: 'row', text: 'replay', error: false }),
-    undefined,
-  );
-  bridge.complete(key, 'cancelled');
+  // A superseded run's observation leaves the current run's detail alone.
+  bridge.observe(key, run + 1, { ...started, description: 'stale' });
+  assert.equal(bridge.status(key)?.detail, 'file');
+  bridge.complete(key, 'cancelled', run, 'Stopped');
   assert.equal(bridge.status(key)?.state, 'cancelled');
+  assert.equal(bridge.status(key)?.error, 'Stopped');
   bridge.forgetSession('s');
   assert.equal(bridge.status(key), undefined);
 });

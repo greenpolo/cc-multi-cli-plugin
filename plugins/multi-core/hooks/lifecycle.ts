@@ -1,5 +1,6 @@
 import type { EngineInterface, Register, TurnStepInputChunk } from 'claude-code';
 import { isHarnessModel } from './provider.ts';
+import { type RowsClient, syncDisplayTools } from './rows.ts';
 import { forgetUsageSession } from './usage.ts';
 import { appendLabel, providerName, workerLabel } from './worker-rows.ts';
 
@@ -7,6 +8,7 @@ type Status = {
   model?: string;
   state?: string;
   detail?: string;
+  error?: string;
   elapsedMs?: number;
   startedAt?: number;
 };
@@ -135,6 +137,11 @@ async function prepareStep(
     void poll($, event.agentId, () => running.get(key) === token);
   }
   void postStep($, event);
+  if (native) {
+    // A harness may announce a tool the mod has not registered; register it
+    // before the step's request, so the rows of later runs can anchor.
+    await syncDisplayTools(rowsClient($));
+  }
 }
 
 export const register = (
@@ -202,6 +209,15 @@ export const register = (
   });
 };
 
+function rowsClient($: EngineInterface): RowsClient {
+  return {
+    sessionId: () => $.session.id(),
+    catalog: () => request($, '/multi/mod/display-tools'),
+    register: (tool) => $.tool.register(tool),
+    acknowledge: (payload) => request($, '/multi/mod/display-tools', payload),
+  };
+}
+
 async function postStep($: EngineInterface, event: object) {
   await request($, '/multi/mod/telemetry', { ...event, sessionId: await $.session.id() });
 }
@@ -265,7 +281,8 @@ async function request(
 
 function statusText(status: Status, agentId: string | undefined) {
   const elapsed = Math.floor((status.elapsedMs ?? 0) / 1000);
-  return `${status.model} · ${agentId ?? 'main'} · ${status.state} · ${elapsed}s ${status.detail ?? ''}`;
+  // A failed or refused run names its reason, so the line says why, not only that.
+  return `${status.model} · ${agentId ?? 'main'} · ${status.state} · ${elapsed}s ${status.error ?? status.detail ?? ''}`;
 }
 async function cancelCompaction($: EngineInterface, agentId?: string) {
   await request($, '/multi/mod/compact/cancel', { sessionId: await $.session.id(), agentId });

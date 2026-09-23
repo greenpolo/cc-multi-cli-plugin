@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { followUpFallback, isDisplayTool } from './display-rows.ts';
 import type { HarnessResponse } from './harness-response.ts';
 import type {
   ContentBlock,
@@ -86,6 +87,21 @@ export function continuation(body: MessagesRequest, tag: string): RequestMessage
   return delta;
 }
 
+/**
+ * A reply as the outer history holds it once the gateway has taken its display
+ * rows out (`withoutDisplayTools`): its text, then the follow-up message's text,
+ * which that removal joins into the same assistant turn.
+ */
+function historyContent(response: MessagesResponse): ContentBlock[] {
+  const content: ContentBlock[] = response.content.filter(
+    (block) => !(block.type === 'tool_use' && isDisplayTool(block.name)),
+  );
+  if (response.multi_followup !== undefined) {
+    content.push({ type: 'text', text: response.multi_followup || followUpFallback });
+  }
+  return content;
+}
+
 /** True when the outer history no longer contains the previous turn's response. */
 export function historyRewound(
   session: { response?: MessagesResponse },
@@ -96,7 +112,7 @@ export function historyRewound(
   if (!response) {
     return false;
   }
-  const expected = historyHash([{ role: 'assistant', content: response.content }]);
+  const expected = historyHash([{ role: 'assistant', content: historyContent(response) }]);
   return !messages.some(
     (message) => message.role === 'assistant' && historyHash([message]) === expected,
   );

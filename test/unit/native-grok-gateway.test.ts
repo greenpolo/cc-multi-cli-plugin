@@ -109,7 +109,15 @@ test('the launcher registers one Grok worker whose default is the CLI default', 
   assert.equal(agents['multi-grok'].model, model.model);
   assert.match(agents['multi-grok'].description, /^Grok worker \(native Grok Build CLI\)/);
   assert.match(agents['multi-grok'].description, /omit it for grok-4\.6\.$/);
-  assert.deepEqual(agents['multi-grok'].tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
+  assert.deepEqual(agents['multi-grok'].tools, [
+    'Read',
+    'Grep',
+    'Glob',
+    'Bash',
+    'Edit',
+    'Write',
+    'mcp__multi-core',
+  ]);
   // Rows the session does not show register no worker.
   assert.deepEqual(workerDefinitions(workerCatalog([], [model])), {});
 });

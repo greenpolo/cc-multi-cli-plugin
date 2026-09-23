@@ -71,9 +71,14 @@ Plan mode alone removes no native tool, so Multi reconstructs it with explicit
 denials rather than trusting the flag. Unsupported modes, untranslatable tool
 restrictions, and an unenforced policy fail explicitly.
 
-External actions appear as display text and are never replayed as executable
-Claude tools. There is no Grok reviewer, and Multi never borrows another
-provider's.
+Each finished tool call is a row under Grok's own tool name (`read_file`,
+`run_terminal_command`, ...) with its raw input and output, in the `/model` Grok
+session or inside the Grok worker's transcript; refusals show as errored rows. New
+names in an announced toolset are registered for later runs. Rows are never
+replayed as executable Claude tools.
+The transcript keeps streamed text and one closing summary of action counts,
+changed files, and failed or refused actions. There is no Grok reviewer, and
+Multi never borrows another provider's.
 
 ### MCP is denied, not hidden
 

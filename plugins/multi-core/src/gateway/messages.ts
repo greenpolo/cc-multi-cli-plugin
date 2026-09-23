@@ -106,6 +106,11 @@ export interface MessagesResponse {
     model?: string;
     effort?: string;
   };
+  /**
+   * The text a reply with display rows holds back for the message that follows
+   * them; the gateway answers the engine's next request with it.
+   */
+  multi_followup?: string;
 }
 
 type BlockDelta =

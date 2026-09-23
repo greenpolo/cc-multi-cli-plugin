@@ -610,6 +610,8 @@ test('launcher registers one worker per provider from the picker rows', () => {
     "OpenAI worker (Claude Code's tools). Pass model (gpt-6-luna, gpt-6-astra) or omit it for gpt-6-astra.",
   );
   assert.deepEqual(agents['multi-openai'].tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
+  assert.equal(agents['multi-cursor'].tools.at(-1), 'mcp__multi-core');
+  assert.equal(agents['multi-antigravity'].tools.at(-1), 'mcp__multi-core');
   // No type or model name carries an effort or a preset.
   assert(!JSON.stringify(agents).includes('effort=high'));
   assert.deepEqual(workerDefinitions(workerCatalog([])), {});

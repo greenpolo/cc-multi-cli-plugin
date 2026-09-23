@@ -196,7 +196,7 @@ test('a continuation error releases the session instead of leaving it busy', asy
   assert.equal(calls.length, 2, 'the session was released, so a later request runs normally');
 });
 
-test('displays native tool activity as text instead of replaying it', async (t) => {
+test('summarizes native tool activity as text instead of replaying it', async (t) => {
   const { stateDirectory } = await setup(t);
   const harness = new GrokHarness([model], {
     stateDirectory,
@@ -230,10 +230,11 @@ test('displays native tool activity as text instead of replaying it', async (t) 
 
   const response = await ask(harness, 'run something');
   assert.deepEqual([...new Set(response.content.map((block) => block.type))], ['text']);
-  assert.match(text(response), /\[Grok\] run_terminal_command/);
-  assert.match(text(response), /\[Grok\] refused: Denied by permission policy/);
+  // Live actions go to the progress surface; the transcript keeps one summary.
+  assert.match(text(response), /\[Grok\] 2 native actions: 2 other; 1 model call\./);
+  assert.match(text(response), /run_terminal_command \(refused\)/);
   // An ordinary tool error is not a permission decision and must not read as one.
-  assert.match(text(response), /\[Grok\] failed: Error: note\.txt does not exist/);
+  assert.match(text(response), /tool \(failed: Error: note\.txt does not exist\)/);
   assert.match(text(response), /I could not run it\./);
   assert.match(text(response), /\$0\.0175 billed/);
 });

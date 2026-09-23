@@ -3,48 +3,20 @@ import { register as registerCompaction } from './compact.ts';
 import { register as registerLifecycle } from './lifecycle.ts';
 import { type PolicyClient, type PolicyState, recordPrompt } from './policy.ts';
 import { isHarnessModel } from './provider.ts';
+import { type RowsClient, register as registerRows, syncDisplayTools } from './rows.ts';
 import { register as registerUsage } from './usage.ts';
 import { register as registerWorkers } from './workers.ts';
 
-const displayTools = [
-  ['read', 'Display-only Cursor file read.'],
-  ['search', 'Display-only Cursor search.'],
-  ['edit', 'Display-only Cursor edit.'],
-  ['shell', 'Display-only Cursor shell action.'],
-  ['other', 'Display-only Cursor action.'],
-  ['note', 'Display-only Cursor progress note.'],
-] as const;
-const prefix = 'mcp__multi-core__cursor_';
 const maxBody = 32000;
-
-type DisplayInput = {
-  description?: string;
-  toolUseId?: string;
-  output?: string;
-  isError?: boolean;
-};
 
 type GatewayResponse = {
   refused?: true;
   httpStatus?: number;
   error?: string;
-  output?: string;
-  isError?: boolean;
-  terminal?: boolean;
   accepted?: boolean;
   generation?: number | string;
   status?: string;
   stale?: boolean;
-  events?: Array<{
-    sequence: number;
-    toolUseId: string;
-    tool: string;
-    phase: string;
-    input: DisplayInput;
-    output?: string;
-    isError?: boolean;
-  }>;
-  nextCursor?: number;
 };
 
 // Claude Code 2.1.272 loads exactly one entry from hooks.json `modules`; compose here.
@@ -69,44 +41,7 @@ export const register: Register = (on, options) => {
   );
   registerCompaction(on, options, agentModels);
   registerWorkers(on, options, agentModels, policyState, spawnModels);
-  for (const [name, _description] of displayTools) {
-    const tool = `${prefix}${name}` as const;
-    on('tool.call', { tool }, async (_$, event) => {
-      // The tool's own arguments sit beside the reserved keys on the envelope.
-      const input = event as unknown as DisplayInput;
-      return {
-        result: {
-          type: 'text',
-          text: input.output ?? 'Display result unavailable.',
-          is_error: input.isError === true,
-        },
-      };
-    });
-    on('tool.check', { tool }, () => ({
-      decision: 'allow' as const,
-      reason: 'Display-only row; it never executes a Cursor action.',
-    }));
-    on('ui.render', { component: 'ToolUse', props: { tool } }, async ($, event, next) => {
-      const { Box, Text } = $.ui.resolve(event);
-      const input = event.props.input as DisplayInput;
-      const row = await next(event);
-      return Box({
-        flexDirection: 'column',
-        children: [
-          Text({ color: 'cyan', children: `Cursor ${name}: ${input.description ?? ''}` }),
-          row,
-        ],
-      });
-    });
-    on('ui.render', { component: 'ToolResult', props: { tool } }, async ($, event, next) => {
-      const { Box, Text } = $.ui.resolve(event);
-      const row = await next(event);
-      return Box({
-        flexDirection: 'column',
-        children: [Text({ color: 'cyan', children: `Cursor ${name} complete` }), row],
-      });
-    });
-  }
+  registerRows(on);
   on('session.start', async ($, event, next) => {
     if (!(await active($))) {
       return next(event);
@@ -116,28 +51,6 @@ export const register: Register = (on, options) => {
       description: 'Open provider quotas, spend, and session receipts.',
       immediate: true,
     });
-    const cursorAvailable = (await $.env.get('MULTI_CURSOR_DISPLAY_TOOLS')) === '1';
-    for (const [name, description] of cursorAvailable ? displayTools : []) {
-      try {
-        await $.tool.register({
-          name: `cursor_${name}`,
-          description,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              description: { type: 'string', maxLength: 160 },
-              output: { type: 'string', maxLength: 4096 },
-              isError: { type: 'boolean' },
-              toolUseId: { type: 'string', maxLength: 512 },
-            },
-            required: ['description', 'output', 'isError', 'toolUseId'],
-            additionalProperties: false,
-          },
-        });
-      } catch {
-        // Toolless slash-command sessions still need the gateway lifecycle hooks.
-      }
-    }
     const response = await request($, '/multi/mod/session', {
       sessionId: await $.session.id(),
       cwd: await $.session.cwd(),
@@ -146,6 +59,8 @@ export const register: Register = (on, options) => {
     });
     policyState.generation =
       typeof response?.generation === 'number' ? response.generation : undefined;
+    // Display rows for native harness actions; awaited so the first run's rows anchor.
+    await syncDisplayTools(rowsClient($));
     return next(event);
   });
   on('classic.UserPromptSubmit', async ($, event, next) => {
@@ -196,7 +111,7 @@ async function request($: EngineInterface, route: string, payload: Record<string
   if (encodeURIComponent(body).replace(/%[A-F\d]{2}/gi, 'x').length > maxBody) {
     return undefined;
   }
-  const isGet = route.startsWith('/multi/mod/display?') || route.startsWith('/multi/mod/mode?');
+  const isGet = route.includes('?');
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const response = $.http.fetch(`${base}${route}`, {
@@ -238,6 +153,15 @@ function refusal(result: { text: string; status: number }): GatewayResponse {
 
 function snapshotOf(event: { session_id: string; cwd: string; permission_mode?: string }) {
   return { sessionId: event.session_id, cwd: event.cwd, permissionMode: event.permission_mode };
+}
+
+function rowsClient($: EngineInterface): RowsClient {
+  return {
+    sessionId: () => $.session.id(),
+    catalog: () => request($, '/multi/mod/display-tools?', {}),
+    register: (tool) => $.tool.register(tool),
+    acknowledge: (payload) => request($, '/multi/mod/display-tools', payload),
+  };
 }
 
 async function policyClient($: EngineInterface): Promise<PolicyClient> {

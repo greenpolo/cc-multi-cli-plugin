@@ -1,0 +1,44 @@
+[
+  {
+    "type": "read",
+    "args": {
+      "path": "/work/project/sample.txt"
+    },
+    "result": {
+      "status": "success",
+      "value": {
+        "content": "one\nalpha\nthree\nfour\n",
+        "totalLines": 5,
+        "fileSize": 21
+      }
+    }
+  },
+  {
+    "type": "edit",
+    "args": {
+      "path": "/work/project/sample.txt"
+    },
+    "result": {
+      "status": "success",
+      "value": {
+        "linesAdded": 1,
+        "linesRemoved": 1,
+        "diffString": "--- a//work/project/sample.txt\n+++ b//work/project/sample.txt\n@@ -1,4 +1,4 @@\n one\n-alpha\n+beta\n three\n four"
+      }
+    }
+  },
+  {
+    "type": "edit",
+    "args": {
+      "path": "/work/project/created.txt"
+    },
+    "result": {
+      "status": "success",
+      "value": {
+        "linesAdded": 2,
+        "linesRemoved": 0,
+        "diffString": "--- /dev/null\n+++ b//work/project/created.txt\n@@ -1,0 +1,2 @@\n+hello\n+world"
+      }
+    }
+  }
+]
