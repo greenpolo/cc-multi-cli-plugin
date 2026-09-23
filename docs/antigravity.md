@@ -100,7 +100,21 @@ continue on the native conversation; native state is never rewound.
 
 Completed identical requests can replay saved output. CLI usage is cumulative,
 so resumed usage is differenced from the previous recorded total. Cache reuse is
-best-effort. An uncertain run is never replayed. If a run reports a conversation
+best-effort.
+
+A turn's `result` usage is the sum of every model call agy made in that turn;
+each call's own usage arrives earlier on its `agent_response` step. The Messages
+response therefore reports the last call's input and cache reads in its standard
+fields, which Claude Code reads as the worker's live context, and the turn sums as
+`multi_usage.consumed_*` with `model_calls`, which receipts and `/multi-usage`
+charge as spend. The resume difference applies only to the sums; the last call is
+already that call's own count. Gemini on Antigravity reports no prompt caching
+(zero cache reads, so every call resends its full context), and its consumption
+looks large next to Claude or Codex workers: a 19-action Gemini run reported about
+800k consumed input over a live context near 20k. Claude models on the same CLI
+read the cache after their first call. The quota impact measured on September 22,
+2026 was negligible: about 2M Gemini Flash tokens moved the 5-hour bucket by about
+0.1 points. An uncertain run is never replayed. If a run reports a conversation
 ID but no terminal result, the next request streams an interruption notice before
 continuing. Non-success terminal results are reported as errors and are retried
 by a later identical request.

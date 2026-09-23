@@ -125,5 +125,8 @@ disabled. The SDK exposes no public force-compaction or threshold control, manua
 approval transport, arbitrary Claude-native tool cards, strict forced tool choice,
 stop strings, PDF attachments, or per-response generation caps. Cursor turn
 usage is reported when the SDK provides it; otherwise the Messages response
-marks its local token estimate explicitly. Billed usage is queried separately,
+marks its local token estimate explicitly. The SDK reports usage once per run
+(its `turn-ended` update and the run result), not per model call, so the
+standard usage fields carry the run's sums rather than its last call's context,
+and `model_calls` is not reported. Billed usage is queried separately,
 on demand, and may lag while Cursor settles billing.

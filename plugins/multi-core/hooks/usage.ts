@@ -12,7 +12,12 @@ export function forgetUsageSession(session: string) {
 
 export const register: Register = (on) => {
   on('classic.PreToolUse', async ($, event, next) => {
-    if ((event.tool !== 'Agent' && event.tool !== 'Task') || event.agentId !== undefined) {
+    // `Task` is the Agent tool's legacy name; a worker's own spawn carries its agentId.
+    const tool: string = event.tool;
+    if (
+      (tool !== 'Agent' && tool !== 'Task') ||
+      (event as { agentId?: string }).agentId !== undefined
+    ) {
       return next(event);
     }
     const session = await $.session.id();
@@ -76,7 +81,7 @@ export const register: Register = (on) => {
     const { Client } = $.ui.resolve(event);
     return Client({ key: 'usage', module: './usage-view.ts', props, width: '100%', flexGrow: 1 });
   });
-  on('ui.message', { source: 'client' }, async ($, event, next) => {
+  on('ui.message', { element: 'usage' }, async ($, event, next) => {
     if (event.requestId !== 'multi-usage' || event.element !== 'usage' || !record(event.data)) {
       return next(event);
     }
@@ -134,14 +139,18 @@ function dashboard(value: unknown): UsagePaneProps | undefined {
   }
   return value as UsagePaneProps;
 }
+/** Props are plain data: a field without a value is left out, never set to undefined. */
 function updatePane(previous: UsagePaneProps, action: string, response: unknown): UsagePaneProps {
+  const { error: _error, ...kept } = previous;
   if (action === 'refresh') {
     const refreshed = dashboard(response);
     return refreshed
       ? {
           ...refreshed,
-          receiptLines: previous.receiptLines,
-          quotaAdviceEnabled: previous.quotaAdviceEnabled,
+          ...(previous.receiptLines ? { receiptLines: previous.receiptLines } : {}),
+          ...(previous.quotaAdviceEnabled === undefined
+            ? {}
+            : { quotaAdviceEnabled: previous.quotaAdviceEnabled }),
         }
       : { ...previous, error: 'Refresh failed. Showing the previous values.' };
   }
@@ -149,8 +158,7 @@ function updatePane(previous: UsagePaneProps, action: string, response: unknown)
     return { ...previous, error: 'Could not load receipts.' };
   }
   return {
-    ...previous,
-    error: undefined,
+    ...kept,
     receiptLines: response.receipts.slice(-20).reverse().flatMap(receiptLines),
   };
 }
@@ -161,9 +169,27 @@ function receiptLines(value: unknown): string[] {
   const owner = typeof value.agentId === 'string' ? value.agentId : 'Main turn';
   return [
     `${owner} · ${String(value.outcome)}${value.incomplete ? ' (incomplete)' : ''} · ${String(value.time)}`,
-    `  ${String(value.requests)} requests · ${String(value.usage.input_tokens)} input · ${String(value.usage.output_tokens)} output`,
+    `  ${receiptUsage(value.usage, value.requests, value.context)}`,
     ...(Array.isArray(value.entries) ? value.entries.flatMap(receiptEntry) : []),
   ];
+}
+/**
+ * Context and consumption side by side: a harness that resends its whole context
+ * on every model call without a cache reads as a small context and a large spend.
+ */
+function receiptUsage(usage: Record<string, unknown>, requests: unknown, context: unknown) {
+  const count = (value: unknown) =>
+    typeof value === 'number' ? value.toLocaleString('en-US') : '0';
+  const calls =
+    typeof usage.model_calls === 'number' ? ` · ${count(usage.model_calls)} model calls` : '';
+  const window = record(context)
+    ? `context ${count(
+        [context.input_tokens, context.cache_read_input_tokens, context.cache_creation_input_tokens]
+          .filter((item) => typeof item === 'number')
+          .reduce((sum, item) => sum + item, 0),
+      )} · `
+    : '';
+  return `${String(requests)} requests${calls} · ${window}consumed ${count(usage.input_tokens)} input · cached ${count(usage.cache_read_input_tokens)} · ${count(usage.output_tokens)} output`;
 }
 function receiptEntry(value: unknown): string[] {
   if (!record(value)) {

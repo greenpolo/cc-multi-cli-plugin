@@ -2,7 +2,8 @@ import type {
   NativeActionKind,
   NativeActionTracker,
 } from '../../multi-core/src/gateway/harness-progress.ts';
-import type { AntigravityStreamEvent } from './cli.ts';
+import type { HarnessModelCalls } from '../../multi-core/src/gateway/harness-response.ts';
+import { type AntigravityStreamEvent, parseAntigravityUsage } from './cli.ts';
 
 type StepUpdate = Extract<AntigravityStreamEvent, { event: 'step_update' }>['step_update'];
 
@@ -167,4 +168,28 @@ export function observeAntigravityStep(
       error: false,
     });
   }
+}
+
+/**
+ * Records one model call. agy reports each as an `agent_response` step whose
+ * final update carries that call's own usage, before the turn's `result`, whose
+ * usage is every call summed (`test/unit/fixtures/antigravity/calls-*.jsonl`).
+ * The streamed text updates of the same step carry no usage and are not calls.
+ */
+export function observeAntigravityCall(update: StepUpdate, calls: HarnessModelCalls) {
+  if (update.step_type !== 'agent_response') {
+    return;
+  }
+  const usage = parseAntigravityUsage(update.usage);
+  if (usage?.input_tokens === undefined) {
+    return;
+  }
+  calls.record(
+    {
+      input: usage.input_tokens,
+      ...(usage.output_tokens === undefined ? {} : { output: usage.output_tokens }),
+      ...(usage.cache_read_tokens === undefined ? {} : { cacheRead: usage.cache_read_tokens }),
+    },
+    typeof update.step_index === 'number' ? `step-${update.step_index}` : undefined,
+  );
 }

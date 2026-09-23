@@ -53,19 +53,25 @@ const unavailable: Record<UsageProvider, string[]> = {
 
 function sessionLines(snapshot: UsageSnapshot, provider: UsageProvider): string[] {
   const entries = snapshot.entries.filter((entry) => entry.provider === provider);
-  const totals = { input: 0, output: 0, read: 0, write: 0, requests: 0 };
+  const totals = { input: 0, output: 0, read: 0, write: 0, requests: 0, calls: 0 };
   for (const entry of entries) {
     totals.input += entry.usage.input_tokens;
     totals.output += entry.usage.output_tokens;
     totals.read += entry.usage.cache_read_input_tokens;
     totals.write += entry.usage.cache_creation_input_tokens;
     totals.requests += entry.requests;
+    totals.calls += entry.usage.model_calls ?? 0;
   }
   const count = (value: number) => value.toLocaleString('en-US');
+  const context = snapshot.contexts?.[provider];
+  const window = context
+    ? `context ${count(context.input_tokens + context.cache_read_input_tokens + context.cache_creation_input_tokens)} · `
+    : '';
+  const calls = totals.calls ? ` · ${count(totals.calls)} model calls` : '';
   return [
-    `This session: ${count(totals.requests)} completed requests`,
-    `Tokens: ${count(totals.input)} input · ${count(totals.output)} output`,
-    `Cache: ${count(totals.read)} read · ${count(totals.write)} written`,
+    `This session: ${count(totals.requests)} completed requests${calls}`,
+    `Tokens: ${window}consumed ${count(totals.input)} input · cached ${count(totals.read)} read`,
+    `Output: ${count(totals.output)} · cache written ${count(totals.write)}`,
     ...(entries.some((entry) => entry.source !== 'provider')
       ? ['Includes estimated or unavailable counts; see session receipts for provenance.']
       : []),

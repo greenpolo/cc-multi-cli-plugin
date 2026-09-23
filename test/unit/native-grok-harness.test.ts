@@ -82,10 +82,14 @@ test('reports native usage, model and effort on the Messages response', async (t
   );
 
   assert.deepEqual(response.usage, { input_tokens: 40, output_tokens: 9 });
+  // Without per-call usage events, the run's `num_turns` still counts its model calls.
   assert.deepEqual(response.multi_usage, {
     source: 'provider',
+    consumed_input_tokens: 40,
+    consumed_output_tokens: 9,
     reasoning_tokens: 3,
     total_tokens: 49,
+    model_calls: 1,
     model: 'grok-4.6',
     effort: 'high',
   });

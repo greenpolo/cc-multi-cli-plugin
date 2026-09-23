@@ -21,7 +21,10 @@ import {
 import type { NativeProgressObserver } from '../../multi-core/src/gateway/harness-progress.ts';
 import { NativeActionTracker } from '../../multi-core/src/gateway/harness-progress.ts';
 import type { HarnessUsageFields } from '../../multi-core/src/gateway/harness-response.ts';
-import { HarnessResponse } from '../../multi-core/src/gateway/harness-response.ts';
+import {
+  HarnessModelCalls,
+  HarnessResponse,
+} from '../../multi-core/src/gateway/harness-response.ts';
 import type {
   HarnessSession,
   HarnessSessionBase,
@@ -306,6 +309,7 @@ export class GrokHarness {
       const actions = new NativeActionTracker(PROVIDER, observe, (block) =>
         response.displayRow(block),
       );
+      const calls = new HarnessModelCalls();
       const onEvent = (event: GrokStreamEvent) => {
         if (!started) {
           started = true;
@@ -317,7 +321,7 @@ export class GrokHarness {
             // The run continues regardless of a failed durability write.
           });
         }
-        eventText(event, response, actions);
+        eventText(event, response, actions, calls);
       };
       const outcome = await settleOrAbort(
         this.run({
@@ -343,7 +347,7 @@ export class GrokHarness {
       );
       await startSave;
       return await this.settle(
-        { session, response, outcome, selection, key, exchange, emit, actions },
+        { session, response, outcome, selection, key, exchange, emit, actions, calls },
         performance.now() - startedAt,
       );
     } catch (error) {
@@ -374,10 +378,11 @@ export class GrokHarness {
       exchange: HarnessExchange;
       emit: Emit;
       actions: NativeActionTracker;
+      calls: HarnessModelCalls;
     },
     elapsedMs: number,
   ): Promise<MessagesResponse> {
-    const { session, response, outcome, selection, key, exchange, emit, actions } = run;
+    const { session, response, outcome, selection, key, exchange, emit, actions, calls } = run;
     const result = outcome.result;
     // The CLI owns the identity it reports; a mismatch would silently fork history.
     if (session.saved.sessionId !== undefined && result.sessionId !== session.saved.sessionId) {
@@ -385,10 +390,10 @@ export class GrokHarness {
         `Grok answered on session ${result.sessionId} instead of ${session.saved.sessionId}`,
       );
     }
-    response.text(actions.text(result.turns));
+    response.text(actions.text(calls.count || result.turns));
     appendDiagnostics(response, outcome, elapsedMs);
     const finished = response.finish(
-      toHarnessUsage(result.usage),
+      calls.turn(toHarnessUsage(result.usage), result.turns),
       selection.model.id,
       selection.effort,
     );
@@ -423,15 +428,29 @@ export class GrokHarness {
 }
 
 /**
- * Assistant text streams; native tool calls become display rows.
+ * Assistant text streams; native tool calls become display rows. Each model call
+ * reports its own `usage` event before the `end` event sums them
+ * (`test/unit/fixtures/grok/tool-denied-by-rule.jsonl`), so the last one is the context.
  */
 function eventText(
   event: GrokStreamEvent,
   response: HarnessResponse,
   actions: NativeActionTracker,
+  calls: HarnessModelCalls,
 ) {
   if (event.event === 'text') {
     response.text(event.text);
+    return;
+  }
+  if (event.event === 'usage') {
+    if (event.usage.input_tokens !== undefined) {
+      calls.record({
+        input: event.usage.input_tokens,
+        output: event.usage.output_tokens,
+        cacheRead: event.usage.cache_read_input_tokens,
+        cacheCreate: event.usage.cache_creation_input_tokens,
+      });
+    }
     return;
   }
   observeGrokEvent(event, actions);

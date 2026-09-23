@@ -145,6 +145,9 @@ the saved response, the harness emits a notice and continues on its native recor
 it does not require a matching prompt hash or unique response anchor. Native state
 is never rewound. Compaction summarizes authenticated context while preserving the
 native record. Cache reuse and usage accounting remain provider-owned.
+The shared response builder reports a harness turn's last model call, its live
+context, in the standard usage fields and the turn's consumption in `multi_usage`
+([docs/claude-mods.md](docs/claude-mods.md)); each adapter supplies both.
 
 `HarnessSessionStore` (`gateway/harness-session.ts`) owns the loading gate,
 record validation, and lock lifetime. Persisted `saved` fields are separate from

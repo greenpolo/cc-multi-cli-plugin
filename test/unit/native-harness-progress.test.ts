@@ -521,7 +521,7 @@ test('an Antigravity worker writes each finished step as a native-named row and 
   // Text after the row is the turn's final message, which the follow-up carries.
   assert.match(
     response.multi_followup ?? '',
-    /^written[\s\S]*\n\n\[Antigravity\] 1 native action: 1 edit\.\n\[Antigravity\] Changed: a\.ts\.\n$/,
+    /^written[\s\S]*\n\n\[Antigravity\] 1 native action: 1 edit; 1 model call\.\n\[Antigravity\] Changed: a\.ts\.\n$/,
   );
   assert.equal((await status('agy-worker')).state, 'completed');
 
@@ -542,8 +542,16 @@ test('an Antigravity worker writes each finished step as a native-named row and 
   const answered = (await followUp.json()) as MessagesResponse;
   assert.deepEqual(answered.content, [{ type: 'text', text: response.multi_followup }]);
   // The follow-up is the turn's last response, so it keeps the reply's context.
-  assert.ok(response.usage.input_tokens > 0);
-  assert.deepEqual(answered.usage, { ...response.usage, output_tokens: 0 });
+  assert.deepEqual(response.usage, {
+    input_tokens: 900,
+    output_tokens: 3,
+    cache_read_input_tokens: 100,
+  });
+  assert.deepEqual(answered.usage, {
+    input_tokens: 900,
+    output_tokens: 0,
+    cache_read_input_tokens: 100,
+  });
   assert.equal(runs, 1, 'the follow-up never starts a native run');
 });
 

@@ -81,6 +81,8 @@ test('Antigravity exposes native usage in the Messages response', async (t) => {
   assert.deepEqual(response.usage, { input_tokens: 40, output_tokens: 9 });
   assert.deepEqual(response.multi_usage, {
     source: 'provider',
+    consumed_input_tokens: 40,
+    consumed_output_tokens: 9,
     reasoning_tokens: 3,
     total_tokens: 49,
     model: 'gemini-test-low',

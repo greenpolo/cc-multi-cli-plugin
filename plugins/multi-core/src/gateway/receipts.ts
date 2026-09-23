@@ -7,6 +7,7 @@ const RECEIPT_SCHEMA_VERSION = 1;
 type Usage = NonNullable<GatewayEvent['usage']> & {
   reasoning_tokens?: number;
   total_tokens?: number;
+  model_calls?: number;
 };
 type InvocationEvent = GatewayEvent & {
   invocationId?: string;
@@ -22,6 +23,11 @@ export interface InvocationRef {
   invocationId?: string;
 }
 
+/**
+ * Spend: what the requests consumed. A harness turn's standard usage fields
+ * carry its last model call (its live context), so its consumption comes from
+ * the `consumed_*` extension fields instead.
+ */
 interface UsageTotals {
   input_tokens: number;
   output_tokens: number;
@@ -29,11 +35,21 @@ interface UsageTotals {
   cache_creation_input_tokens: number;
   reasoning_tokens?: number;
   total_tokens?: number;
+  model_calls?: number;
+}
+
+/** The live context the last response reported: its input side, as Claude Code reads it. */
+interface ContextUsage {
+  input_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
 }
 
 export interface UsageSnapshot {
   requests: number;
   totals: UsageTotals;
+  /** The last response's context per provider. */
+  contexts?: Partial<Record<GatewayEvent['route'], ContextUsage>>;
   byModel: Record<string, UsageTotals>;
   byEffort: Record<string, UsageTotals>;
   byEndpoint: Record<string, UsageTotals>;
@@ -68,6 +84,8 @@ export interface WorkerUsageReceipt {
   requests: number;
   incomplete?: boolean;
   usage: UsageTotals;
+  /** The invocation's last response's context, beside what it consumed. */
+  context?: ContextUsage;
   byModel: Record<string, UsageTotals>;
   byEffort: Record<string, UsageTotals>;
   byEndpoint: Record<string, UsageTotals>;
@@ -89,6 +107,7 @@ interface PendingInvocation {
   ref: InvocationRef;
   snapshot: UsageSnapshot;
   startedAt: string;
+  context?: ContextUsage;
 }
 
 const emptyTotals = (): UsageTotals => ({
@@ -103,7 +122,7 @@ function addUsage(target: UsageTotals, usage: Usage) {
   target.output_tokens += usage.output_tokens;
   target.cache_read_input_tokens += usage.cache_read_input_tokens ?? 0;
   target.cache_creation_input_tokens += usage.cache_creation_input_tokens ?? 0;
-  for (const key of ['reasoning_tokens', 'total_tokens'] as const) {
+  for (const key of ['reasoning_tokens', 'total_tokens', 'model_calls'] as const) {
     if (usage[key] !== undefined) {
       target[key] = (target[key] ?? 0) + usage[key];
     }
@@ -133,6 +152,7 @@ function copySnapshot(snapshot: UsageSnapshot): UsageSnapshot {
     byEffort: copyBreakdown(snapshot.byEffort),
     byEndpoint: copyBreakdown(snapshot.byEndpoint),
     entries: snapshot.entries.map((entry) => ({ ...entry, usage: copyTotals(entry.usage) })),
+    ...(snapshot.contexts ? { contexts: structuredClone(snapshot.contexts) } : {}),
   };
 }
 
@@ -163,12 +183,35 @@ function emptySnapshot(): UsageSnapshot {
   };
 }
 
-function aggregate(snapshot: UsageSnapshot, event: InvocationEvent) {
-  const usage: Usage = {
-    ...(event.usage as Usage),
-    reasoning_tokens: event.usageMetadata?.reasoning_tokens,
-    total_tokens: event.usageMetadata?.total_tokens,
+/** What one response consumed: the harness's turn sums when it reported them. */
+function spend(event: InvocationEvent): Usage {
+  const usage = event.usage as Usage;
+  const metadata = event.usageMetadata;
+  return {
+    input_tokens: metadata?.consumed_input_tokens ?? usage.input_tokens,
+    output_tokens: metadata?.consumed_output_tokens ?? usage.output_tokens,
+    cache_read_input_tokens: metadata?.consumed_cache_read_tokens ?? usage.cache_read_input_tokens,
+    cache_creation_input_tokens:
+      metadata?.consumed_cache_creation_tokens ?? usage.cache_creation_input_tokens,
+    reasoning_tokens: metadata?.reasoning_tokens,
+    total_tokens: metadata?.total_tokens,
+    model_calls: metadata?.model_calls,
   };
+}
+
+/** The live context one response reported, from its standard fields. */
+function contextOf(event: InvocationEvent): ContextUsage {
+  const usage = event.usage as Usage;
+  return {
+    input_tokens: usage.input_tokens,
+    cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
+  };
+}
+
+function aggregate(snapshot: UsageSnapshot, event: InvocationEvent) {
+  const usage = spend(event);
+  snapshot.contexts = { ...snapshot.contexts, [event.route]: contextOf(event) };
   snapshot.requests++;
   addUsage(snapshot.totals, usage);
   addBreakdown(snapshot.byModel, event.model, usage);
@@ -262,6 +305,7 @@ export class ReceiptLedger {
       return;
     }
     aggregate(pending.snapshot, event);
+    pending.context = contextOf(event);
     aggregate(this.total, event);
     const session = event.session ?? '';
     if (!this.sessions.has(session)) {
@@ -311,6 +355,7 @@ export class ReceiptLedger {
       requests: snapshot.requests,
       incomplete: incomplete || outcome !== 'completed' || snapshot.truncated || undefined,
       usage: snapshot.totals,
+      ...(pending.context ? { context: { ...pending.context } } : {}),
       byModel: snapshot.byModel,
       byEffort: snapshot.byEffort,
       byEndpoint: snapshot.byEndpoint,

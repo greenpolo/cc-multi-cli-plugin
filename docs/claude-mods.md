@@ -126,6 +126,19 @@ Current usage UI follows the upstream shape: `command.run` opens a Pane,
 `ui.render` returns a `Client` with the literal module path
 `./usage-view.ts`, and `ui.message` handles client actions.
 
+Claude Code reads a response's `input_tokens` plus its cache read and write counts
+as the live context window (`apiUsage`, the status line's fill, auto-compaction).
+A harness turn (Cursor, Antigravity, Grok) runs many model calls, so its standard
+usage fields carry the turn's last call when the harness reports per-call usage
+(Antigravity and Grok; Cursor reports only run sums). What the turn consumed stays
+on `multi_usage`: `consumed_input_tokens`, `consumed_output_tokens`,
+`consumed_cache_read_tokens`, `consumed_cache_creation_tokens`, `reasoning_tokens`,
+`total_tokens`, and `model_calls`. The follow-up message that answers a reply's
+display rows repeats that context with zero output, because it is the turn's last
+response. The receipts ledger charges the `consumed_*` fields when present and the
+standard fields otherwise, and records the last response's context per receipt and
+per provider, so the pane shows context, consumption, and cache reads side by side.
+
 ### Native action rows (design note)
 
 **Why rows.** Cursor, Antigravity, and Grok run their own tools. In Claude Code a

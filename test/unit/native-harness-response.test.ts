@@ -57,6 +57,10 @@ test('streamed text becomes one assistant block and its terminal events are held
     source: 'provider',
     model: 'native-1',
     effort: 'high',
+    consumed_input_tokens: 20,
+    consumed_output_tokens: 7,
+    consumed_cache_read_tokens: 3,
+    consumed_cache_creation_tokens: 2,
     reasoning_tokens: 5,
     total_tokens: 32,
   });

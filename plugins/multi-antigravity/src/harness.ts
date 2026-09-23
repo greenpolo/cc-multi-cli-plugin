@@ -25,6 +25,7 @@ import {
   type NativeProgressObserver,
 } from '../../multi-core/src/gateway/harness-progress.ts';
 import {
+  HarnessModelCalls,
   HarnessResponse,
   type HarnessUsageFields,
 } from '../../multi-core/src/gateway/harness-response.ts';
@@ -54,7 +55,11 @@ import { antigravitySettingsFile } from './hooks.ts';
 import type { AntigravityModel } from './models.ts';
 import { nativeSpelling, selectAntigravityModel } from './models.ts';
 import { type AntigravityPolicy, antigravityCompactionDenyList } from './permissions.ts';
-import { observeAntigravityInit, observeAntigravityStep } from './progress.ts';
+import {
+  observeAntigravityCall,
+  observeAntigravityInit,
+  observeAntigravityStep,
+} from './progress.ts';
 import { antigravityHistoryHash, prepareAntigravityRequest } from './request.ts';
 
 export type AntigravityRunner = (options: AntigravityRunOptions) => Promise<AntigravityRunResult>;
@@ -324,6 +329,7 @@ export class AntigravityHarness {
       const actions = new NativeActionTracker(TAG, turn.observe, (block) =>
         response.displayRow(block),
       );
+      const calls = new HarnessModelCalls();
       const outcome = await settleOrAbort(
         this.run({
           cwd,
@@ -338,7 +344,7 @@ export class AntigravityHarness {
             this.eventText(
               event,
               response,
-              actions,
+              { actions, calls },
               (text) => {
                 streamed += text;
               },
@@ -376,7 +382,7 @@ export class AntigravityHarness {
         exchange,
         key,
         model,
-        { streamed, summary: actions.text() },
+        { streamed, summary: actions.text(calls.count), calls },
         emit,
       );
     } catch (error) {
@@ -402,13 +408,15 @@ export class AntigravityHarness {
     exchange: HarnessExchange,
     key: string,
     model: AntigravityModel,
-    text: { streamed: string; summary: string },
+    text: { streamed: string; summary: string; calls: HarnessModelCalls },
     emit: Emit,
   ): Promise<MessagesResponse> {
     response.text(terminalSuffix(text.streamed, result.response));
     response.text(text.summary);
+    // Only the turn's consumption is cumulative across a resumed conversation;
+    // the last call's context is that call's own count and never goes through the delta.
     const finished = response.finish(
-      usageFields(usageDelta(result.usage, session.saved.usage)),
+      text.calls.turn(usageFields(usageDelta(result.usage, session.saved.usage))),
       model.id,
       modelEffort(model),
     );
@@ -431,10 +439,11 @@ export class AntigravityHarness {
   private eventText(
     event: AntigravityStreamEvent,
     response: HarnessResponse,
-    actions: NativeActionTracker,
+    observers: { actions: NativeActionTracker; calls: HarnessModelCalls },
     add: (text: string) => void,
     init: (conversationId: string) => void,
   ) {
+    const { actions, calls } = observers;
     if (event.event === 'init') {
       init(event.conversation_id);
       observeAntigravityInit(event.init, actions);
@@ -444,6 +453,8 @@ export class AntigravityHarness {
       return;
     }
     const update = event.step_update;
+    // A call's usage arrives on the same update as its last text, so it is read first.
+    observeAntigravityCall(update, calls);
     if (typeof update.text_delta === 'string') {
       add(update.text_delta);
       response.text(update.text_delta);

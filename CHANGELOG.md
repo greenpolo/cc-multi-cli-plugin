@@ -23,12 +23,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   answers are dropped when it ends. After a gateway restart the answer is read back
   from the harness's session record; when no record holds it the request fails
   with an explicit error instead of an empty "Native run finished." success.
-
 - **Stop drawing unconfirmed native actions as successes.** An action whose
   completion never arrived before its run ended now draws a grey dot with an
   `Unconfirmed:` result, is left out of the `Changed:` summary, and is counted on
   an `Unconfirmed:` line of the closing summary.
-
 - **Retry display tool registration after a failed acknowledgement.** The mod
   now records the catalog as synced only once the gateway confirms the registered
   names, so a timeout or HTTP failure no longer suppresses rows until the catalog changes.
@@ -42,6 +40,16 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   compact and ctrl+o views. Only the tool name differs (`view_file`, not `Read`).
   A Cursor `edit` row takes its old and new text from the edit's reported diff, and
   one that created a file draws as Write (`Wrote 2 lines to created.txt`).
+
+- **Report a harness worker's live context separately from what its turn consumed.**
+  Antigravity and Grok responses now carry the turn's last model call in their
+  standard usage fields, so Claude Code's context meter, auto-compaction, and
+  worker token counts no longer read an Antigravity turn's summed calls (10-40x too
+  high) as context. Turn sums move to `multi_usage.consumed_*` with a
+  `model_calls` count; receipts and `/multi-usage` charge those and show context,
+  consumption, and cache reads side by side, and the closing native summary names
+  the model call count. Cursor reports only run sums and keeps them. The receipts
+  tab of `/multi-usage` also loads again instead of being refused by the engine.
 
 - **Run native harness workers with `isolation: "worktree"`.** A Cursor,
   Antigravity, or Grok worker started by the Agent tool in a Claude worktree

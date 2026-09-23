@@ -133,7 +133,11 @@ A completed identical request replays its saved output. A run that ends without
 a terminal event is never assumed complete: the next request resumes with an
 interruption notice. An answer returned on a different native session is refused
 rather than merged. Cost and token counts come from the run's own terminal event;
-`grok usage <session>` reports the session total the CLI itself recorded.
+`grok usage <session>` reports the session total the CLI itself recorded. The CLI
+also emits one `usage` event per model call before that terminal event, so the
+Messages response reports the last call's input and cache reads (the live
+context) in its standard fields and the terminal sums as `multi_usage.consumed_*`
+with `model_calls` (the count of those events, or `num_turns` without them).
 
 A failure that repeats on every attempt — a policy the CLI would not apply, a
 missing binary, a denied path — is reported as a request error so the session
