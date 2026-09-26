@@ -4,7 +4,7 @@ import { runScenario } from './harness.ts';
 
 for (const [provider, model] of [
   ['openai', 'gpt-6-astra'],
-  ['zen', 'kimi-k2.7-code'],
+  ['zen', 'kimi-k3'],
   ['zen', 'gpt-6-luna'],
 ] as const) {
   for (const gatewayTimeoutMs of [undefined, 50]) {

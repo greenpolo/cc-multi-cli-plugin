@@ -9,7 +9,7 @@ for (const provider of ['openai', 'zen'] as const) {
       const result = await runScenario(t, {
         name: 'provider-error-surface',
         enabledProviders: [provider],
-        model: `multi/${provider}/${provider === 'openai' ? 'gpt-6-astra' : 'kimi-k2.7-code'}`,
+        model: `multi/${provider}/${provider === 'openai' ? 'gpt-6-astra' : 'kimi-k3'}`,
         upstream: {
           [provider]: () => ({
             status,

@@ -6,7 +6,7 @@ import { registeredWorker } from './agents.ts';
 import { runScenario } from './harness.ts';
 
 for (const provider of ['openai', 'zen'] as const) {
-  const model = provider === 'openai' ? 'gpt-6-astra' : 'kimi-k2.7-code';
+  const model = provider === 'openai' ? 'gpt-6-astra' : 'kimi-k3';
   test(`${provider}-worker: Agent dispatch and saved credential isolation`, async (t) => {
     const key = 'e2e-saved-zen-secret';
     const result = await runScenario(t, {
@@ -20,7 +20,7 @@ for (const provider of ['openai', 'zen'] as const) {
           process.env.MULTI_E2E_LIVE === '1'
             ? ''
             : '--import=data:text/javascript,delete%20process.env.OPENCODE_API_KEY',
-        MULTI_ZEN_MODELS: 'kimi-k2.7-code',
+        MULTI_ZEN_MODELS: 'kimi-k3',
       },
       fixtures: {
         '.local/share/opencode/auth.json': JSON.stringify({ opencode: { type: 'api', key } }),

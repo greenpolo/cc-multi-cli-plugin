@@ -1,4 +1,4 @@
-import { appendFile } from 'node:fs/promises';
+import { appendFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { changedPrompt, deliver, readWire } from './probe.ts';
 
@@ -41,7 +41,14 @@ function agent(agentId: string) {
       return {
         id,
         cancel: async () => log({ type: 'cancel', agentId, id }),
-        wait: async () => ({ status: 'finished', result: 'Native Cursor turn complete.' }),
+        wait: async () => ({
+          status: 'finished',
+          result: 'Native Cursor turn complete.',
+          // Scenarios that meter usage write the SDK's TokenUsage beside the event log.
+          usage: await readFile(path.join(process.env.HOME ?? '', 'cursor-usage.json'), 'utf8')
+            .then((text) => JSON.parse(text) as unknown)
+            .catch(() => undefined),
+        }),
       };
     },
   };

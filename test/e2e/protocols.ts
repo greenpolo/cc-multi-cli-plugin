@@ -21,7 +21,12 @@ const anthropic: ReplyWriter = async (res, request, reply) => {
     content: [],
     stop_reason: null,
     stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 0 },
+    usage: {
+      input_tokens: reply.usage?.input ?? 10,
+      output_tokens: 0,
+      cache_read_input_tokens: reply.usage?.cacheRead ?? 0,
+      cache_creation_input_tokens: reply.usage?.cacheWrite ?? 0,
+    },
   };
   event(res, 'message_start', { message });
   event(res, 'content_block_start', {
@@ -40,10 +45,16 @@ const anthropic: ReplyWriter = async (res, request, reply) => {
   event(res, 'content_block_stop', { index: 0 });
   event(res, 'message_delta', {
     delta: { stop_reason: tool ? 'tool_use' : 'end_turn', stop_sequence: null },
-    usage: { output_tokens: 20 },
+    usage: { output_tokens: reply.usage?.output ?? 20 },
   });
   event(res, 'message_stop', {});
 };
+
+// OpenAI and chat-completions input totals include cached and cache-write tokens.
+function totalInput(reply: Reply) {
+  const usage = reply.usage;
+  return usage ? usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) : 10;
+}
 
 const openai: ReplyWriter = async (res, _request, reply) => {
   const tool = reply.tool;
@@ -68,7 +79,14 @@ const openai: ReplyWriter = async (res, _request, reply) => {
     object: 'response',
     status: 'in_progress',
     output: [],
-    usage: { input_tokens: 10, output_tokens: 20 },
+    usage: {
+      input_tokens: totalInput(reply),
+      input_tokens_details: {
+        cached_tokens: reply.usage?.cacheRead ?? 0,
+        cache_write_tokens: reply.usage?.cacheWrite ?? 0,
+      },
+      output_tokens: reply.usage?.output ?? 20,
+    },
   };
   event(res, 'response.created', { response });
   await delay(reply);
@@ -109,7 +127,7 @@ const zen: ReplyWriter = async (res, request, reply) => {
   chunk({ delta, finish_reason: null });
   chunk({ delta: {}, finish_reason: tool ? 'tool_calls' : 'stop' });
   res.write(
-    `data: ${JSON.stringify({ id: 'chat_e2e', choices: [], usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } })}\n\n`,
+    `data: ${JSON.stringify({ id: 'chat_e2e', choices: [], usage: { prompt_tokens: totalInput(reply), prompt_tokens_details: { cached_tokens: reply.usage?.cacheRead ?? 0, cache_write_tokens: reply.usage?.cacheWrite ?? 0 }, completion_tokens: reply.usage?.output ?? 20, total_tokens: totalInput(reply) + (reply.usage?.output ?? 20) } })}\n\n`,
   );
   res.write('data: [DONE]\n\n');
 };

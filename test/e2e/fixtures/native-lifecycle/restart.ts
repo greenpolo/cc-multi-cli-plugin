@@ -84,7 +84,7 @@ export async function restart(t: TestContext, root: string, session: string, sce
       terminateProcessTree(child.pid, { signal: 'SIGKILL' });
     }
   };
-  const timer = setTimeout(kill, 30000);
+  const timer = setTimeout(kill, scenario.timeoutMs ?? 30000);
   t.after(() => {
     clearTimeout(timer);
     if (child.exitCode === null) {
