@@ -257,7 +257,10 @@ for (const provider of ['anthropic', 'openai'] as const) {
     );
     assert.equal(requests.length, 1, result.stderr + result.stdout);
     assert.equal(requests[0]?.aborted, true, result.stderr + result.stdout);
-    assert.ok(!result.events.some((event) => event.type === 'result' && !event.is_error));
+    assert.ok(
+      !result.events.some((event) => event.type === 'result' && !event.is_error),
+      JSON.stringify(result.events.filter((e) => e.type === 'result' || e.type === 'assistant')),
+    );
     assert.doesNotMatch(result.stdout, /Must not finish interrupted stream/);
     assert.deepEqual(session.upstream.errors, []);
   });
