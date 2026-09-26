@@ -1,3 +1,4 @@
+import { nativeToolRules } from '../../multi-core/src/gateway/display-rows.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 
 /** Native names reachable from each mapped Claude tool. */
@@ -75,10 +76,12 @@ function policyNotice(mode: PermissionContext['permissionMode']): string {
   return 'Claude Code rules take precedence; native permission prompts are skipped. No reviewer.';
 }
 
-function toolRules(rules: string[] | undefined): Set<string> | undefined {
-  if (rules === undefined) {
+function toolRules(value: string[] | undefined): Set<string> | undefined {
+  if (value === undefined) {
     return undefined;
   }
+  // A display-row grant (`mcp__multi-core`) draws Claude Code rows; it maps to no native tool.
+  const rules = Array.isArray(value) ? nativeToolRules(value) : value;
   const supported = new Set([
     'Read',
     'Grep',

@@ -32,9 +32,12 @@ explicitly.
 
 Claude `PreToolUse` and `PermissionRequest` hooks govern Claude-executed tools,
 not each action inside a native harness. Provider SDK/CLI events supply native
-action observations and progress; Claude Mods displays them. Native harness
-admission and provider policy enforce the actions without replaying them as
-executable Claude tools. The launcher currently disables whole-session agent-view
+action observations, which the gateway writes as display rows under the native tool
+names (see [claude-mods.md](claude-mods.md)). A display row grants nothing: the
+`mcp__multi-core` entry in a harness worker's tools only admits those rows, the
+permission mappers drop it, and the mod refuses any call the gateway did not issue.
+Native harness admission and provider policy enforce the actions without replaying
+them as executable Claude tools. The launcher currently disables whole-session agent-view
 handoff because its gateway and generated worker settings belong to the launcher;
 ordinary background subagent tasks remain supported.
 

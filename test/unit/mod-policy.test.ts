@@ -279,3 +279,121 @@ test('successful worker compaction restores ordinary restrictions without restor
   modes.finishModCompaction('s', undefined, parentId);
   assert.equal(modes.resolve('s').permissionMode, 'auto');
 });
+
+async function preparedCursorSpawn(workspace: string, platform?: NodeJS.Platform) {
+  const modes = new PermissionModes(async () => policy.workers, undefined, { platform });
+  await modes.precompute(workspace);
+  modes.recordModSession('s', { permissionMode: 'plan', cwd: workspace, model: 'parent' });
+  await modes.prepareModWorker('s', {
+    subagentType: 'cursor',
+    cwd: workspace,
+    permissionMode: 'plan',
+    parentModel: 'parent',
+  });
+  return modes;
+}
+
+test('an isolation worktree start binds its spawn and records the worktree cwd', async () => {
+  const modes = await preparedCursorSpawn('/workspace');
+  modes.startPreparedModWorker('s', 'worker', 'cursor', '/workspace/.claude/worktrees/agent-1');
+  const context = modes.resolveHarness('s', 'worker');
+  assert.equal(context.cwd, '/workspace/.claude/worktrees/agent-1');
+  assert.deepEqual(context.tools, ['Read']);
+});
+
+test('a worktree start accepts Windows separators with an explicit platform', async () => {
+  const modes = await preparedCursorSpawn('C:\\repo', 'win32');
+  modes.startPreparedModWorker('s', 'worker', 'cursor', 'C:\\repo\\.claude\\worktrees\\agent-1');
+  assert.equal(modes.resolve('s', 'worker').cwd, 'C:\\repo\\.claude\\worktrees\\agent-1');
+  const posix = await preparedCursorSpawn('C:\\repo', 'linux');
+  assert.throws(
+    () => posix.startPreparedModWorker('s', 'worker', 'cursor', 'C:\\repo\\.claude\\worktrees\\a'),
+    /cwd mismatch/,
+  );
+});
+
+test('unrelated, nested, and deeper worktree cwds are refused and explained later', async () => {
+  for (const cwd of [
+    '/other',
+    '/workspace/src',
+    '/workspace/.claude/worktrees',
+    '/workspace/.claude/worktrees/a/b',
+    '/workspace/.claude/other/a',
+    '/workspace/../.claude/worktrees/a',
+  ]) {
+    const modes = await preparedCursorSpawn('/workspace');
+    assert.throws(() => modes.startPreparedModWorker('s', 'worker', 'cursor', cwd), /unique/);
+    assert.throws(
+      () => modes.resolveHarness('s', 'worker'),
+      (error: Error) =>
+        error.message.includes('no acknowledged spawn') &&
+        error.message.includes(`cwd mismatch parent=/workspace start=${cwd}`) &&
+        error.message.includes('use the Agent tool instead'),
+    );
+  }
+});
+
+test('a missing spawn refusal is retained per worker and cleared with the session', async () => {
+  const modes = await preparedCursorSpawn('/workspace');
+  assert.throws(
+    () => modes.startPreparedModWorker('s', 'worker', 'native', '/workspace'),
+    /unique/,
+  );
+  assert.throws(() => modes.resolveHarness('s', 'worker'), /no pending native spawn/);
+  assert.throws(
+    () => modes.resolveHarness('s', 'other'),
+    (error: Error) => {
+      return !error.message.includes('failed at');
+    },
+  );
+  modes.forgetSession('s');
+  modes.recordModSession('s', { permissionMode: 'plan', cwd: '/workspace' });
+  assert.throws(
+    () => modes.resolveHarness('s', 'worker'),
+    (error: Error) => {
+      return !error.message.includes('failed at');
+    },
+  );
+});
+
+test('a later host snapshot keeps acknowledged harness workers and their admitted restrictions', async () => {
+  const modes = new PermissionModes(
+    async () => ({ cursor: { model: 'multi/cursor/auto', tools: ['Read', 'Bash'] } }),
+    async () => ({ disallowedTools: ['Bash'] }),
+  );
+  await modes.precompute('/workspace');
+  modes.recordHostSession('s', { permissionMode: 'auto', cwd: '/workspace', model: 'claude' });
+  const pending = modes.beginPolicy('s', '/workspace');
+  await setImmediate();
+  modes.admitPolicy('s', pending.generation, {
+    permissionMode: 'auto',
+    cwd: '/workspace',
+    model: 'claude',
+  });
+  await modes.prepareModWorker('s', {
+    subagentType: 'cursor',
+    cwd: '/workspace',
+    permissionMode: 'auto',
+    parentModel: 'claude',
+  });
+  modes.startPreparedModWorker('s', 'cursor-agent', 'cursor', '/workspace');
+  // A Claude-loop prompt or worker boundary posts a snapshot without a policy generation.
+  modes.recordHostSession('s', { permissionMode: 'auto', cwd: '/workspace', model: 'claude' });
+  const context = modes.resolveHarness('s', 'cursor-agent', 'multi/cursor/auto');
+  assert.deepEqual(context.tools, ['Read', 'Bash']);
+  assert.ok(context.disallowedTools?.includes('Bash'));
+  assert.throws(() => modes.resolveHarness('s'), /settings policy has not been admitted/);
+  assert.throws(() => modes.resolveHarness('s', 'unacknowledged'), /no acknowledged spawn/);
+  await assert.rejects(
+    modes.prepareModWorker('s', {
+      subagentType: 'cursor',
+      cwd: '/workspace',
+      permissionMode: 'auto',
+      parentModel: 'claude',
+    }),
+    /settings policy has not been admitted/,
+  );
+  modes.forgetSession('s');
+  modes.recordHostSession('s', { permissionMode: 'auto', cwd: '/workspace', model: 'claude' });
+  assert.throws(() => modes.resolveHarness('s', 'cursor-agent'), /no acknowledged spawn/);
+});

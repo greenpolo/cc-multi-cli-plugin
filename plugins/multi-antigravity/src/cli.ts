@@ -364,7 +364,8 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
-function parseUsage(value: unknown): AntigravityUsage | undefined {
+/** agy's usage record, on a `result` or on one `agent_response` step (that call's own). */
+export function parseAntigravityUsage(value: unknown): AntigravityUsage | undefined {
   const usage = record(value);
   if (!usage) {
     return undefined;
@@ -400,7 +401,7 @@ function parseResult(value: unknown): AntigravityResult | undefined {
     conversation_id: result.conversation_id,
     status: result.status,
     response: result.response,
-    usage: parseUsage(result.usage),
+    usage: parseAntigravityUsage(result.usage),
   };
 }
 

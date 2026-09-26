@@ -10,7 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && node --test --test-timeout=120000 \"test/unit/**/*.test.ts\"",
-    "test:mod": "node --input-type=module -e \"import { spawn } from 'node:child_process'; const child = spawn('claude', ['plugin', 'test', 'plugins/multi-core'], { stdio: 'inherit', env: { ...process.env, CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1' } }); child.on('exit', (code) => { process.exitCode = code ?? 1; });\"",
+    "test:mod": "npm run typecheck:mod && node --input-type=module -e \"import { spawn } from 'node:child_process'; const child = spawn('claude', ['plugin', 'test', 'plugins/multi-core'], { stdio: 'inherit', env: { ...process.env, CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1' } }); child.on('exit', (code) => { process.exitCode = code ?? 1; });\"",
     "test:live:compaction": "node test/live/native-compaction.ts",
     "test:live:zen": "node test/live/native-zen.ts",
     "test:live:cursor": "node test/live/native-cursor-harness.ts",
@@ -29,7 +29,8 @@
     "check": "npm run banner:check && npm run lint && npm run check:unused && npm test",
     "banner:generate": "node scripts/banner.mjs",
     "banner:check": "node scripts/banner.mjs --check",
-    "test:live:install": "node test/live/native-install.ts"
+    "test:live:install": "node test/live/native-install.ts",
+    "typecheck:mod": "tsc -p plugins/multi-core"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",

@@ -45,7 +45,8 @@ const view: ClientModule<UsagePaneProps, State> = (props, surface) => {
     }
     if (event.key === 'left' || event.key === 'right') {
       const index = tabs.findIndex((tab) => tab.id === state.selected);
-      choose(tabs[(index + (event.key === 'left' ? tabs.length - 1 : 1)) % tabs.length].id);
+      const next = tabs[(index + (event.key === 'left' ? tabs.length - 1 : 1)) % tabs.length];
+      choose(next?.id ?? state.selected);
     }
   });
   return Box({

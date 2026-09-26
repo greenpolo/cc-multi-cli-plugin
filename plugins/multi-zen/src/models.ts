@@ -15,13 +15,6 @@ export interface ZenModel {
 
 export interface ZenModelOption extends ZenModel {
   model: string;
-  worker: string;
-  nativeWorker: true;
-}
-
-export interface ZenWorker {
-  model: string;
-  effort?: Effort;
 }
 
 const GPT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const satisfies readonly Effort[];
@@ -242,10 +235,6 @@ const DEFAULT_ZEN_MODELS = [
 
 const modelById = new Map(ZEN_MODELS.map((model) => [model.id, model]));
 
-function workerName(id: string): string {
-  return `zen-${id}`;
-}
-
 function route(id: string): string {
   return `multi/zen/${id}`;
 }
@@ -256,29 +245,17 @@ export function zenModelOptions(availableIds?: readonly string[]): ZenModelOptio
   return ZEN_MODELS.filter((model) => available?.has(model.id) ?? true).map((model) => ({
     ...model,
     model: route(model.id),
-    worker: workerName(model.id),
-    nativeWorker: true,
   }));
 }
 
-export const ZEN_WORKERS: Readonly<Record<string, ZenWorker>> = Object.freeze(
-  Object.fromEntries(
-    ZEN_MODELS.flatMap((model) => {
-      const base = [
-        [workerName(model.id), { model: route(model.id), effort: defaultEffort(model) }],
-      ];
-      const efforts = (model.efforts ?? []).map((effort) => [
-        `${workerName(model.id)}-${effort}`,
-        { model: route(model.id), effort },
-      ]);
-      return [...base, ...efforts];
-    }),
-  ),
-);
+/** The model a `multi-zen` worker runs when the Agent call names none. */
+export const ZEN_DEFAULT_WORKER_MODEL = DEFAULT_ZEN_MODELS[0];
 
-function defaultEffort(model: ZenModel): Effort | undefined {
-  return model.efforts?.includes('medium') ? 'medium' : undefined;
-}
+/**
+ * Every Zen model with adjustable effort accepts medium, and the native-reasoning
+ * models ignore it, so one provider-wide default replaces per-model name variants.
+ */
+export const ZEN_WORKER_EFFORT: Effort = 'medium';
 
 export function zenModel(id: string): ZenModel | undefined {
   return modelById.get(id);

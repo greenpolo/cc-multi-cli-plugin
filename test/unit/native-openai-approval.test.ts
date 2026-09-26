@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
 import type { GatewayFetch } from '../../plugins/multi-core/src/gateway/fetch.ts';
+import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import {
   createOpenAIApproval,
   discoverOpenAIReviewer,
@@ -208,5 +209,63 @@ test('investigation enforces filesystem boundary and truncation; discovery never
   assert.equal(
     await discoverOpenAIReviewer(authFile, async () => new Response('', { status: 401 })),
     false,
+  );
+});
+
+test('OpenAI reviewer refuses a review context owned by another provider', async (t) => {
+  const { cwd, authFile } = await fixture(t);
+  let calls = 0;
+  const bridge = await createOpenAIApproval(authFile, cwd, async () => {
+    calls++;
+    return sse(verdict());
+  });
+  await assert.rejects(
+    bridge.respond(request(), new AbortController().signal, {
+      ...context,
+      model: 'multi/cursor/auto',
+    }),
+    { message: 'Automatic approval is unavailable for this provider' },
+  );
+  assert.equal(calls, 0);
+});
+
+test('required review without an eligible reviewer fails instead of forwarding as approval', async (t) => {
+  const { authFile } = await fixture(t);
+  const eligible = await discoverOpenAIReviewer(authFile, async () =>
+    Response.json({ models: [{ slug: 'gpt-6-luna' }] }),
+  );
+  assert.equal(eligible, false);
+  const server = createNativeGateway({
+    token: 'approval-token',
+    authFile,
+    blockAnthropic: true,
+    fetchImpl: async () => {
+      throw new Error('request must not fall back to a provider without a reviewer');
+    },
+  });
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const response = await fetch(`http://127.0.0.1:${address.port}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'x-multi-gateway-token': 'approval-token',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-5',
+      max_tokens: 32,
+      messages: [{ role: 'user', content: 'test' }],
+    }),
+  });
+  assert.equal(response.status, 400);
+  const body = (await response.json()) as { error: { message: string } };
+  assert.equal(
+    body.error.message,
+    'Native gateway: Anthropic is not signed in. Select an external model.',
   );
 });

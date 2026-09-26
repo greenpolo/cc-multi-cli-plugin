@@ -20,9 +20,9 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-core/src/gateway/messages.ts`, `fetch.ts`, `tools.ts` | Shared protocol, outbound fetch, and tool aliases. |
 | `plugins/multi-core/src/gateway/executable.ts`, `process-tree.ts` | Resolves executables and manages child processes. |
 | `plugins/multi-core/src/gateway/atomic-write.ts`, `state-lock.ts` | Protects files and serializes native state. |
-| `plugins/multi-core/src/gateway/cursor-settings.ts`, `mode-hook.ts`, `agent-definitions.ts` | Admits settings and maps prompt and worker permissions. |
+| `plugins/multi-core/src/gateway/cursor-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Admits settings, maps prompt and worker permissions, and resolves the Agent tool's `model` against each provider's worker catalog. |
 | `plugins/multi-core/src/gateway/approval.ts`, `permission-hook.ts` | Approval protocol and capability checks. |
-| `plugins/multi-core/src/gateway/mod-*.ts`, `tool-observer.ts` | Claude Mods control-plane routes, compaction, policy, and progress observation. |
+| `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `tool-observer.ts` | Claude Mods control-plane routes, compaction, policy, native action display rows, and tool observation. |
 | `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, and notices shared by Cursor, Antigravity, and Grok; CLI process runner and text prompt preparation shared by Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
 | `plugins/multi-openai/src/` | Codex authentication, models, Responses translation, instructions, and reviewer. |
@@ -70,9 +70,10 @@ Run `npm run check`. It checks the generated banner, Biome lint, Knip, strict
 type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
 test suite. Use Node 24.12 or newer and avoid `DEP0190` warnings.
 
-For Claude Mods hook or surface changes, also run `npm run test:mod`. It runs
-`claude plugin test` with the installed Claude executable, without provider
-inference. It is separate from `npm run check` and the current CI matrix.
+For Claude Mods hook or surface changes, also run `npm run test:mod`. It type-checks
+the hooks against `.claude/types` (write them with `/plugin-types` first; they are
+gitignored) and runs `claude plugin test` with the installed Claude executable,
+without provider inference. It is separate from `npm run check` and the current CI matrix.
 
 | Command | Check | Login needed |
 | --- | --- | --- |

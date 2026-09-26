@@ -12,7 +12,7 @@ import {
 } from '../../plugins/multi-zen/src/auth.ts';
 import {
   ZEN_MODELS,
-  ZEN_WORKERS,
+  ZEN_WORKER_EFFORT,
   zenModelOptions,
   zenPickerOptions,
 } from '../../plugins/multi-zen/src/models.ts';
@@ -197,10 +197,10 @@ test('Zen catalog exposes bounded protocols and only supported effort workers', 
     ],
   );
   assert.equal(zenModelOptions(['big-pickle'])[0].model, 'multi/zen/big-pickle');
-  assert.equal(ZEN_WORKERS['zen-big-pickle'].effort, undefined);
-  assert.equal(ZEN_WORKERS['zen-gpt-5.6-luna'].effort, 'medium');
-  assert.equal(ZEN_WORKERS['zen-gpt-5.6-luna-high'].effort, 'high');
-  assert.equal(ZEN_WORKERS['zen-gpt-5.6-luna-impossible'], undefined);
+  // multi-zen carries one effort for every model: each adjustable model must accept it.
+  for (const model of ZEN_MODELS) {
+    assert(!model.efforts || model.efforts.includes(ZEN_WORKER_EFFORT), model.id);
+  }
 });
 
 test('Zen picker allowlist preserves order and validates model IDs', () => {

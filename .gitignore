@@ -26,3 +26,7 @@ report.*.json
 
 # Local Claude agent worktrees are independent checkouts, not source inputs.
 /.claude/worktrees/
+
+# Claude Code function-hook declarations, written per build by `/plugin-types`;
+# `npm run typecheck:mod` reads them. Regenerate after an update, never edit.
+/.claude/types/

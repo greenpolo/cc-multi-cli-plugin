@@ -13,6 +13,81 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   truncated text as success). Client disconnects and explicit gateway timeouts still
   abort upstream requests.
 
+- **Replace one worker per model and effort with one worker type per provider.**
+  The Agent tool now offers five types, `multi-openai`, `multi-zen`,
+  `multi-cursor`, `multi-antigravity`, `multi-grok`, instead of about twenty
+  per-model, per-effort types. `model` picks the model, as a short id or the
+  full `multi/<provider>/<id>`, resolved against the `/model` catalog at spawn;
+  an unknown, wrong-provider, or effort-suffixed id is refused, naming that
+  provider's available models. Omitting `model` runs the provider default.
+  Effort is never part of a name. The Agent row, the running-agents list and
+  the task notification show `<description> · <provider> · <model>`.
+
+- **Keep a native reply's held-back answer with the session that ran it.** The
+  answer a reply with action rows hands over on the next request is bound to its
+  session, worker, and provider and to that reply's rows; a request from another
+  session or worker naming those rows is refused (HTTP 403), and a session's
+  answers are dropped when it ends. After a gateway restart the answer is read back
+  from the harness's session record; when no record holds it the request fails
+  with an explicit error instead of an empty "Native run finished." success.
+- **Stop drawing unconfirmed native actions as successes.** An action whose
+  completion never arrived before its run ended now draws a grey dot with an
+  `Unconfirmed:` result, is left out of the `Changed:` summary, and is counted on
+  an `Unconfirmed:` line of the closing summary.
+- **Retry display tool registration after a failed acknowledgement.** The mod
+  now records the catalog as synced only once the gateway confirms the registered
+  names, so a timeout or HTTP failure no longer suppresses rows until the catalog changes.
+
+- **Draw Cursor, Antigravity, and Grok actions as Claude Code draws its own tools.**
+  A native action's row now carries the input of the built-in it mirrors (Read,
+  Bash, Grep, Glob, LS, Edit, Write; the native parameters kept under `native`)
+  and is drawn like that built-in: the same dot, bold name and argument, `⎿`
+  result line, `Read 5 lines` and `Found 3 files` summaries, write previews, edit
+  diffs, and red `Error:` results, with shell output left to Claude Code's own
+  compact and ctrl+o views. Only the tool name differs (`view_file`, not `Read`).
+  A Cursor `edit` row takes its old and new text from the edit's reported diff, and
+  one that created a file draws as Write (`Wrote 2 lines to created.txt`).
+
+- **Report a harness worker's live context separately from what its turn consumed.**
+  Antigravity and Grok responses now carry the turn's last model call in their
+  standard usage fields, so Claude Code's context meter, auto-compaction, and
+  worker token counts no longer read an Antigravity turn's summed calls (10-40x too
+  high) as context. Turn sums move to `multi_usage.consumed_*` with a
+  `model_calls` count; receipts and `/multi-usage` charge those and show context,
+  consumption, and cache reads side by side, and the closing native summary names
+  the model call count. Cursor reports only run sums and keeps them. The receipts
+  tab of `/multi-usage` also loads again instead of being refused by the engine.
+
+- **Run native harness workers with `isolation: "worktree"`.** A Cursor,
+  Antigravity, or Grok worker started by the Agent tool in a Claude worktree
+  (`.claude/worktrees/<name>`) now binds to its acknowledged spawn and runs in
+  that worktree instead of failing with "no acknowledged spawn". Settings policy
+  stays admitted from the parent checkout. Other working directories are still
+  refused, and a refused worker's error now states why its spawn acknowledgement
+  failed (for example, the parent and start directories).
+
+- **Keep running native harness workers alive across Claude-loop snapshots.** A
+  later prompt or Claude worker boundary in a session with a Claude main model no
+  longer revokes an already acknowledged Cursor, Antigravity, or Grok worker with
+  "settings policy has not been admitted"; the worker keeps its admitted settings
+  restrictions, while the main loop and new harness spawns still require admission.
+
+- **Show native harness actions as tool rows under their native names, inside the
+  session that ran them.** Each finished Cursor, Antigravity, or Grok action is now a
+  Claude Code tool row named after the harness's own tool (`run_command`,
+  `view_file`, `read_file`, `shell`, ...) with its native parameters and native
+  output, in the `/model` harness session or in the harness worker's own subagent
+  transcript (expand with ctrl+o), where Claude Code folds reads and searches like
+  its own. The mod registers the names each harness has or announces; they are
+  display tools, not model tools: the gateway strips them from every provider's tools
+  and history, `tool.describe` defers them, and `tool.check` refuses any call without
+  a gateway-issued token. The worker's final answer is the turn's last message, so a
+  parent still receives it. Actions whose completion never arrives are settled when
+  the run ends. A failed or refused harness run names the gateway's reason in its
+  error and status line. The six `mcp__multi-core__cursor_*` rows and
+  `MULTI_CURSOR_DISPLAY_TOOLS` are replaced; Cursor records holding their blocks
+  still replay.
+
 ## 0.2.1 — 2026-09-22
 
 - Explain missing native worker spawn acknowledgements with the unsupported

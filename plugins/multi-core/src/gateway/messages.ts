@@ -102,10 +102,25 @@ export interface MessagesResponse {
     source: 'provider' | 'estimate' | 'mixed' | 'unavailable';
     reasoning_tokens?: number;
     total_tokens?: number;
+    /**
+     * What a harness turn consumed across all its model calls. The standard
+     * `usage` fields then carry the turn's last call, its live context.
+     */
+    consumed_input_tokens?: number;
+    consumed_output_tokens?: number;
+    consumed_cache_read_tokens?: number;
+    consumed_cache_creation_tokens?: number;
+    /** The model calls a harness turn made, when the harness identifies them. */
+    model_calls?: number;
     replayed?: boolean;
     model?: string;
     effort?: string;
   };
+  /**
+   * The text a reply with display rows holds back for the message that follows
+   * them; the gateway answers the engine's next request with it.
+   */
+  multi_followup?: string;
 }
 
 type BlockDelta =
