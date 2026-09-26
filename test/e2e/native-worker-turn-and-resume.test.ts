@@ -3,9 +3,7 @@ import test from 'node:test';
 import { registeredWorker, workerCompletions, workerId, workerTool } from './agents.ts';
 import { runScenario } from './harness.ts';
 
-test('native-worker-turn-and-resume: real agent tool and fake agy process', {
-  todo: 'Main revokes a finished native worker after a later Claude prompt ("settings policy has not been admitted"); fixed on the refactor by 34ffc9a',
-}, async (t) => {
+test('native-worker-turn-and-resume: real agent tool and fake agy process', async (t) => {
   const result = await runScenario(t, {
     name: 'native-worker-turn-and-resume',
     permissionMode: 'bypassPermissions',
