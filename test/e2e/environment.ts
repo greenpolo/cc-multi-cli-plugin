@@ -39,6 +39,7 @@ export function scenarioEnvironment(
     ANTHROPIC_API_KEY: 'e2e-dummy-anthropic',
     OPENCODE_API_KEY: 'e2e-dummy-zen',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    CLAUDE_CODE_MAX_RETRIES: '0',
     DISABLE_AUTOUPDATER: '1',
     DISABLE_TELEMETRY: '1',
     DISABLE_ERROR_REPORTING: '1',

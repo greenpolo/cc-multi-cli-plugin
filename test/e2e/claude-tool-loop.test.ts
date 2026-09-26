@@ -22,6 +22,9 @@ for (const direct of [true, false]) {
             : { text: 'Hermetic scenario complete.' },
       },
     });
+    if (!result) {
+      return;
+    }
     assert.equal(result.code, 0, result.stderr + result.stdout);
     assert.equal(await readFile(path.join(result.workspace, 'out.txt'), 'utf8'), 'hi\n');
     assert.match(result.stdout, /tool_result/);

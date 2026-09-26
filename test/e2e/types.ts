@@ -1,4 +1,6 @@
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
+import type { LivePlan } from './live.ts';
+import type { TtyDriver } from './tty.ts';
 
 export type JsonObject = Record<string, unknown>;
 export type Provider = 'anthropic' | 'openai' | 'zen';
@@ -49,10 +51,12 @@ export interface Scenario {
   gatewayTimeoutMs?: number;
   timeoutMs?: number;
   direct?: boolean;
+  driver?: { kind: 'tty'; run(driver: TtyDriver): Promise<void> };
   /** Allowlisted additional dummy child environment, never inherited credentials. */
   env?: Record<string, string>;
-  /** Reserved; real-provider execution fails closed until budgets and auth are designed. */
+  /** Live variants are bounded and skipped individually when credentials are absent. */
   tier?: 'hermetic' | 'live';
+  live?: LivePlan;
 }
 export interface FakeServer {
   url: string;

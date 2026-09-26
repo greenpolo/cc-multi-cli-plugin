@@ -11,8 +11,12 @@ const origins = new Map([
   ['https://chatgpt.com', 'openai'],
   ['https://opencode.ai', 'zen'],
 ]);
+const live = process.env.MULTI_E2E_LIVE_CHILD === '1';
 const realFetch = globalThis.fetch;
 globalThis.fetch = (input, init) => {
+  if (live) {
+    return realFetch(input, init);
+  }
   const url = new URL(input instanceof Request ? input.url : input);
   const provider = origins.get(url.origin);
   if (!provider) {
@@ -38,7 +42,7 @@ function replaceOnce(source: string, target: string, replacement: string) {
 }
 registerHooks({
   resolve(specifier, context, next) {
-    if (specifier !== '@cursor/sdk') {
+    if (live || specifier !== '@cursor/sdk') {
       return next(specifier, context);
     }
     const fixture = process.env.MULTI_E2E_CURSOR_MODULE;
@@ -58,7 +62,7 @@ registerHooks({
       return result;
     }
     let source = String(result.source);
-    if (filename === serverFile && process.env.MULTI_E2E_GATEWAY_TIMEOUT_MS) {
+    if (!live && filename === serverFile && process.env.MULTI_E2E_GATEWAY_TIMEOUT_MS) {
       source = replaceOnce(
         source,
         '  timeoutMs,',
@@ -66,6 +70,14 @@ registerHooks({
       );
     }
     if (filename === launcherFile) {
+      if (!live) {
+        const observer = new URL('./gateway-observer.ts', import.meta.url).href;
+        source = replaceOnce(
+          source,
+          '  await new Promise<void>((resolve, reject) => {\n    server.once',
+          `  const { observeGateway } = await import(${JSON.stringify(observer)});\n  observeGateway(server);\n  await new Promise<void>((resolve, reject) => {\n    server.once`,
+        );
+      }
       source = replaceOnce(
         source,
         '  const shutdown = async () => {',

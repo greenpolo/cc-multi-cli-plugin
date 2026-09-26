@@ -80,6 +80,10 @@ const openai: ReplyWriter = async (res, _request, reply) => {
 };
 
 const zen: ReplyWriter = async (res, request, reply) => {
+  if (request.path.endsWith('/responses')) {
+    await openai(res, request, reply);
+    return;
+  }
   if (request.path.includes('/messages')) {
     await anthropic(res, request, reply);
     return;
@@ -104,6 +108,9 @@ const zen: ReplyWriter = async (res, request, reply) => {
     );
   chunk({ delta, finish_reason: null });
   chunk({ delta: {}, finish_reason: tool ? 'tool_calls' : 'stop' });
+  res.write(
+    `data: ${JSON.stringify({ id: 'chat_e2e', choices: [], usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 } })}\n\n`,
+  );
   res.write('data: [DONE]\n\n');
 };
 

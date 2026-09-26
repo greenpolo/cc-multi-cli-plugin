@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { terminateProcessTree } from '../../plugins/multi-core/src/gateway/process-tree.ts';
 import { scenarioEnvironment } from './environment.ts';
 import { installFakeExecutables } from './executables.ts';
+import { prepareLive } from './live.ts';
+import { startTty } from './tty.ts';
 import type { JsonObject, Scenario } from './types.ts';
 import { startUpstreams } from './upstream.ts';
 
@@ -50,17 +52,21 @@ async function fixtureFiles(root: string, fixtures: Record<string, string>) {
 
 function cliArguments(scenario: Scenario, root: string): string[] {
   return [
-    '-p',
-    scenario.prompt ?? 'Complete the scripted E2E scenario.',
+    ...(scenario.driver
+      ? []
+      : [
+          '-p',
+          scenario.prompt ?? 'Complete the scripted E2E scenario.',
+          '--output-format',
+          'stream-json',
+          '--verbose',
+          '--max-turns',
+          '6',
+        ]),
     '--model',
     scenario.model ?? 'claude-sonnet-4-6',
-    '--output-format',
-    'stream-json',
-    '--verbose',
     '--permission-mode',
     scenario.permissionMode ?? 'default',
-    '--max-turns',
-    '6',
     '--setting-sources',
     '',
     '--debug-file',
@@ -81,6 +87,24 @@ async function runChild(t: TestContext, scenario: Scenario, root: string, env: N
   if (scenario.direct) {
     command = String(env.MULTI_REAL_CLAUDE);
     childArgs = args;
+  }
+  if (scenario.driver) {
+    const driver = await startTty(t, {
+      command,
+      args: childArgs,
+      cwd: path.join(root, 'workspace'),
+      env,
+      root,
+    });
+    if (!driver) {
+      return undefined;
+    }
+    try {
+      await scenario.driver.run(driver);
+      return { code: null, stdout: await driver.capture(), stderr: '' };
+    } finally {
+      await driver.close();
+    }
   }
   const child = spawn(command, childArgs, {
     cwd: path.join(root, 'workspace'),
@@ -128,11 +152,12 @@ async function runChild(t: TestContext, scenario: Scenario, root: string, env: N
 
 /** One isolated launcher session. TestContext owns cleanup, including assertion failures. */
 export async function runScenario(t: TestContext, scenario: Scenario) {
-  if (process.env.MULTI_E2E_LIVE === '1' || scenario.tier === 'live') {
-    throw new Error(
-      'Live E2E is not implemented; explicit provider auth and bounded budgets required',
-    );
+  const liveRequested = process.env.MULTI_E2E_LIVE === '1' || scenario.tier === 'live';
+  const live = liveRequested ? await prepareLive(t, scenario) : undefined;
+  if (liveRequested && !live) {
+    return undefined;
   }
+  const selected = live?.scenario ?? scenario;
   const root = await mkdtemp(path.join(process.env.MULTI_E2E_SCRATCH ?? os.tmpdir(), 'multi e2e '));
   t.after(() => rm(root, { recursive: true, force: true }));
   await Promise.all(['workspace', 'config', 'codex'].map((name) => mkdir(path.join(root, name))));
@@ -142,14 +167,32 @@ export async function runScenario(t: TestContext, scenario: Scenario) {
       tokens: { access_token: 'e2e-dummy-openai', account_id: 'e2e-account' },
     }),
     ...scenario.fixtures,
+    ...live?.fixtures,
   });
   const upstream = await startUpstreams(scenario);
   t.after(upstream.close);
   const proxy = await rejectingProxy(t);
   const bin = await installFakeExecutables(root, upstream.url);
-  const env = scenarioEnvironment(root, bin, proxy.url, upstream.url, scenario);
+  const env = scenarioEnvironment(root, bin, proxy.url, upstream.url, selected);
+  if (live) {
+    for (const key of [
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_BASE_URL',
+      'OPENCODE_API_KEY',
+      'HTTP_PROXY',
+      'HTTPS_PROXY',
+      'ALL_PROXY',
+    ]) {
+      delete env[key];
+    }
+    Object.assign(env, live.env, { MULTI_E2E_LIVE_CHILD: '1' });
+  }
   const started = performance.now();
-  const child = await runChild(t, scenario, root, env);
+  const child = await runChild(t, selected, root, env);
+  if (!child) {
+    return undefined;
+  }
   const transcript = child.stdout
     .split('\n')
     .filter((line) => line.startsWith('{'))
@@ -157,6 +200,11 @@ export async function runScenario(t: TestContext, scenario: Scenario) {
   const debug = await readFile(path.join(root, 'claude-debug.log'), 'utf8').catch(() => '');
   return {
     ...child,
+    stderr: child.stderr
+      .split('\n')
+      .filter((line) => !line.startsWith('E2E_GATEWAY_REQUEST='))
+      .join('\n'),
+    tier: liveRequested ? ('live' as const) : ('hermetic' as const),
     transcript,
     requests: upstream.requests,
     nativeInvocations: upstream.nativeInvocations,
@@ -165,6 +213,17 @@ export async function runScenario(t: TestContext, scenario: Scenario) {
     root,
     debug,
     hookAcks: child.stderr.split('\n').filter((line) => line === 'E2E_MOD_SESSION_START_ACK'),
+    gatewayRequests: child.stderr
+      .split('\n')
+      .filter((line) => line.startsWith('E2E_GATEWAY_REQUEST='))
+      .map(
+        (line) =>
+          JSON.parse(line.slice('E2E_GATEWAY_REQUEST='.length)) as {
+            raw: string;
+            headers: Record<string, string>;
+          },
+      ),
+    nativeReplays: child.stderr.split('\n').filter((line) => line.startsWith('E2E_NATIVE_REPLAY=')),
     upstreamErrors: upstream.errors,
     elapsedMs: performance.now() - started,
   };
