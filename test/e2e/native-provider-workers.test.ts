@@ -37,6 +37,15 @@ function agyReply(request: NativeInvocation) {
   };
 }
 
+// Live Claude words its own report; the native runs themselves must complete.
+function assertLiveWorkers(transcript: JsonObject[], resume: boolean, stdout: string) {
+  const completed = transcript.filter(
+    (event) => event.subtype === 'task_notification' && event.status === 'completed',
+  );
+  assert.equal(completed.length, 2, stdout);
+  assert.equal(new Set(completed.map((event) => event.task_id)).size, resume ? 1 : 2);
+}
+
 for (const provider of ['cursor', 'grok', 'antigravity'] as const) {
   for (const resume of [true, false]) {
     test(`${provider}: ${resume ? 'worker turn and SendMessage resume' : 'worker-isolation'}`, async (t) => {
@@ -107,6 +116,10 @@ for (const provider of ['cursor', 'grok', 'antigravity'] as const) {
         return;
       }
       assert.equal(result.code, 0, result.stderr + result.stdout);
+      if (result.tier === 'live') {
+        assertLiveWorkers(result.transcript, resume, result.stdout);
+        return;
+      }
       assert.match(result.stdout, /Native workers complete/);
       assert.deepEqual(result.upstreamErrors, []);
       if (provider === 'grok') {
