@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
-import { readGrokAuth } from '../../plugins/multi-grok/src/usage.ts';
 import { readZenKey } from '../../plugins/multi-zen/src/auth.ts';
+import { detectNativeLiveProvider, nativeLiveEnvironment } from './live-native.ts';
 import type { JsonObject, Scenario } from './types.ts';
 
 export type LiveProvider = 'anthropic' | 'openai' | 'zen' | 'cursor' | 'antigravity' | 'grok';
@@ -52,22 +52,7 @@ export async function detectLiveProvider(provider: LiveProvider): Promise<Creden
   if (provider === 'zen') {
     return keyCredential('OPENCODE_API_KEY', await readZenKey());
   }
-  if (provider === 'grok') {
-    const status = await readGrokAuth();
-    return {
-      available: status.signedIn,
-      reason: status.signedIn ? 'Grok login present' : 'Grok login absent',
-    };
-  }
-  if (provider === 'cursor') {
-    if (process.env.CURSOR_API_KEY) {
-      return keyCredential('CURSOR_API_KEY', process.env.CURSOR_API_KEY);
-    }
-    const { getDefaultSdkAuthPath } = await import('@cursor/sdk');
-    const auth = await objectFile(getDefaultSdkAuthPath());
-    return keyCredential('CURSOR_API_KEY', auth.apiKey);
-  }
-  return { available: false, reason: 'Antigravity credential-presence probe not yet implemented' };
+  return detectNativeLiveProvider(provider);
 }
 
 export async function prepareLive(t: TestContext, scenario: Scenario) {
@@ -94,15 +79,11 @@ export async function prepareLive(t: TestContext, scenario: Scenario) {
     );
     return undefined;
   }
-  if (plan.providers.some((provider) => ['cursor', 'antigravity', 'grok'].includes(provider))) {
-    t.skip('Native live execution awaits an isolated provider-login adapter; no calls made');
-    return undefined;
-  }
   return {
-    env: Object.assign({}, ...credentials.map(({ credential }) => credential.env)) as Record<
-      string,
-      string
-    >,
+    env: Object.assign(
+      nativeLiveEnvironment(plan.providers),
+      ...credentials.map(({ credential }) => credential.env),
+    ) as Record<string, string>,
     fixtures: Object.assign(
       {},
       ...credentials.map(({ credential }) => credential.fixtures),
