@@ -9,29 +9,14 @@ const grok: NativeScript = ({ args }) => {
   if (args[0] === 'models') {
     return { stdout: '* e2e (default)\n' };
   }
-  const flag = args.includes('--resume') ? '--resume' : '--session-id';
-  return {
-    stdout: `${[
-      { type: 'available_commands', tools: [] },
-      { type: 'text', data: 'Grok fixture complete.' },
-      {
-        type: 'end',
-        sessionId: args[args.indexOf(flag) + 1],
-        stopReason: 'end_turn',
-        usage: { input_tokens: 11, output_tokens: 7 },
-      },
-    ]
-      .map((event) => JSON.stringify(event))
-      .join('\n')}\n`,
-  };
+  throw new Error('Refused Grok requests must never invoke the native CLI');
 };
 
 for (const kind of ['grok', 'quota']) {
-  test(`grok: ${kind === 'grok' ? 'context tag preserves retry identity' : 'unexpired login stays signed in below one hour'}`, {
-    todo:
-      kind === 'grok'
-        ? 'Grok request key does not normalize the [1m] context tag'
-        : 'Grok quota floors remaining hours and reports Login expired early',
+  test(`grok: ${kind === 'grok' ? 'unsupported [1m] tag is refused identically without native dispatch' : 'unexpired login stays signed in below one hour'}`, {
+    ...(kind === 'quota'
+      ? { todo: 'Grok quota floors remaining hours and reports Login expired early' }
+      : {}),
   }, async (t) => {
     const result = await runScenario(t, {
       name: `grok-${kind}`,
@@ -52,20 +37,7 @@ for (const kind of ['grok', 'quota']) {
       },
       upstream: {
         anthropic: (request, index) => {
-          if (kind === 'grok' && index === 0) {
-            const tools = request.body.tools as JsonObject[];
-            return {
-              tool: {
-                name: tools.some((tool) => tool.name === 'Agent') ? 'Agent' : 'Task',
-                input: {
-                  subagent_type: 'grok-e2e',
-                  description: 'Grok worker',
-                  prompt: 'Reply ok, no tools.',
-                },
-              },
-            };
-          }
-          if (index === (kind === 'grok' ? 1 : 0)) {
+          if (index === 0) {
             const metadata = request.body.metadata as { user_id: string };
             const { session_id: session } = JSON.parse(metadata.user_id) as { session_id: string };
             return {
@@ -100,19 +72,25 @@ for (const kind of ['grok', 'quota']) {
       assert.equal(row.status, 'ready');
       return;
     }
-    assert.equal(output.replies.length, 3);
-    assert.equal(output.replies[0].status, 200, JSON.stringify(output.replies[0].body));
-    assert.equal(output.replies[1].status, 200, JSON.stringify(output.replies[1].body));
+    assert.equal(output.replies.length, 2);
+    for (const reply of output.replies) {
+      assert.equal(reply.status, 400);
+      assert.equal(reply.body.type, 'error', 'Refusal must never become a successful message');
+      assert.equal(reply.body.error.type, 'invalid_request_error');
+      assert.match(reply.body.error.message, /Unknown Grok model/);
+      assert.equal(reply.body.stop_reason, undefined);
+      assert.equal(reply.body.content, undefined);
+    }
     assert.deepEqual(
       output.replies[0],
       output.replies[1],
-      'Byte-identical tagged retry replays the saved answer',
+      'Identical retry receives the same refusal',
     );
-    assert.equal(
-      runs.length,
-      2,
-      'One setup worker and one tagged worker; context-only retry must not dispatch again',
+    assert.equal(runs.length, 0, 'Neither refused request may invoke native inference');
+    assert.match(
+      result.stdout,
+      /Unknown Grok model/,
+      'The refusal is visible in the tool transcript',
     );
-    assert.deepEqual(output.replies[0].body, output.replies[2]);
   });
 }

@@ -27,9 +27,46 @@ if (kind === 'quota') {
     'wire-output.json',
     JSON.stringify(await request(`/multi/mod/usage${query}&view=providers`)),
   );
+} else if (kind === 'grok') {
+  // Admit settings without executing a setup worker, so model validation is the
+  // refusal being exercised rather than missing native permission context.
+  const mode = await request(`/multi/mod/mode${query}`);
+  let policy = await request('/multi/mod/policy', {
+    sessionId,
+    cwd: process.cwd(),
+    sourceGeneration: mode.generation,
+  });
+  const deadline = Date.now() + 10000;
+  while (policy.status === 'pending' && Date.now() < deadline) {
+    await setTimeout(25);
+    policy = await request('/multi/mod/policy', { sessionId, generation: policy.generation });
+  }
+  if (policy.status !== 'ready') {
+    throw new Error('Native policy did not become ready');
+  }
+  await request('/multi/mod/session', {
+    sessionId,
+    cwd: process.cwd(),
+    permissionMode: 'bypassPermissions',
+    model: 'multi/grok/e2e[1m]',
+    generation: mode.generation,
+    policyGeneration: policy.generation,
+  });
+  const body = {
+    model: 'multi/grok/e2e[1m]',
+    max_tokens: 64,
+    messages: [{ role: 'user', content: 'Reply ok, no tools.' }],
+  };
+  const replies = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const reply = await request('/v1/messages', body, undefined, true);
+    replies.push(reply);
+    console.log(JSON.stringify(reply));
+  }
+  await writeFile('wire-output.json', JSON.stringify({ replies }));
 } else {
   const mode = await request(`/multi/mod/mode${query}`);
-  const provider = kind === 'cursor' ? 'cursor' : 'grok';
+  const provider = 'cursor';
   const model = `multi/${provider}/e2e`;
   // Agent is asynchronous in recent Claude builds. Wait for its public receipt,
   // not a timer assumption, before querying billing or creating more scopes.
@@ -62,17 +99,9 @@ if (kind === 'quota') {
       max_tokens: 64,
       messages: [{ role: 'user', content: 'Reply ok, no tools.' }],
     };
-    if (kind === 'grok') {
-      body.model += '[1m]';
-      replies.push(await request('/v1/messages', body, agentId, true));
-      replies.push(await request('/v1/messages', body, agentId, true));
-      // The tag is context-window metadata, not a different native request.
-      body.model = model;
-    }
     replies.push(await request('/v1/messages', body, agentId));
   }
-  const billed =
-    kind === 'cursor' ? await request(`/multi/mod/usage${query}&billed=true`) : undefined;
+  const billed = await request(`/multi/mod/usage${query}&billed=true`);
   const usage = await request(`/multi/mod/usage${query}`);
   const receipts = await request(`/multi/mod/receipts${query}`);
   await writeFile('wire-output.json', JSON.stringify({ billed, usage, receipts, replies }));
