@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { registeredWorker } from './fixtures/provider-wire/worker.ts';
+import { registeredWorker } from './agents.ts';
 import { runScenario } from './harness.ts';
 import type { NativeScript } from './types.ts';
 

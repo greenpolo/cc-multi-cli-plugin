@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { setTimeout } from 'node:timers/promises';
+import { registeredWorker } from './agents.ts';
 import { runScenario } from './harness.ts';
 import type { JsonObject, NativeInvocation, NativeReply, UpstreamRequest } from './types.ts';
 
@@ -87,7 +88,11 @@ for (const provider of ['antigravity', 'grok'] as const) {
                   : 'Task',
                 id: 'toolu_spawn',
                 input: {
-                  subagent_type: provider === 'grok' ? 'grok-e2e' : 'antigravity-e2e-model',
+                  ...registeredWorker(
+                    request,
+                    provider,
+                    provider === 'grok' ? 'grok-e2e' : 'e2e-model',
+                  ),
                   description: 'Cancellable native run',
                   prompt: 'Wait for interruption.',
                   run_in_background: true,

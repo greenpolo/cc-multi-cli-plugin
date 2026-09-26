@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { registeredWorker } from './fixtures/provider-wire/worker.ts';
+import { registeredWorker } from './agents.ts';
 import { runScenario } from './harness.ts';
 
 for (const provider of ['openai', 'zen'] as const) {

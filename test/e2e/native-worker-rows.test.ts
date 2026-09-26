@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
+import { registeredWorker } from './agents.ts';
 import { runScenario } from './harness.ts';
 import type { JsonObject, NativeScript } from './types.ts';
 
@@ -62,7 +63,7 @@ for (const forged of [false, true]) {
                   : 'Task',
                 id: 'toolu_native',
                 input: {
-                  subagent_type: 'antigravity-e2e-model',
+                  ...registeredWorker(request, 'antigravity', 'e2e-model'),
                   description: 'Observe native rows',
                   prompt: 'Read fixture.txt with native tools and report completion.',
                 },

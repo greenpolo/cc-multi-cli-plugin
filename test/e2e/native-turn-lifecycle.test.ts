@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
+import { registeredWorker } from './agents.ts';
 import {
   changedPrompt,
   deliver,
@@ -77,7 +78,11 @@ for (const provider of ['antigravity', 'grok'] as const) {
                     ? 'Agent'
                     : 'Task',
                   input: {
-                    subagent_type: provider === 'grok' ? 'grok-e2e' : 'antigravity-e2e-model',
+                    ...registeredWorker(
+                      request,
+                      provider,
+                      provider === 'grok' ? 'grok-e2e' : 'e2e-model',
+                    ),
                     description: 'Native lifecycle',
                     prompt: 'Reply ok, no tools.',
                   },
@@ -156,7 +161,7 @@ test('native-failure-no-blind-rerun: agy ERROR must not redispatch identical pro
                 ? 'Agent'
                 : 'Task',
               input: {
-                subagent_type: 'antigravity-e2e-model',
+                ...registeredWorker(request, 'antigravity', 'e2e-model'),
                 description: 'Known native failure',
                 prompt: 'Reply ok.',
               },

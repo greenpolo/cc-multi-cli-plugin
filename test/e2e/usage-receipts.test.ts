@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { registeredWorker } from './agents.ts';
 import { runScenario } from './harness.ts';
 import type { JsonObject } from './types.ts';
 
@@ -32,7 +33,7 @@ for (const count of [1, 33]) {
               tool: {
                 name: tools.some((tool) => tool.name === 'Agent') ? 'Agent' : 'Task',
                 input: {
-                  subagent_type: 'cursor-e2e',
+                  ...registeredWorker(request, 'cursor', 'e2e'),
                   description: 'Metered worker',
                   prompt: 'Reply ok, no tools.',
                 },

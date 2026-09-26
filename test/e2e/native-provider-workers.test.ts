@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { workerCompletions, workerId, workerTool } from './agents.ts';
+import { registeredWorker, workerCompletions, workerId, workerTool } from './agents.ts';
 import { runScenario } from './harness.ts';
 import type { JsonObject, NativeInvocation } from './types.ts';
 
@@ -48,11 +48,7 @@ for (const provider of ['cursor', 'grok', 'antigravity'] as const) {
       `${provider}: ${resume ? 'worker turn and SendMessage resume' : 'worker-isolation'}`,
       todo,
       async (t) => {
-        const worker = {
-          grok: 'grok-e2e',
-          cursor: 'cursor-e2e-model',
-          antigravity: 'antigravity-e2e-model',
-        }[provider];
+        const model = provider === 'grok' ? 'grok-e2e' : 'e2e-model';
         const native = {
           grok: { grok: grokReply },
           antigravity: { agy: agyReply },
@@ -106,7 +102,7 @@ for (const provider of ['cursor', 'grok', 'antigravity'] as const) {
                   name: workerTool(request),
                   id: `toolu_worker_${index}`,
                   input: {
-                    subagent_type: worker,
+                    ...registeredWorker(request, provider, model),
                     description: `Native worker ${index}`,
                     prompt: `Reply ok ${index}, no tools.`,
                   },

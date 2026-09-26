@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { workerCompletions, workerId, workerTool } from './agents.ts';
+import { registeredWorker, workerCompletions, workerId, workerTool } from './agents.ts';
 import { runScenario } from './harness.ts';
 
 test('native-worker-turn-and-resume: real agent tool and fake agy process', {
@@ -42,7 +42,7 @@ test('native-worker-turn-and-resume: real agent tool and fake agy process', {
               name: workerTool(request),
               id: 'toolu_first',
               input: {
-                subagent_type: 'antigravity-e2e-model',
+                ...registeredWorker(request, 'antigravity', 'e2e-model'),
                 description: 'Native E2E turn',
                 prompt: 'Reply ok, no tools.',
               },
