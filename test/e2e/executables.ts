@@ -30,9 +30,16 @@ process.exitCode = reply.code ?? 0;
       `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(runner)} ${shellQuote(name)} "$@"\n`,
       { mode: 0o755 },
     );
+    // npm's shim shape, which the production resolver runs through Node directly like
+    // the real agy.exe. A plain .cmd goes through cmd.exe, where %* stops at the first
+    // newline of a multi-line prompt and drops the flags after it.
+    await writeFile(
+      path.join(bin, `${name}.mjs`),
+      `process.argv.splice(2, 0, ${JSON.stringify(name)});\nawait import('./native-runner.mjs');\n`,
+    );
     await writeFile(
       path.join(bin, `${name}.cmd`),
-      `@"${process.execPath.replaceAll('%', '%%')}" "${runner.replaceAll('%', '%%')}" ${name} %*\r\n`,
+      `@SET "dp0=%~dp0"\r\n@"${process.execPath.replaceAll('%', '%%')}" "%dp0%\\${name}.mjs" %*\r\n`,
     );
   }
   return bin;
