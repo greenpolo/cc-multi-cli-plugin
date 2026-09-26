@@ -4,6 +4,7 @@
     "plugins/multi-core/src/launcher.ts",
     "plugins/multi-core/src/gateway/permission-hook.ts",
     "test/unit/**/*.test.ts",
+    "test/e2e/**/*.test.ts",
     "test/live/*.ts",
     "plugins/multi-core/src/setup.ts",
     "plugins/multi-core/src/account.ts",
