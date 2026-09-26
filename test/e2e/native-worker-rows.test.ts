@@ -108,8 +108,9 @@ for (const forged of [false, true]) {
     );
     assert.deepEqual(result.upstreamErrors, []);
     if (forged) {
-      // Main has no agy row registration: refusal is unknown-tool admission, not
-      // row-token verification. Do not claim this proves the future token bridge.
+      // Main refuses the name as an unknown tool; the native-rows layout registers it
+      // as a display row that only the gateway may originate. Either way the call must
+      // come back as an error and never execute.
       const refusal = result.transcript
         .flatMap((event) => {
           const message = event.message as JsonObject | undefined;
@@ -119,7 +120,7 @@ for (const forged of [false, true]) {
       assert.equal(refusal?.is_error, true, result.stdout);
       assert.match(
         JSON.stringify(refusal),
-        /[Uu]nknown tool|[Nn]o such tool|not available|not found/,
+        /[Uu]nknown tool|[Nn]o such tool|not available|not found|not a tool a model can call/,
       );
     }
   });
