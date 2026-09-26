@@ -30,3 +30,27 @@ jobs:
           name: node-reports-${{ matrix.os }}
           path: report.*.json
           if-no-files-found: ignore
+
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      # Pinned so an engine release can't change results without a commit here.
+      CLAUDE_CODE_VERSION: 2.1.283
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm install --global --no-audit --no-fund "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+        shell: bash
+      # The package's native binary is always named claude.exe; point at it
+      # directly rather than at the npm shim, which is a .cmd file on Windows.
+      - run: echo "MULTI_E2E_CLAUDE=$(npm root --global)/@anthropic-ai/claude-code/bin/claude.exe" >> "$GITHUB_ENV"
+        shell: bash
+      - run: npm run test:e2e
