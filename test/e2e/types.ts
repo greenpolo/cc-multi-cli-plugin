@@ -19,6 +19,14 @@ export interface Reply {
   delayMs?: number;
   status?: number;
   json?: unknown;
+  /** Provider-reported usage in Anthropic terms; each fake encodes it in its own vocabulary. */
+  usage?: ReplyUsage;
+}
+export interface ReplyUsage {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
 }
 export type UpstreamScript = (request: UpstreamRequest, index: number) => Reply | Promise<Reply>;
 export interface NativeInvocation {

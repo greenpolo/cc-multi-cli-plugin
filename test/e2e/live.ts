@@ -55,6 +55,14 @@ export async function detectLiveProvider(provider: LiveProvider): Promise<Creden
   return detectNativeLiveProvider(provider);
 }
 
+function withoutFakeModels(env: Record<string, string> | undefined) {
+  if (!env) {
+    return env;
+  }
+  const { MULTI_CURSOR_EXTRA_MODELS: _fake, ...rest } = env;
+  return rest;
+}
+
 export async function prepareLive(t: TestContext, scenario: Scenario) {
   const plan = scenario.live;
   if (!plan) {
@@ -90,6 +98,8 @@ export async function prepareLive(t: TestContext, scenario: Scenario) {
     ) as Record<string, string>,
     scenario: {
       ...scenario,
+      // Fake catalog extras name models the real account does not have.
+      env: withoutFakeModels(scenario.env),
       prompt: plan.prompt,
       model: plan.model ?? scenario.model,
       cliArgs: [

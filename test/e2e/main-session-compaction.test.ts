@@ -18,6 +18,8 @@ for (const provider of ['anthropic', 'openai'] as const) {
       model: provider === 'openai' ? 'multi/openai/gpt-6-astra' : 'claude-sonnet-4-6',
       enabledProviders: provider === 'openai' ? ['openai'] : [],
       prompt: 'Remember the release password violet-otter-731. Reply ok. No tools.',
+      // A live high-effort summary can take close to a minute.
+      timeoutMs: 120000,
       upstream: { [provider]: script },
       live: {
         providers: [provider],

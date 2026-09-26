@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runScenario } from './harness.ts';
 
-for (const model of ['kimi-k2.7-code', 'gpt-6-luna']) {
+for (const model of ['kimi-k3', 'gpt-6-luna']) {
   test(`Zen fake protocol: ${model}`, async (t) => {
     const result = await runScenario(t, {
       name: 'zen-main-turn',
@@ -14,7 +14,8 @@ for (const model of ['kimi-k2.7-code', 'gpt-6-luna']) {
         purpose: 'main-session',
         prompt: 'Reply exactly ok. Do not use tools.',
         maxTurns: 1,
-        maxBudgetUsd: 0.05,
+        // Claude prices unknown models itself; one Zen turn with cache writes estimates ~$0.07.
+        maxBudgetUsd: 0.15,
       },
     });
     if (!result) {

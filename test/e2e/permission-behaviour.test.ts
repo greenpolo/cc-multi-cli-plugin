@@ -101,8 +101,9 @@ for (const permissionMode of modes) {
         shell ? 'shell\n' : null,
         result.stdout,
       );
-      assert.match(result.stdout, /tool_result/);
       if (result.tier === 'hermetic') {
+        // Live Claude may rightly decline to attempt or delegate a write in plan mode.
+        assert.match(result.stdout, /tool_result/);
         const calls = result.requests.filter(
           ({ provider, path: url }) => provider === 'openai' && url.endsWith('/responses'),
         );

@@ -5,7 +5,7 @@ import { runScenario } from './harness.ts';
 // E2E covers default and alternate routes; unit tests own exhaustive catalogs.
 const catalogs = [
   { provider: 'openai' as const, models: ['gpt-6-astra', 'gpt-6-luna'] },
-  { provider: 'zen' as const, models: ['deepseek-v4-pro', 'kimi-k2.7-code'] },
+  { provider: 'zen' as const, models: ['deepseek-v4-pro', 'kimi-k3'] },
 ];
 
 for (const { provider, models } of catalogs) {
@@ -32,11 +32,7 @@ for (const { provider, models } of catalogs) {
   }
 }
 
-for (const model of [
-  'multi/openai/not-a-model',
-  'multi/openai/kimi-k2.7-code',
-  'multi/zen/gpt-6-astra',
-]) {
+for (const model of ['multi/openai/not-a-model', 'multi/openai/kimi-k3', 'multi/zen/gpt-6-astra']) {
   test(`model-routing: refuse unavailable picker ${model}`, async (t) => {
     const result = await runScenario(t, {
       name: 'model-routing-refused',
@@ -66,7 +62,7 @@ test('model-routing: unknown Agent type returns the available worker list withou
               tool: {
                 name: 'Agent',
                 input: {
-                  subagent_type: 'openai-kimi-k2.7-code',
+                  subagent_type: 'openai-kimi-k3',
                   description: 'Reject invalid worker',
                   prompt: 'Reply ok.',
                 },
