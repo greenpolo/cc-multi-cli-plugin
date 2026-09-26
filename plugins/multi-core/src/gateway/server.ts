@@ -887,13 +887,12 @@ function providerSignal(disconnected: AbortSignal, model: string | null, timeout
   ) {
     return disconnected;
   }
-  if (
-    (model?.startsWith('multi/openai/') || model?.startsWith('multi/zen/')) &&
-    timeoutMs === undefined
-  ) {
+  // Streamed OpenAI, Zen and Claude responses (including server-side advisor calls)
+  // can outlive any fixed wall-clock deadline; only an explicit limit bounds them.
+  if (timeoutMs === undefined) {
     return disconnected;
   }
-  return AbortSignal.any([disconnected, AbortSignal.timeout(timeoutMs ?? 180000)]);
+  return AbortSignal.any([disconnected, AbortSignal.timeout(timeoutMs)]);
 }
 
 async function readRequest(req: http.IncomingMessage, catalog?: AgentCatalog) {

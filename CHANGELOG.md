@@ -6,6 +6,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Stop cutting Claude responses at three minutes.** The gateway no longer applies
+  an implicit 180-second deadline to Claude passthrough, matching the OpenAI and Zen
+  routes. Long streamed Claude turns, including server-side advisor calls, previously
+  ended mid-response ("Server error mid-response"; `claude-multi -p` reported the
+  truncated text as success). Client disconnects and explicit gateway timeouts still
+  abort upstream requests.
+
 ## 0.2.1 — 2026-09-22
 
 - Explain missing native worker spawn acknowledgements with the unsupported
