@@ -1246,7 +1246,7 @@ test('oversized uploads receive HTTP 413 while the client is still streaming', a
   assert.equal(await response.text(), 'Request too large');
 });
 
-test('OpenAI has no implicit request deadline while explicit limits and Claude passthrough remain bounded', async (t) => {
+test('OpenAI and Claude passthrough have no implicit request deadline while explicit limits bound both', async (t) => {
   const durations: number[] = [];
   t.mock.method(AbortSignal, 'timeout', (ms: number) => {
     durations.push(ms);
@@ -1260,10 +1260,15 @@ test('OpenAI has no implicit request deadline while explicit limits and Claude p
   assert.equal((await ordinary(body)).status, 200);
   assert.deepEqual(durations, [], 'Astra must not inherit an absolute three-minute timer');
   assert.equal((await ordinary({ model: 'claude-sonnet-5', messages })).status, 200);
-  assert.deepEqual(durations, [180000]);
+  assert.deepEqual(
+    durations,
+    [],
+    'Claude passthrough must not cut long streams, such as advisor calls, at three minutes',
+  );
   const bounded = await gateway(t, upstream, { timeoutMs: 25 });
   assert.equal((await bounded(body)).status, 200);
-  assert.deepEqual(durations, [180000, 25]);
+  assert.equal((await bounded({ model: 'claude-sonnet-5', messages })).status, 200);
+  assert.deepEqual(durations, [25, 25]);
 });
 
 test('an explicit OpenAI timeout aborts upstream inference', async (t) => {
