@@ -66,7 +66,7 @@ function launch(
     process.execPath,
     [
       '--import',
-      fileURLToPath(new URL('./preload.ts', import.meta.url)),
+      new URL('./preload.ts', import.meta.url).href,
       fileURLToPath(new URL('../../plugins/multi-core/src/launcher.ts', import.meta.url)),
       '-p',
       '--input-format',
@@ -257,8 +257,14 @@ for (const provider of ['anthropic', 'openai'] as const) {
     );
     assert.equal(requests.length, 1, result.stderr + result.stdout);
     assert.equal(requests[0]?.aborted, true, result.stderr + result.stdout);
+    // An interrupt that lands mid-stream ends with is_error false but an aborted reason.
     assert.ok(
-      !result.events.some((event) => event.type === 'result' && !event.is_error),
+      !result.events.some(
+        (event) =>
+          event.type === 'result' &&
+          !event.is_error &&
+          !String(event.terminal_reason).startsWith('aborted'),
+      ),
       JSON.stringify(result.events.filter((e) => e.type === 'result' || e.type === 'assistant')),
     );
     assert.doesNotMatch(result.stdout, /Must not finish interrupted stream/);
