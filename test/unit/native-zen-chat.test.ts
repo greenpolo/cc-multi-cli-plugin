@@ -4,7 +4,7 @@ import type { Emit, StreamEventBody } from '../../plugins/multi-core/src/gateway
 import { toolName } from '../../plugins/multi-core/src/gateway/tools.ts';
 import { fromChat, toChat } from '../../plugins/multi-zen/src/chat.ts';
 
-const model = 'multi/zen/kimi-k2.7-code';
+const model = 'multi/zen/kimi-k3';
 const tools = [{ name: 'Read File', description: 'read', input_schema: { type: 'object' } }];
 const readAlias = toolName('Read File');
 
@@ -49,7 +49,7 @@ test('toChat keeps assistant call groups and only replays own model reasoning', 
   const own = {
     type: 'thinking',
     thinking: '',
-    signature: 'multi-zen-chat:kimi-k2.7-code:eyJyZWFzb25pbmciOiIifQ',
+    signature: 'multi-zen-chat:kimi-k3:eyJyZWFzb25pbmciOiIifQ',
   };
   const body = toChat(
     {
@@ -74,7 +74,7 @@ test('toChat keeps assistant call groups and only replays own model reasoning', 
         },
       ],
     },
-    'kimi-k2.7-code',
+    'kimi-k3',
   );
   assert.deepEqual(body.messages[1], {
     role: 'assistant',
@@ -96,7 +96,7 @@ test('toChat keeps assistant call groups and only replays own model reasoning', 
         { role: 'user', content: 'next' },
       ],
     },
-    'kimi-k2.7-code',
+    'kimi-k3',
   );
   assert.deepEqual(filtered.messages, [{ role: 'user', content: 'next' }]);
   assert.throws(
@@ -106,13 +106,11 @@ test('toChat keeps assistant call groups and only replays own model reasoning', 
           messages: [
             {
               role: 'assistant',
-              content: [
-                { type: 'thinking', signature: 'multi-zen-chat:kimi-k2.7-code:not-base64' },
-              ],
+              content: [{ type: 'thinking', signature: 'multi-zen-chat:kimi-k3:not-base64' }],
             },
           ],
         },
-        'kimi-k2.7-code',
+        'kimi-k3',
       ),
     /reasoning signature/,
   );
@@ -411,7 +409,7 @@ test('toChat preserves image bearing tool output as OpenAI content parts', () =>
         },
       ],
     },
-    'kimi-k2.7-code',
+    'kimi-k3',
   );
   assert.deepEqual(body.messages[0], {
     role: 'tool',

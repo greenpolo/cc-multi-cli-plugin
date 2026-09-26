@@ -178,17 +178,9 @@ test('Zen catalog exposes bounded protocols and only supported effort workers', 
       ['gpt-5.6-luna', 'responses'],
       ['gpt-5.6-terra', 'responses'],
       ['gpt-5.6-sol', 'responses'],
-      ['kimi-k2.7-code', 'chat'],
       ['glm-5.2', 'chat'],
       ['minimax-m2.7', 'chat'],
-      ['big-pickle', 'chat'],
-      ['mimo-v2.5-free', 'chat'],
-      ['ling-3.0-flash-fin-free', 'chat'],
-      ['nemotron-3-ultra-free', 'chat'],
-      ['nemotron-3.5-lightning-free', 'chat'],
-      ['muse-spark-1.3-contributor-free', 'responses'],
-      ['muse-spark-1.2-contributor-free', 'responses'],
-      ['deepseek-v4-pro', 'chat'],
+      ['deepseek-v4.1-flash', 'chat'],
       ['deepseek-v4-flash', 'chat'],
       ['kimi-k3', 'chat'],
       ['glm-5.3', 'chat'],
@@ -196,8 +188,8 @@ test('Zen catalog exposes bounded protocols and only supported effort workers', 
       ['muse-spark-1.3', 'responses'],
     ],
   );
-  assert.equal(zenModelOptions(['big-pickle'])[0].model, 'multi/zen/big-pickle');
-  assert.equal(ZEN_WORKERS['zen-big-pickle'].effort, undefined);
+  assert.equal(zenModelOptions(['glm-5.2'])[0].model, 'multi/zen/glm-5.2');
+  assert.equal(ZEN_WORKERS['zen-glm-5.2'].effort, undefined);
   assert.equal(ZEN_WORKERS['zen-gpt-5.6-luna'].effort, 'medium');
   assert.equal(ZEN_WORKERS['zen-gpt-5.6-luna-high'].effort, 'high');
   assert.equal(ZEN_WORKERS['zen-gpt-5.6-luna-impossible'], undefined);
@@ -206,19 +198,12 @@ test('Zen catalog exposes bounded protocols and only supported effort workers', 
 test('Zen picker allowlist preserves order and validates model IDs', () => {
   assert.deepEqual(
     zenPickerOptions(undefined).map((model) => model.id),
-    [
-      'deepseek-v4-pro',
-      'deepseek-v4-flash',
-      'kimi-k3',
-      'glm-5.3',
-      'glm-5.3-flash',
-      'muse-spark-1.3',
-    ],
+    ['deepseek-v4.1-flash', 'kimi-k3', 'glm-5.3', 'glm-5.3-flash', 'muse-spark-1.3'],
   );
   assert.deepEqual(zenPickerOptions(''), []);
   assert.deepEqual(
-    zenPickerOptions(' mimo-v2.5-free, big-pickle,mimo-v2.5-free ').map((model) => model.id),
-    ['mimo-v2.5-free', 'big-pickle'],
+    zenPickerOptions(' glm-5.2, minimax-m2.7,glm-5.2 ').map((model) => model.id),
+    ['glm-5.2', 'minimax-m2.7'],
   );
   assert.throws(() => zenPickerOptions('typo'), /MULTI_ZEN_MODELS: unknown Zen model/);
 });

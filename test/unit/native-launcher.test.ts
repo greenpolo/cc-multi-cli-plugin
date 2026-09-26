@@ -244,7 +244,7 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
   const pickerModels = result.settings.modelPicker.options.map(
     (option: { model: string }) => option.model,
   );
-  assert(pickerModels.includes('multi/zen/deepseek-v4-pro'));
+  assert(pickerModels.includes('multi/zen/deepseek-v4.1-flash'));
   assert(pickerModels.includes('multi/zen/muse-spark-1.3'));
   assert.equal(
     result.settings.modelPicker.options.find(
@@ -254,22 +254,22 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
   );
   assert.equal(
     result.settings.modelPicker.options.find(
-      (row: { model: string }) => row.model === 'multi/zen/deepseek-v4-pro',
+      (row: { model: string }) => row.model === 'multi/zen/deepseek-v4.1-flash',
     ).behavesAs,
     'claude-haiku-4-5',
   );
   assert.match(
     result.settings.modelPicker.options.find(
-      (row: { model: string }) => row.model === 'multi/zen/deepseek-v4-pro',
+      (row: { model: string }) => row.model === 'multi/zen/deepseek-v4.1-flash',
     ).description,
     /effort not applicable/,
   );
   assert(!pickerModels.includes('multi/zen/gpt-5.6-luna'));
-  assert(!pickerModels.includes('multi/zen/big-pickle'));
+  assert(!pickerModels.includes('multi/zen/minimax-m2.7'));
   assert(!result.agents.includes('zen-gpt-5.6-luna'));
   assert(!result.agents.includes('zen-gpt-5.6-luna-high'));
-  assert(!result.agents.includes('zen-big-pickle'));
-  assert(!result.agents.includes('zen-big-pickle-medium'));
+  assert(!result.agents.includes('zen-minimax-m2.7'));
+  assert(!result.agents.includes('zen-minimax-m2.7-medium'));
   assert.equal(result.zenKeyInChild, undefined);
   assert.equal(result.settings.permissions.disableAutoMode, 'disable');
   assert(result.args.includes('--dangerously-skip-permissions'));
@@ -305,39 +305,40 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
         CODEX_HOME: cwd,
         OPENCODE_API_KEY: 'zen-fixture-key',
         MULTI_MODELS: selection,
-        MULTI_ZEN_MODELS: 'big-pickle,glm-5.2',
+        MULTI_ZEN_MODELS: 'minimax-m2.7,glm-5.2',
       },
     });
   const filtered = JSON.parse(
-    (await launchFiltered(' multi/zen/big-pickle, multi/zen/glm-5.2,multi/zen/big-pickle ')).stdout,
+    (await launchFiltered(' multi/zen/minimax-m2.7, multi/zen/glm-5.2,multi/zen/minimax-m2.7 '))
+      .stdout,
   );
   assert.deepEqual(
     filtered.settings.modelPicker.options.map((option: { model: string }) => option.model),
-    ['multi/zen/big-pickle', 'multi/zen/glm-5.2'],
+    ['multi/zen/minimax-m2.7', 'multi/zen/glm-5.2'],
   );
-  assert.deepEqual(filtered.models, ['multi/zen/big-pickle']);
-  assert.deepEqual(filtered.agents.sort(), ['zen-big-pickle', 'zen-glm-5.2']);
-  const outsideDefaults = JSON.parse((await launchFiltered('multi/zen/kimi-k2.7-code')).stdout);
+  assert.deepEqual(filtered.models, ['multi/zen/minimax-m2.7']);
+  assert.deepEqual(filtered.agents.sort(), ['zen-glm-5.2', 'zen-minimax-m2.7']);
+  const outsideDefaults = JSON.parse((await launchFiltered('multi/zen/deepseek-v4-flash')).stdout);
   assert.deepEqual(
     outsideDefaults.settings.modelPicker.options.map((option: { model: string }) => option.model),
-    ['multi/zen/kimi-k2.7-code'],
+    ['multi/zen/deepseek-v4-flash'],
   );
-  assert.deepEqual(outsideDefaults.agents, ['zen-kimi-k2.7-code']);
+  assert.deepEqual(outsideDefaults.agents, ['zen-deepseek-v4-flash']);
   const all = JSON.parse((await launchFiltered('all')).stdout);
   assert(all.settings.modelPicker.options.length >= ZEN_MODELS.length);
-  assert(all.agents.includes('zen-kimi-k2.7-code'));
-  const plus = JSON.parse((await launchFiltered('+multi/zen/kimi-k2.7-code')).stdout);
+  assert(all.agents.includes('zen-deepseek-v4-flash'));
+  const plus = JSON.parse((await launchFiltered('+multi/zen/deepseek-v4-flash')).stdout);
   assert(
     plus.settings.modelPicker.options.some(
-      (option: { model: string }) => option.model === 'multi/zen/kimi-k2.7-code',
+      (option: { model: string }) => option.model === 'multi/zen/deepseek-v4-flash',
     ),
   );
   assert(
     plus.settings.modelPicker.options.some(
-      (option: { model: string }) => option.model === 'multi/zen/big-pickle',
+      (option: { model: string }) => option.model === 'multi/zen/minimax-m2.7',
     ),
   );
-  assert(plus.agents.includes('zen-kimi-k2.7-code'));
+  assert(plus.agents.includes('zen-deepseek-v4-flash'));
   const hidden = JSON.parse(
     (await launchFiltered('', ['--model', 'multi/zen/gpt-5.6-luna'])).stdout,
   );
@@ -385,15 +386,15 @@ result(JSON.stringify({settings,models:args.filter(x=>x.startsWith('multi/')),ze
       XDG_DATA_HOME: path.join(cwd, 'data'),
       CLAUDE_CONFIG_DIR: path.join(cwd, 'claude'),
       CODEX_HOME: cwd,
-      MULTI_ZEN_MODELS: 'mimo-v2.5-free,big-pickle',
+      MULTI_ZEN_MODELS: 'glm-5.2,minimax-m2.7',
     },
   });
   const result = JSON.parse(stdout);
-  assert.deepEqual(result.models, ['multi/zen/mimo-v2.5-free']);
+  assert.deepEqual(result.models, ['multi/zen/glm-5.2']);
   assert.equal(result.zenKeyInChild, undefined);
   assert.deepEqual(
     result.settings.modelPicker.options.map((option: { model: string }) => option.model),
-    ['multi/zen/mimo-v2.5-free', 'multi/zen/big-pickle'],
+    ['multi/zen/glm-5.2', 'multi/zen/minimax-m2.7'],
   );
 });
 
@@ -605,7 +606,7 @@ test('launcher registers only Cursor picker workers and keeps the representative
   assert.equal(Object.keys(agents).filter((name) => name.startsWith('cursor-')).length, 3);
   assert(!Object.keys(agents).some((name) => name.includes('catalog-only')));
   assert(definitionBytes < 30000, `representative worker JSON was ${definitionBytes} bytes`);
-  assert.equal(ZEN_MODELS.length, 21);
+  assert.equal(ZEN_MODELS.length, 13);
 });
 
 test('worker registration follows selected models and retains their effort aliases', () => {
@@ -709,5 +710,5 @@ test('the Zen model listing is available without authentication', async () => {
     },
   });
   const models = JSON.parse(stdout);
-  assert(models.some((model: { id: string }) => model.id === 'big-pickle'));
+  assert(models.some((model: { id: string }) => model.id === 'glm-5.2'));
 });

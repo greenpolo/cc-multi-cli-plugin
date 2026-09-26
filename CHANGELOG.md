@@ -12,6 +12,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   ended mid-response ("Server error mid-response"; `claude-multi -p` reported the
   truncated text as success). Client disconnects and explicit gateway timeouts still
   abort upstream requests.
+- **Drop Zen models that no longer serve requests.** `deepseek-v4-pro` (the previous
+  Zen default) and `kimi-k2.7-code` are still listed by Zen but answer 404, and the
+  free-tier models (`big-pickle`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`,
+  `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, and both
+  `muse-spark-*-contributor-free`) refuse use outside OpenCode. DeepSeek V4.1 Flash
+  replaces DeepSeek V4 Pro as the first Zen default; every remaining catalog entry
+  served a live request on 2026-09-26.
 
 ## 0.2.1 — 2026-09-22
 

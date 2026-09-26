@@ -57,11 +57,11 @@ that name; re-run with `--command claude-multi` to restore the default. Setting
 `MULTI_MODELS` in the environment overrides the saved model selection for one
 launch. Model IDs are listed in each provider's documentation.
 
-The default picker shows four OpenAI, three Cursor, and six Zen models when those
+The default picker shows four OpenAI, three Cursor, and five Zen models when those
 providers are connected. A model absent from these defaults can be selected with
 its full ID using `--models`; the full connected catalog remains available for
 explicit selection. Use `--cursor-models` or `--zen-models` to inspect IDs. To add
-one model, run `/multi-core:setup --models +multi/zen/kimi-k2.7-code`. With no
+one model, run `/multi-core:setup --models +multi/zen/glm-5.2`. With no
 saved selection, this extends the curated defaults. Re-running setup without
 `--models` preserves your selection;
 existing installations with no saved selection keep the curated defaults. The
