@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { registeredWorker } from './fixtures/provider-wire/worker.ts';
 import { runScenario } from './harness.ts';
 import type { NativeScript } from './types.ts';
 
@@ -29,10 +30,10 @@ const grok: NativeScript = (request) => ({
           .join('\n')}\n`,
 });
 
-for (const [provider, id, worker] of [
-  ['antigravity', 'e2e-model', 'antigravity-e2e-model'],
-  ['grok', 'grok-e2e', 'grok-e2e'],
-  ['cursor', 'e2e-cursor', 'cursor-e2e-cursor'],
+for (const [provider, id] of [
+  ['antigravity', 'e2e-model'],
+  ['grok', 'grok-e2e'],
+  ['cursor', 'e2e-cursor'],
 ] as const) {
   for (const agent of [false, true]) {
     test(`model-routing: ${provider} ${agent ? 'Agent' : 'picker'} advertised fake catalog`, async (t) => {
@@ -45,13 +46,13 @@ for (const [provider, id, worker] of [
         native: { agy, grok },
         cursorModule: fileURLToPath(new URL('./fixtures/provider-wire/cursor.ts', import.meta.url)),
         upstream: {
-          anthropic: (_request, index) =>
+          anthropic: (request, index) =>
             index === 0
               ? {
                   tool: {
                     name: 'Agent',
                     input: {
-                      subagent_type: worker,
+                      ...registeredWorker(request, provider, id),
                       description: 'Check native route',
                       prompt: 'Reply NATIVE_ROUTED_ONCE without tools.',
                     },

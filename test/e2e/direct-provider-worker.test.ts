@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
+import { registeredWorker } from './fixtures/provider-wire/worker.ts';
 import { runScenario } from './harness.ts';
 
 for (const provider of ['openai', 'zen'] as const) {
-  const worker = provider === 'openai' ? 'openai-native' : 'zen-kimi-k2.7-code';
+  const model = provider === 'openai' ? 'gpt-6-astra' : 'kimi-k2.7-code';
   test(`${provider}-worker: Agent dispatch and saved credential isolation`, async (t) => {
     const key = 'e2e-saved-zen-secret';
     const result = await runScenario(t, {
@@ -28,13 +29,13 @@ for (const provider of ['openai', 'zen'] as const) {
       live: {
         providers: ['anthropic', provider],
         purpose: 'subagent',
-        prompt: `Use Agent to spawn exactly one ${worker} worker. Ask it to reply WORKER_OK without tools. Then reply WORKER_OK. Do nothing else.`,
+        prompt: `Use the advertised agent list to spawn exactly one ${provider} worker running ${model}. For a per-provider worker, pass model multi/${provider}/${model}; for a per-model worker, select its matching registration. Ask it to reply WORKER_OK without tools. Then reply WORKER_OK. Do nothing else.`,
         maxTurns: 3,
         maxBudgetUsd: 0.2,
       },
       upstream: {
         [provider]: () => ({ text: 'WORKER_OK' }),
-        anthropic: (_request, index) => {
+        anthropic: (request, index) => {
           if (index === 0) {
             return {
               tool: {
@@ -52,7 +53,7 @@ for (const provider of ['openai', 'zen'] as const) {
                 name: 'Agent',
                 id: 'toolu_worker',
                 input: {
-                  subagent_type: worker,
+                  ...registeredWorker(request, provider, model),
                   description: 'Bounded provider worker',
                   prompt: 'Reply WORKER_OK. No tools.',
                 },
@@ -71,7 +72,7 @@ for (const provider of ['openai', 'zen'] as const) {
     assert.match(result.stdout, /WORKER_OK/);
     assert.match(result.stdout, /"name":"Agent"/);
     if (result.tier === 'live') {
-      assert.match(result.stdout, new RegExp(worker));
+      assert.match(result.stdout, new RegExp(`(?:multi-${provider}|${provider}-)`));
       const stats = result.transcript.find((event) => event.type === 'result')?.subagent_stats;
       assert.ok(stats && typeof stats === 'object' && 'completed' in stats);
       assert.equal(
@@ -85,6 +86,7 @@ for (const provider of ['openai', 'zen'] as const) {
       (request) => request.provider === provider && !request.path.includes('/models'),
     );
     assert.equal(calls.length, 1, result.stdout);
+    assert.equal(calls[0]?.body.model, model);
     assert.equal(
       calls[0]?.headers.authorization,
       `Bearer ${provider === 'zen' ? key : 'e2e-dummy-openai'}`,
