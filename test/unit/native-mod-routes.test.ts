@@ -106,7 +106,7 @@ test('permission observations neither prepare settings nor grant harness admissi
 
 test('Claude-loop worker route does not require a settings-policy generation', async (t) => {
   const modes = new PermissionModes(async () => ({
-    worker: { model: 'multi/zen/deepseek-v4-pro' },
+    worker: { model: 'multi/zen/deepseek-v4.1-flash' },
   }));
   await modes.precompute('/workspace');
   modes.recordHostSession('session', {
@@ -120,7 +120,7 @@ test('Claude-loop worker route does not require a settings-policy generation', a
     subagentType: 'worker',
     cwd: '/workspace',
     permissionMode: 'default',
-    model: 'multi/zen/deepseek-v4-pro',
+    model: 'multi/zen/deepseek-v4.1-flash',
     parentModel: 'multi/openai/gpt-6-luna',
   });
   assert.equal(result.status, 200);

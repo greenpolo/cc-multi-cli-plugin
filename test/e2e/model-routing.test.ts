@@ -5,7 +5,7 @@ import { runScenario } from './harness.ts';
 // E2E covers default and alternate routes; unit tests own exhaustive catalogs.
 const catalogs = [
   { provider: 'openai' as const, models: ['gpt-6-astra', 'gpt-6-luna'] },
-  { provider: 'zen' as const, models: ['deepseek-v4-pro', 'kimi-k3'] },
+  { provider: 'zen' as const, models: ['deepseek-v4.1-flash', 'kimi-k3'] },
 ];
 
 for (const { provider, models } of catalogs) {

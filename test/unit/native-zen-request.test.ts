@@ -7,21 +7,8 @@ import { toChat } from '../../plugins/multi-zen/src/chat.ts';
 import { zenRequest } from '../../plugins/multi-zen/src/request.ts';
 
 const responsesModel = 'multi/zen/gpt-5.6-luna';
-const chatModel = 'multi/zen/kimi-k2.7-code';
+const chatModel = 'multi/zen/kimi-k3';
 const textMessage = { role: 'user' as const, content: 'hello' };
-
-test('free Muse models use isolated Responses requests and only supported effort', () => {
-  const model = 'multi/zen/muse-spark-1.3-contributor-free';
-  const translated = zenRequest({ ...request(model), output_config: { effort: 'high' } }, 'cache');
-  assert.equal(translated.endpoint, 'responses');
-  assert.equal(translated.body.model, 'muse-spark-1.3-contributor-free');
-  assert.equal(responsesBody(translated).reasoning.effort, 'high');
-  assert.equal(translated.signaturePrefix, 'multi-zen-responses:muse-spark-1.3-contributor-free:');
-  assert.throws(
-    () => zenRequest({ ...request(model), output_config: { effort: 'max' } }, 'cache'),
-    /does not support effort max/,
-  );
-});
 
 function request(model = responsesModel): MessagesRequest {
   return { model, max_tokens: 100, system: 'stable system', messages: [textMessage] };
@@ -108,7 +95,8 @@ test('Zen request enforces capabilities, output limits, and protocol-specific ef
     /does not support images/,
   );
   assert.throws(
-    () => zenRequest({ ...request('multi/zen/big-pickle'), messages: [pdfMessage()] }, 'cache-key'),
+    () =>
+      zenRequest({ ...request('multi/zen/minimax-m2.7'), messages: [pdfMessage()] }, 'cache-key'),
     /does not support PDF/,
   );
   assert.doesNotThrow(() => zenRequest({ ...request(), messages: [pdfMessage()] }, 'cache-key'));
@@ -133,7 +121,7 @@ test('Zen request enforces capabilities, output limits, and protocol-specific ef
   assert.equal(chat.endpoint, 'chat/completions');
   assert.equal('reasoning_effort' in chat.body, false);
   assert.equal('effort' in chat.body, false);
-  assert.equal(toChat(request(chatModel), 'kimi-k2.7-code').messages[1]?.role, 'user');
+  assert.equal(toChat(request(chatModel), 'kimi-k3').messages[1]?.role, 'user');
 });
 
 test('Zen Responses prompt prefixes are stable when later turns append', () => {

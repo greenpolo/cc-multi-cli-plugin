@@ -129,6 +129,33 @@ function agy(reported: boolean): NativeScript {
   };
 }
 
+// Gateway route logs say whether the usage they carry came from the provider or an estimate.
+function usageSources(stderr: string, route: string) {
+  return stderr
+    .split('\n')
+    .flatMap((line) => {
+      const json = line.slice(line.indexOf('{'));
+      try {
+        return [JSON.parse(json) as JsonObject];
+      } catch {
+        return [];
+      }
+    })
+    .filter((event) => event.route === route && event.usageMetadata)
+    .map((event) => (event.usageMetadata as JsonObject).source);
+}
+
+function assertLiveNativeUsage(entry: ModelUsage, stderr: string, provider: string) {
+  assert.ok(entry.inputTokens + entry.cacheReadInputTokens > 1000, JSON.stringify(entry));
+  assert.ok(entry.outputTokens > 0, JSON.stringify(entry));
+  const sources = usageSources(stderr, provider);
+  assert.ok(sources.length > 0, stderr);
+  assert.ok(
+    sources.every((source) => source === 'provider'),
+    sources.join(),
+  );
+}
+
 for (const provider of ['cursor', 'grok', 'antigravity'] as const) {
   for (const reported of [true, false]) {
     test(`token-accounting: ${provider} worker ${reported ? 'reports native usage' : 'falls back to an estimate'}`, async (t) => {
@@ -138,6 +165,17 @@ for (const provider of ['cursor', 'grok', 'antigravity'] as const) {
         enabledProviders: [provider],
         env: { MULTI_CURSOR_EXTRA_MODELS: 'e2e-model' },
         permissionMode: 'bypassPermissions',
+        ...(reported
+          ? {
+              live: {
+                providers: ['anthropic', provider],
+                purpose: 'subagent',
+                prompt: `Spawn one ${provider} native worker to reply ok without tools. Report its reply. Do nothing else.`,
+                maxTurns: 3,
+                maxBudgetUsd: 0.15,
+              },
+            }
+          : {}),
         cursorModule:
           provider === 'cursor'
             ? fileURLToPath(new URL('./fixtures/native-lifecycle/cursor.ts', import.meta.url))
@@ -183,6 +221,10 @@ for (const provider of ['cursor', 'grok', 'antigravity'] as const) {
       t.diagnostic(`${provider}: ${JSON.stringify(entry)}`);
       // Gemini rows carry the [1m] tag; every other native row keeps Claude's default window.
       assert.equal(entry.contextWindow, provider === 'antigravity' ? 1_000_000 : 200_000);
+      if (result.tier === 'live') {
+        assertLiveNativeUsage(entry, result.stderr, provider);
+        return;
+      }
       if (reported) {
         assert.equal(entry.inputTokens, usage.input);
         assert.equal(entry.outputTokens, usage.output);
@@ -202,37 +244,95 @@ for (const provider of ['cursor', 'grok', 'antigravity'] as const) {
 }
 
 function inference(requests: UpstreamRequest[]) {
-  return requests.filter((request) => request.path.endsWith('/responses'));
+  return requests.filter(
+    (request) => request.path.endsWith('/responses') || request.path.endsWith('/completions'),
+  );
 }
 
-test('token-accounting: /context gauge follows reported usage; count_tokens stays local', async (t) => {
-  const session = await sessionRoot(t, {
-    name: 'token-accounting-gauge',
-    model: 'multi/openai/gpt-6-astra',
-    enabledProviders: ['openai'],
-    upstream: {
-      openai: () => ({ text: 'Large turn.', usage: { input: 120000, output: 50 } }),
-    },
+function thousands(value: string) {
+  return Number(value.replace(/k$/, '')) * (value.endsWith('k') ? 1000 : 1);
+}
+
+function readGauge(report: string) {
+  const gauge = report.match(/\*\*Tokens:\*\* ([\d.]+k?) \/ (\d+k)/);
+  assert.ok(gauge?.[1] && gauge[2], report);
+  const categories = report.split('### Estimated usage by category')[1]?.split('###')[0] ?? '';
+  const estimate = [...categories.matchAll(/^\| ([^|]+?) \| ([\d.]+k?) \|/gm)]
+    .filter(([, name]) => name !== 'Free space' && name !== 'Autocompact buffer')
+    .reduce((sum, [, , tokens]) => sum + thousands(tokens ?? '0'), 0);
+  assert.ok(estimate > 0, report);
+  return { report, total: thousands(gauge[1]), window: thousands(gauge[2]), estimate };
+}
+
+for (const [provider, model] of [
+  ['anthropic', 'claude-sonnet-4-6'],
+  ['openai', 'multi/openai/gpt-6-astra'],
+  ['zen', 'multi/zen/kimi-k3'],
+] as const) {
+  test(`token-accounting: ${provider} usage feeds the /context gauge`, async (t) => {
+    const session = await sessionRoot(t, {
+      name: 'token-accounting-gauge',
+      model,
+      enabledProviders: provider === 'anthropic' ? [] : [provider],
+      live: {
+        providers: [provider],
+        purpose: 'main-session',
+        prompt: 'Reply exactly ok. Do not use tools.',
+        maxTurns: 2,
+        maxBudgetUsd: 0.15,
+      },
+      upstream: {
+        [provider]: () => ({ text: 'ok', usage: { input: 120000, output: 50 } }),
+      },
+    });
+    if (!session) {
+      return;
+    }
+    let turns = 0;
+    const child = launch(t, session, () => (++turns === 1 ? '/context' : undefined));
+    child.send('Reply exactly ok. Do not use tools.');
+    const result = await child.done;
+    assert.equal(result.code, 0, result.stderr + result.stdout);
+    const [turn, context] = result.events.filter((event) => event.type === 'result');
+    assert.ok(turn && context, result.stdout);
+    const entry = (turn.modelUsage as Record<string, ModelUsage>)[model];
+    assert.ok(entry, JSON.stringify(turn.modelUsage));
+    const reported =
+      entry.inputTokens + entry.cacheReadInputTokens + entry.cacheCreationInputTokens;
+    const gauge = readGauge(String(context.result));
+    const fromUsage = reported + entry.outputTokens;
+    t.diagnostic(
+      `${provider}: reported ${fromUsage}, estimated ${gauge.estimate} (${(gauge.estimate / fromUsage).toFixed(2)}x), gauge ${gauge.total} / ${gauge.window}`,
+    );
+    assert.equal(gauge.window, entry.contextWindow);
+    // Claude shows the larger of reported usage and its per-category estimate, which
+    // for non-Claude routes comes from the gateway's local count_tokens. Each figure
+    // is printed to one decimal place of thousands.
+    assert.ok(Math.abs(gauge.total - Math.max(fromUsage, gauge.estimate)) <= 400, gauge.report);
+    if (session.live) {
+      // Claude Code's own system prompt and tool schemas alone exceed this.
+      assert.ok(reported > 5000, JSON.stringify(entry));
+      if (provider !== 'anthropic') {
+        const sources = usageSources(result.stderr, provider);
+        assert.ok(sources.length > 0, result.stderr);
+        assert.ok(
+          sources.every((source) => source === 'provider'),
+          sources.join(),
+        );
+      }
+      return;
+    }
+    assert.equal(reported, 120000);
+    assert.deepEqual(session.upstream.errors, []);
+    if (provider !== 'anthropic') {
+      // The gateway answers non-Claude count_tokens itself with a local estimate.
+      assert.ok(
+        !session.upstream.requests.some((request) => request.path.includes('count_tokens')),
+      );
+      assert.equal(inference(session.upstream.requests).length, 1);
+    }
   });
-  if (!session) {
-    return;
-  }
-  let turns = 0;
-  const child = launch(t, session, () => (++turns === 1 ? '/context' : undefined));
-  child.send('First turn.');
-  const result = await child.done;
-  assert.equal(result.code, 0, result.stderr + result.stdout);
-  const report = String(finalResult(result.events).result);
-  const gauge = report.match(/\*\*Tokens:\*\* ([\d.]+k) \/ (\d+k)/);
-  assert.ok(gauge, report);
-  t.diagnostic(`gauge ${gauge[1]} / ${gauge[2]}`);
-  assert.equal(gauge[1], '120k');
-  assert.equal(gauge[2], '200k');
-  // The gateway answers non-Claude count_tokens itself with a local estimate.
-  assert.ok(!session.upstream.requests.some((request) => request.path.includes('count_tokens')));
-  assert.equal(inference(session.upstream.requests).length, 1);
-  assert.deepEqual(session.upstream.errors, []);
-});
+}
 
 test('token-accounting: reported usage near the window triggers auto-compaction', async (t) => {
   const session = await sessionRoot(t, {

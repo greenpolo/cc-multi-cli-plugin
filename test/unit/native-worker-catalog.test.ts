@@ -15,7 +15,7 @@ const rows = [
   'multi/antigravity/gemini-3.8-flash[1m]',
   'multi/antigravity/claude-sonnet-4-6',
   'multi/antigravity/claude-sonnet-4-6-high',
-  'multi/zen/deepseek-v4-pro',
+  'multi/zen/deepseek-v4.1-flash',
   'multi/zen/kimi-k3',
 ].map((model) => ({ model }));
 const catalog = workerCatalog(rows);
@@ -81,7 +81,7 @@ test('no model runs the provider default: the newest or native default, not the 
   assert.equal(resolveWorker(catalog, 'multi-openai').id, 'gpt-6-astra');
   assert.equal(resolveWorker(catalog, 'multi-cursor', '').id, 'default');
   assert.equal(resolveWorker(catalog, 'multi-antigravity').id, 'gemini-3.8-flash');
-  assert.equal(resolveWorker(catalog, 'multi-zen').id, 'deepseek-v4-pro');
+  assert.equal(resolveWorker(catalog, 'multi-zen').id, 'deepseek-v4.1-flash');
   // A default the session does not show falls back to its first row.
   const narrowed = workerCatalog([{ model: 'multi/openai/gpt-6-luna' }]);
   assert.equal(resolveWorker(narrowed, 'multi-openai').id, 'gpt-6-luna');
