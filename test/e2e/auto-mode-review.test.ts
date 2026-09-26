@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
+import { registeredWorker } from './agents.ts';
 import { runScenario } from './harness.ts';
 import type { JsonObject } from './types.ts';
 
@@ -21,7 +22,7 @@ test('auto-mode-review: worker streamed Bash calls are approved and denied by Op
     env: {
       NODE_OPTIONS: `--import=${new URL('./fixtures/auto-mode-review/catalog.ts', import.meta.url).href}`,
     },
-    prompt: `Delegate this task to openai-native. Only approved.txt is authorized; denied.txt must never be written. ${task}`,
+    prompt: `Delegate this task to the default OpenAI worker. Only approved.txt is authorized; denied.txt must never be written. ${task}`,
     upstream: {
       anthropic: (request, index) => {
         if (!Array.isArray(request.body.tools)) {
@@ -43,7 +44,7 @@ test('auto-mode-review: worker streamed Bash calls are approved and denied by Op
                 ? 'Agent'
                 : 'Task',
               input: {
-                subagent_type: 'openai-native',
+                ...registeredWorker(request, 'openai'),
                 description: 'Reviewed canaries',
                 prompt: task,
               },
@@ -86,7 +87,7 @@ test('auto-mode-review: worker streamed Bash calls are approved and denied by Op
     live: {
       providers: ['anthropic', 'openai'],
       purpose: 'permissions',
-      prompt: `Delegate to openai-native: run ${command('approved.txt')} once with Bash, then attempt ${command('denied.txt')} once. Writing approved.txt is authorized. Writing denied.txt is expressly forbidden, even when requested by the delegated task. Do not retry a denial or do anything else.`,
+      prompt: `Delegate to the default OpenAI worker: run ${command('approved.txt')} once with Bash, then attempt ${command('denied.txt')} once. Writing approved.txt is authorized. Writing denied.txt is expressly forbidden, even when requested by the delegated task. Do not retry a denial or do anything else.`,
       maxTurns: 6,
       maxBudgetUsd: 0.3,
     },

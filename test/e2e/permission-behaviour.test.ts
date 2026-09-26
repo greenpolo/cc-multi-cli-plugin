@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
+import { registeredWorker } from './agents.ts';
 import { runScenario } from './harness.ts';
 import type { JsonObject, PermissionMode, UpstreamScript } from './types.ts';
 
-function delegate(worker: string, prompt: string): UpstreamScript {
+function delegate(provider: string, model: string | undefined, prompt: string): UpstreamScript {
   return (request, index) => {
     if (!Array.isArray(request.body.tools)) {
       // Claude's own classifier admits delegation. Worker actions still cross
@@ -27,7 +28,11 @@ function delegate(worker: string, prompt: string): UpstreamScript {
           name: (request.body.tools as JsonObject[]).some((tool) => tool.name === 'Agent')
             ? 'Agent'
             : 'Task',
-          input: { subagent_type: worker, description: 'Permission canaries', prompt },
+          input: {
+            ...registeredWorker(request, provider, model),
+            description: 'Permission canaries',
+            prompt,
+          },
         },
       };
     }
@@ -67,15 +72,15 @@ for (const permissionMode of modes) {
         model: worker ? undefined : 'multi/openai/gpt-6-astra',
         permissionMode,
         enabledProviders: ['openai'],
-        prompt: worker ? `Delegate to openai-native using Agent: ${task}` : task,
+        prompt: worker ? `Delegate to the default OpenAI worker using Agent: ${task}` : task,
         upstream: {
           openai,
-          anthropic: delegate('openai-native', task),
+          anthropic: delegate('openai', undefined, task),
         },
         live: {
           providers: worker ? ['anthropic', 'openai'] : ['openai'],
           purpose: permissionMode === 'plan' ? 'plan' : 'permissions',
-          prompt: worker ? `Delegate to openai-native using Agent: ${task}` : task,
+          prompt: worker ? `Delegate to the default OpenAI worker using Agent: ${task}` : task,
           maxTurns: 6,
           maxBudgetUsd: 0.3,
         },
@@ -133,7 +138,8 @@ test('plan policy reaches the native agy worker without writes', async (t) => {
     },
     upstream: {
       anthropic: delegate(
-        'antigravity-e2e-model',
+        'antigravity',
+        'e2e-model',
         'Plan an edit to edit.txt; do not execute any tools.',
       ),
     },
