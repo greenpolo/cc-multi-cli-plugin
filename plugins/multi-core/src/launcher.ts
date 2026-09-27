@@ -1186,15 +1186,6 @@ function gatewayEnvironment(port: number, token: string, anthropic: boolean) {
     // A custom base URL disables Claude's on-demand tool loading unless opted in.
     // We forward Claude tool references; preserve an explicit user preference.
     ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH ?? 'auto',
-    // A custom base URL also costs Claude models their native 1M window and other
-    // first-party behaviour. The gateway forwards Claude traffic unchanged to
-    // api.anthropic.com, so claim first party when the user is signed in there.
-    ...(anthropic
-      ? {
-          _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL:
-            process.env._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL ?? '1',
-        }
-      : {}),
     MULTI_GATEWAY_TOKEN: token,
     CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1',
     MULTI_MOD_GATEWAY_URL: `http://127.0.0.1:${port}`,

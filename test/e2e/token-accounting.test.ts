@@ -335,8 +335,10 @@ for (const [provider, model] of [
   });
 }
 
-// Behind the gateway's base URL, Claude would otherwise offer Opus 1M only on request.
-test('token-accounting: default Opus keeps its native 1M window', async (t) => {
+// Behind the gateway's base URL, Claude offers Opus 1M only on request.
+test('token-accounting: default Opus keeps its native 1M window', {
+  todo: 'Claude grants the native 1M default only to a first-party base URL; _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL also turns on the server-side auto-mode classifier, which translated routes cannot carry',
+}, async (t) => {
   const session = await sessionRoot(t, {
     name: 'token-accounting-opus-window',
     model: 'opus',
