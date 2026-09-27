@@ -83,8 +83,10 @@ workers.
 Every run selects its native workspace explicitly with `--add-dir`; subprocess
 cwd alone does not select it. Auto, acceptEdits, and Bypass use the native CLI
 without a reviewer, while the hook enforces explicit Claude restrictions. Plan
-also passes `--mode plan` and denies shell, write, edit, notebook-edit, and
-delegation tools. Unsupported modes, tool restrictions, and policy controls fail
+also passes `--mode plan`, which only steers agy's model: with permissions
+skipped it still runs shell and write tools. The hook therefore allows only
+native read, search, and web lookup tools in Plan and denies every other tool,
+including ones newer agy releases add. Compaction turns allow no tools. Unsupported modes, tool restrictions, and policy controls fail
 explicitly.
 
 The hook command uses a POSIX shell guard on Linux, macOS, and other Unix hosts.

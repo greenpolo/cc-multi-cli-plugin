@@ -105,6 +105,20 @@ function deniedForRun(policy: AntigravityPolicy, context: PermissionContext) {
   return context.compaction === undefined ? policy.denied : antigravityCompactionDenyList();
 }
 
+function nativeEnvironment(denied: string[], allowed: string[] | undefined) {
+  const env: NodeJS.ProcessEnv = { ...process.env, MULTI_ANTIGRAVITY_DENY: JSON.stringify(denied) };
+  delete env.MULTI_ANTIGRAVITY_ALLOW;
+  if (allowed) {
+    env.MULTI_ANTIGRAVITY_ALLOW = JSON.stringify(allowed);
+  }
+  return env;
+}
+
+/** A compaction turn is tool-free: nothing is allowed, whatever the catalog adds. */
+function allowedForRun(policy: AntigravityPolicy, context: PermissionContext) {
+  return context.compaction === undefined ? policy.allowed : [];
+}
+
 function noticeForRun(policy: AntigravityPolicy, context: PermissionContext) {
   return context.compaction === undefined
     ? policy.notice
@@ -309,9 +323,15 @@ export class AntigravityHarness {
       }
       const policy = await this.checkPermissions(cwd, context);
       const nativeDenied = deniedForRun(policy, context);
+      const nativeAllowed = allowedForRun(policy, context);
       const notice = noticeForRun(policy, context);
       const response = new HarnessResponse(body.model ?? model.model, prepared.inputTokens, emit);
-      const policyIdentity = digest({ denied: nativeDenied, plan: policy.plan, notice });
+      const policyIdentity = digest({
+        denied: nativeDenied,
+        allowed: nativeAllowed ?? null,
+        plan: policy.plan,
+        notice,
+      });
       writeNotices(response, {
         tag: TAG,
         interrupted: session.saved.interrupted,
@@ -338,7 +358,7 @@ export class AntigravityHarness {
           effort: modelEffort(model),
           ...(session.saved.conversationId ? { conversation: session.saved.conversationId } : {}),
           ...(policy.plan ? { mode: 'plan' as const } : {}),
-          env: { ...process.env, MULTI_ANTIGRAVITY_DENY: JSON.stringify(nativeDenied) },
+          env: nativeEnvironment(nativeDenied, nativeAllowed),
           signal,
           onEvent: (event) =>
             this.eventText(

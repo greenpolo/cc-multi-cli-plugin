@@ -6,6 +6,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Allow only read-only Antigravity tools in plan mode.** agy's own `--mode plan`
+  only steers its model: with permissions skipped it still ran shell and file-write
+  tools, and Multi's plan deny list missed side-effecting native tools such as
+  browser JavaScript, `schedule`, and `send_message`. In plan mode Multi's hook now
+  allows only native read, search, and web lookup tools and denies everything else,
+  including tools newer agy releases add. Compaction turns allow no tools.
 - **Enforce plan mode in OpenAI automatic review.** When you enter plan mode from
   auto mode, Claude Code asks its auto-mode classifier about each Bash call, and for
   OpenAI sessions and workers Multi answers with the OpenAI reviewer. That reviewer

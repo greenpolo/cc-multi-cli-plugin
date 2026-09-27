@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import {
+  antigravityPermissionPolicy,
+  antigravityToolDecision,
+} from '../../plugins/multi-antigravity/src/permissions.ts';
 
 interface HookResult {
   code: number | null;
@@ -74,4 +78,32 @@ test('native Antigravity hook denies excluded and malformed calls', async () => 
     decision: 'deny',
     reason: 'Antigravity gateway permission context is invalid.',
   });
+});
+
+test('native Antigravity hook denies every tool outside a plan allowlist', () => {
+  const deny = JSON.stringify(['run_command']);
+  const allow = JSON.stringify(['view_file']);
+  const decide = (name: string) =>
+    antigravityToolDecision({ toolCall: { name, args: {} } }, deny, allow)?.decision;
+  assert.equal(decide('view_file'), undefined);
+  for (const tool of ['run_command', 'execute_browser_javascript', 'schedule', 'future_tool']) {
+    assert.equal(decide(tool), 'deny', tool);
+  }
+  assert.equal(
+    antigravityToolDecision({ toolCall: { name: 'view_file' } }, deny, '{"not":"a list"}')
+      ?.decision,
+    'deny',
+  );
+});
+
+test('plan policy allows only read-only native tools that Claude rules keep', () => {
+  const policy = antigravityPermissionPolicy({
+    permissionMode: 'plan',
+    disallowedTools: ['WebFetch'],
+  });
+  assert.deepEqual(
+    new Set(policy.allowed),
+    new Set(['view_file', 'list_dir', 'grep_search', 'find_by_name', 'search_web']),
+  );
+  assert.equal(antigravityPermissionPolicy({ permissionMode: 'auto' }).allowed, undefined);
 });

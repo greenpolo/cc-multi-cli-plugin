@@ -39,7 +39,7 @@ test('Bypass carries the same denylist shape as Auto', () => {
 test('Plan denies shell, edit, write, notebook-edit natives plus delegation/MCP', () => {
   const plan = antigravityPermissionPolicy({ permissionMode: 'plan' });
   assert.equal(plan.plan, true);
-  assert.match(plan.notice, /shell, edits and delegation are blocked/);
+  assert.match(plan.notice, /only native read, search and web lookup tools run/);
   for (const name of [
     'run_command',
     'command_status',
@@ -54,7 +54,9 @@ test('Plan denies shell, edit, write, notebook-edit natives plus delegation/MCP'
   }
   for (const name of ['view_file', 'list_dir', 'grep_search', 'find_by_name']) {
     assert(!plan.denied.includes(name), `expected ${name} to remain allowed in Plan`);
+    assert(plan.allowed?.includes(name), `expected ${name} on the Plan allowlist`);
   }
+  assert(!plan.allowed?.includes('execute_browser_javascript'));
 });
 
 test('an explicit tools allowlist denies natives for mapped tools left out of it', () => {
