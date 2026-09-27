@@ -6,6 +6,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Keep Claude's native 1M context window under Multi.** Claude Code gives Opus
+  its 1M window by default only when it talks to Anthropic directly; behind the
+  gateway's local base URL it fell back to 200k and auto-compacted early. When you
+  are signed in to Anthropic, the launcher now sets
+  `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL`, since the gateway forwards Claude
+  traffic unchanged to `api.anthropic.com`. An explicit value you set is kept.
 - **Stop cutting Claude responses at three minutes.** The gateway no longer applies
   an implicit 180-second deadline to Claude passthrough, matching the OpenAI and Zen
   routes. Long streamed Claude turns, including server-side advisor calls, previously

@@ -250,11 +250,12 @@ function inference(requests: UpstreamRequest[]) {
 }
 
 function thousands(value: string) {
-  return Number(value.replace(/k$/, '')) * (value.endsWith('k') ? 1000 : 1);
+  const scale = { k: 1000, m: 1_000_000 }[value.slice(-1).toLowerCase()] ?? 1;
+  return Number(value.replace(/[km]$/i, '')) * scale;
 }
 
 function readGauge(report: string) {
-  const gauge = report.match(/\*\*Tokens:\*\* ([\d.]+k?) \/ (\d+k)/);
+  const gauge = report.match(/\*\*Tokens:\*\* ([\d.]+[km]?) \/ ([\d.]+[km])/i);
   assert.ok(gauge?.[1] && gauge[2], report);
   const categories = report.split('### Estimated usage by category')[1]?.split('###')[0] ?? '';
   const estimate = [...categories.matchAll(/^\| ([^|]+?) \| ([\d.]+k?) \|/gm)]
@@ -333,6 +334,31 @@ for (const [provider, model] of [
     }
   });
 }
+
+// Behind the gateway's base URL, Claude would otherwise offer Opus 1M only on request.
+test('token-accounting: default Opus keeps its native 1M window', async (t) => {
+  const session = await sessionRoot(t, {
+    name: 'token-accounting-opus-window',
+    model: 'opus',
+    enabledProviders: [],
+    live: {
+      providers: ['anthropic'],
+      purpose: 'main-session',
+      prompt: '/context',
+      maxTurns: 1,
+      maxBudgetUsd: 0.05,
+    },
+  });
+  if (!session) {
+    return;
+  }
+  const child = launch(t, session);
+  child.send('/context');
+  const result = await child.done;
+  assert.equal(result.code, 0, result.stderr + result.stdout);
+  const gauge = readGauge(String(finalResult(result.events).result));
+  assert.equal(gauge.window, 1_000_000, gauge.report);
+});
 
 test('token-accounting: reported usage near the window triggers auto-compaction', async (t) => {
   const session = await sessionRoot(t, {
