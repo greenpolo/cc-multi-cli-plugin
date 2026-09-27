@@ -21,8 +21,10 @@ export interface ApprovalContext {
   cwd?: string;
   worker?: boolean;
   rootRequest?: MessagesRequest;
-  /** Claude's plan mode was admitted at the last prompt: only read-only actions may pass. */
+  /** Claude's plan mode binds this review: only read-only actions may pass. */
   planMode?: boolean;
+  /** Claude's current mode, reported with the pending action by its PreToolUse hook. */
+  permissionMode?: string;
 }
 
 export interface ApprovalAction {

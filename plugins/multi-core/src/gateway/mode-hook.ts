@@ -214,7 +214,8 @@ export class PermissionModes {
       type,
       expiresAt: Date.now() + 15000,
       model,
-      permissionMode: definition.permissionMode ?? parent.permissionMode,
+      // Only an explicit mode is stored; an inherited one follows the parent at resolve time.
+      permissionMode: definition.permissionMode,
       nativePermissionError: definition.nativePermissionError,
     });
     return token;
@@ -431,16 +432,9 @@ export class PermissionModes {
     }
   }
 
-  /** Plan mode binds automatic review too. A worker under a planning parent stays read-only. */
+  /** Plan mode binds automatic review too. An unknown session or worker throws. */
   planning(session: string, agent?: string): boolean {
-    if (this.resolve(session).permissionMode === 'plan') {
-      return true;
-    }
-    return Boolean(
-      agent &&
-        this.workers.has(JSON.stringify([session, agent])) &&
-        this.resolve(session, agent).permissionMode === 'plan',
-    );
+    return this.resolve(session, agent).permissionMode === 'plan';
   }
 
   resolve(session: string, agent?: string): PermissionContext {
@@ -455,7 +449,11 @@ export class PermissionModes {
     if (!worker) {
       throw new Error('Claude worker permission context is unavailable');
     }
-    const inherited = ['auto', 'acceptEdits', 'bypassPermissions'].includes(parent.permissionMode);
+    // These parent modes override a worker's own, as in Claude; a planning parent keeps
+    // every worker, including one already running or resumed, in plan.
+    const inherited = ['auto', 'acceptEdits', 'bypassPermissions', 'plan'].includes(
+      parent.permissionMode,
+    );
     return mergeCursorPermissions(
       {
         ...worker,

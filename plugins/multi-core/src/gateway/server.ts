@@ -302,7 +302,10 @@ export function createNativeGateway({
       const context = approvalContexts.get(pending.scope);
       if (context?.model === pending.model) {
         evictOldest(reviewCandidates, 512);
-        reviewCandidates.set(id, { tool: pending, context: { ...context, cwd: parsed.cwd } });
+        reviewCandidates.set(id, {
+          tool: pending,
+          context: { ...context, cwd: parsed.cwd, ...reportedMode(parsed) },
+        });
       }
     }
     // Permission hooks only enrich attribution. Provider review is enforced
@@ -713,13 +716,21 @@ export function createNativeGateway({
       res.end();
     }
   }
-  /** An unknown session mode fails the review closed instead of reviewing without it. */
+  /**
+   * Claude reports its current mode with each pending action, which catches EnterPlanMode
+   * and ExitPlanMode inside a turn. A worker also stays bound by a planning parent's
+   * prompt snapshot. An unknown session or worker mode fails the review closed.
+   */
   function withPlanMode(context: ApprovalContext | undefined) {
-    if (!context || !permissionModes) {
+    if (!context) {
       return context;
     }
     const [session, worker] = JSON.parse(context.scope) as [string, string];
-    const planMode = permissionModes.planning(session, worker === 'main' ? undefined : worker);
+    const agent = worker === 'main' ? undefined : worker;
+    let planMode = context.permissionMode === 'plan';
+    if (!planMode && permissionModes && (agent || context.permissionMode === undefined)) {
+      planMode = permissionModes.planning(session, agent);
+    }
     return planMode ? { ...context, planMode } : context;
   }
   async function handleReview(exchange: ProviderRequest, context: ApprovalContext | undefined) {
@@ -1158,6 +1169,13 @@ function evictOldest<T>(cache: Map<string, T>, capacity: number) {
   if (cache.size >= capacity && !oldest.done) {
     cache.delete(oldest.value);
   }
+}
+
+/** Claude's PreToolUse input carries its mode at the moment the action was proposed. */
+function reportedMode(parsed: Record<string, unknown>): { permissionMode?: string } {
+  return typeof parsed.permission_mode === 'string'
+    ? { permissionMode: parsed.permission_mode }
+    : {};
 }
 
 function requestIdentity(

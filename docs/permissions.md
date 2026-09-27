@@ -16,8 +16,11 @@ The mode snapshot applies at the next prompt. Direct Claude, OpenAI, and Zen
 workers record prompt identity and resolve tool permissions in Claude's loop.
 Cursor, Antigravity and Grok load the full settings-policy snapshot at their prompts,
 or lazily when a direct-model conversation requests a harness worker. Worker modes inherit or resolve from the parent
-context according to the worker definition. A missing or unsupported mode fails
-explicitly.
+context according to the worker definition, except that a parent in Plan keeps
+every worker in Plan, including one spawned earlier and resumed later. OpenAI
+automatic review also reads the mode Claude reports with each pending action, so
+entering or leaving Plan inside a turn applies to the next reviewed action. A
+missing or unsupported mode fails explicitly.
 
 ## Provider enforcement
 

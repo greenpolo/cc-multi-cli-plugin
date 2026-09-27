@@ -6,6 +6,15 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Keep plan mode binding across workers and mid-turn changes.** A native Cursor,
+  Antigravity, or Grok worker spawned in auto kept auto when its parent later
+  entered plan mode and resumed it, and a worker definition with its own
+  `permissionMode` overrode a planning parent. A planning parent now keeps every
+  worker in plan. OpenAI automatic review also follows plan mode entered or left
+  inside a turn, and fails closed for a worker whose permissions are unknown.
+- **Admit Grok settings with Grok's own rules.** Grok runs were checked against
+  Cursor's settings validator, which rejected restrictions such as a `WebFetch`
+  deny that Grok can enforce.
 - **Allow only read-only Antigravity tools in plan mode.** agy's own `--mode plan`
   only steers its model: with permissions skipped it still ran shell and file-write
   tools, and Multi's plan deny list missed side-effecting native tools such as

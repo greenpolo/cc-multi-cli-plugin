@@ -438,7 +438,9 @@ function nativeHarnesses(
   const grok = grokModels.length
     ? new GrokHarness(grokModels, {
         checkPermissions: async (cwd, context) => {
-          const restrictions = await checkCursorSettings(cwd, args, callerSettings);
+          const restrictions = await checkCursorSettings(cwd, args, callerSettings, {
+            validate: grokPermissionPolicy,
+          });
           return grokPermissionPolicy(mergeCursorPermissions(context, restrictions));
         },
       })

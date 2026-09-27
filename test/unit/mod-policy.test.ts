@@ -397,3 +397,35 @@ test('a later host snapshot keeps acknowledged harness workers and their admitte
   modes.recordHostSession('s', { permissionMode: 'auto', cwd: '/workspace', model: 'claude' });
   assert.throws(() => modes.resolveHarness('s', 'cursor-agent'), /no acknowledged spawn/);
 });
+
+test('a planning parent binds every worker, whatever mode it was spawned or defined with', async () => {
+  const modes = new PermissionModes(async () => ({
+    cursor: { model: 'multi/cursor/auto', tools: ['Read'] },
+    bypass: { model: 'multi/cursor/auto', permissionMode: 'bypassPermissions' },
+  }));
+  await modes.precompute('/workspace');
+  const parent = (
+    permissionMode: Parameters<PermissionModes['recordModSession']>[1]['permissionMode'],
+  ) => modes.recordModSession('s', { permissionMode, cwd: '/workspace', model: 'parent' });
+  const spawn = (type: string, agent: string, permissionMode: string) =>
+    modes
+      .prepareModWorker('s', {
+        subagentType: type,
+        cwd: '/workspace',
+        permissionMode,
+        parentModel: 'parent',
+      })
+      .then(() => modes.startPreparedModWorker('s', agent, type, '/workspace'));
+  parent('auto');
+  await spawn('cursor', 'resumed', 'auto');
+  parent('default');
+  assert.equal(modes.resolve('s', 'resumed').permissionMode, 'default');
+  parent('plan');
+  assert.equal(modes.resolve('s', 'resumed').permissionMode, 'plan');
+  await spawn('bypass', 'explicit', 'plan');
+  assert.equal(modes.resolve('s', 'explicit').permissionMode, 'plan');
+  assert.equal(modes.planning('s', 'explicit'), true);
+  parent('default');
+  assert.equal(modes.resolve('s', 'explicit').permissionMode, 'bypassPermissions');
+  assert.throws(() => modes.planning('s', 'unregistered'), /unavailable/);
+});
