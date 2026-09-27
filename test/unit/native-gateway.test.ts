@@ -5,7 +5,10 @@ import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
 import { AgentCatalog } from '../../plugins/multi-core/src/gateway/agent-catalog.ts';
-import { NativeApprovalBridge } from '../../plugins/multi-core/src/gateway/approval.ts';
+import {
+  type ApprovalContext,
+  NativeApprovalBridge,
+} from '../../plugins/multi-core/src/gateway/approval.ts';
 import type { GatewayFetch } from '../../plugins/multi-core/src/gateway/fetch.ts';
 import type {
   MessagesRequest,
@@ -1536,4 +1539,68 @@ test('OpenAI streaming records tool memory from SSE observation, not rememberRes
   await streamed.text();
   assert.equal((await classify(true)).status, 400);
   assert.equal(reviews, 1);
+});
+
+test('plan mode binds OpenAI review and denies planned edits without review', async (t) => {
+  const session = 'plan-review-session';
+  const modes = new PermissionModes(async () => ({}));
+  const prompt = (mode: string) =>
+    modes.record({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: session,
+      permission_mode: mode,
+      prompt: 'review',
+    });
+  const contexts: (ApprovalContext | undefined)[] = [];
+  const bridge = new NativeApprovalBridge(async (_input, _signal, context) => {
+    contexts.push(context);
+    return { outcome: 'allow', model: 'codex-auto-review' };
+  });
+  const call = await gateway(t, async () => new Response(sse(textEvents)), {
+    approvalBridge: bridge,
+    permissionModes: modes,
+  });
+  const metadata = { user_id: JSON.stringify({ session_id: session }) };
+  const classify = async (action: Record<string, unknown>) => {
+    const response = await call({
+      model: 'claude-sonnet-5',
+      metadata,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '<transcript>\n' },
+            { type: 'text', text: `${JSON.stringify(action)}\n` },
+            { type: 'text', text: '</transcript>\n' },
+            { type: 'text', text: 'Stage 1 does NOT apply user intent\n<severity>N</severity>' },
+          ],
+        },
+      ],
+    });
+    assert.equal(response.status, 200);
+    return JSON.stringify(await response.json());
+  };
+  await prompt('plan');
+  const inference = await call({
+    model,
+    metadata,
+    stream: false,
+    messages: [{ role: 'user', content: 'plan' }],
+    tools: [{ name: 'Bash', input_schema: { type: 'object' } }],
+  });
+  assert.equal(inference.status, 200);
+  await inference.text();
+
+  assert.match(await classify({ Bash: 'node -p 1' }), /<severity>0</);
+  assert.equal(contexts.at(-1)?.planMode, true);
+  const denied = await classify({ Write: { file_path: 'edit.txt', content: 'edited' } });
+  assert.match(denied, /<severity>100</);
+  assert.match(denied, /multi-plan-mode/);
+  assert.equal(contexts.length, 1);
+
+  await prompt('auto');
+  await classify({ Write: { file_path: 'edit.txt', content: 'edited' } });
+  assert.equal(contexts.length, 2);
+  assert.equal(contexts.at(-1)?.planMode, undefined);
+  assert.throws(() => modes.planning('unknown-session'), /permission mode is unavailable/);
 });

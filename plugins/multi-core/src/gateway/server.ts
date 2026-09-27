@@ -713,6 +713,15 @@ export function createNativeGateway({
       res.end();
     }
   }
+  /** An unknown session mode fails the review closed instead of reviewing without it. */
+  function withPlanMode(context: ApprovalContext | undefined) {
+    if (!context || !permissionModes) {
+      return context;
+    }
+    const [session, worker] = JSON.parse(context.scope) as [string, string];
+    const planMode = permissionModes.planning(session, worker === 'main' ? undefined : worker);
+    return planMode ? { ...context, planMode } : context;
+  }
   async function handleReview(exchange: ProviderRequest, context: ApprovalContext | undefined) {
     const { req, res, parsed, url, signal, agentId } = exchange;
     if (!approvalBridge) {
@@ -818,7 +827,7 @@ export function createNativeGateway({
     }
     const openai = context?.model.startsWith('multi/openai/');
     if (approvalBridge && (openai || (!guardAuto && !context))) {
-      return handleReview(exchange, context);
+      return handleReview(exchange, withPlanMode(context));
     }
     const nativeClaude =
       context && (!context.model.startsWith('multi/') || context.model.startsWith('multi/zen/'));

@@ -6,6 +6,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Enforce plan mode in OpenAI automatic review.** When you enter plan mode from
+  auto mode, Claude Code asks its auto-mode classifier about each Bash call, and for
+  OpenAI sessions and workers Multi answers with the OpenAI reviewer. That reviewer
+  did not know about plan mode, so it could approve a command that writes files.
+  The gateway now passes the session's plan mode to review: file edits are denied
+  without asking the reviewer, and the reviewer must deny anything not read-only.
 - **Keep Claude's native 1M context window under Multi.** Claude Code gives Opus
   its 1M window by default only when it talks to Anthropic directly; behind the
   gateway's local base URL it fell back to 200k and auto-compacted early. When you

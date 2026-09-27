@@ -431,6 +431,18 @@ export class PermissionModes {
     }
   }
 
+  /** Plan mode binds automatic review too. A worker under a planning parent stays read-only. */
+  planning(session: string, agent?: string): boolean {
+    if (this.resolve(session).permissionMode === 'plan') {
+      return true;
+    }
+    return Boolean(
+      agent &&
+        this.workers.has(JSON.stringify([session, agent])) &&
+        this.resolve(session, agent).permissionMode === 'plan',
+    );
+  }
+
   resolve(session: string, agent?: string): PermissionContext {
     const parent = this.parents.get(session);
     if (!parent) {

@@ -61,6 +61,20 @@ test('reviewer promotes admitted hard blocks into mandatory instructions', async
   assert.equal(result.outcome, 'deny');
 });
 
+test('reviewer receives the admitted plan-mode restriction only in plan mode', async (t) => {
+  const { cwd, authFile } = await fixture(t);
+  const instructions: string[] = [];
+  const bridge = await createOpenAIApproval(authFile, cwd, async (_url, init) => {
+    instructions.push(JSON.parse(String(init.body)).instructions);
+    return sse(verdict('deny'));
+  });
+  for (const planMode of [true, false]) {
+    await bridge.respond(request(), new AbortController().signal, { ...context, cwd, planMode });
+  }
+  assert.match(instructions[0] ?? '', /plan mode is active[\s\S]*Allow only read-only actions/);
+  assert.doesNotMatch(instructions[1] ?? '', /plan mode is active/);
+});
+
 async function fixture(t: TestContext) {
   const cwd = await realpath(await mkdtemp(path.join(os.tmpdir(), 'approval-unit-')));
   t.after(() => removeTemporary(cwd));

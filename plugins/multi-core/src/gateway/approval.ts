@@ -21,6 +21,8 @@ export interface ApprovalContext {
   cwd?: string;
   worker?: boolean;
   rootRequest?: MessagesRequest;
+  /** Claude's plan mode was admitted at the last prompt: only read-only actions may pass. */
+  planMode?: boolean;
 }
 
 export interface ApprovalAction {
@@ -165,6 +167,16 @@ export function parseApprovalRequest(body: unknown): ApprovalAction & { key: str
   return { transcript, action, stage, key, ...(policy ? { policy } : {}) };
 }
 
+/** Edit tools that plan mode forbids outright, whatever the reviewer would decide. */
+const PLAN_MODE_WRITES = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+function planModeDenial(action: Record<string, unknown>, context?: ApprovalContext) {
+  const tool = Object.keys(action)[0];
+  return context?.planMode && tool !== undefined && PLAN_MODE_WRITES.has(tool)
+    ? { model: 'multi-plan-mode', outcome: 'deny' as const }
+    : undefined;
+}
+
 /** Adapts provider allow/block verdicts AFTER Claude's own permission filtering.
  * Explicitly opt in only for a provider/session whose review capability is known.
  * This does not select providers, broaden permissions, or implement a risk heuristic.
@@ -209,7 +221,8 @@ export class NativeApprovalBridge {
     } else {
       // A retry/new first stage always reviews again. Never reuse an old allow.
       this.denied.delete(input.key);
-      verdict = await this.review(input, signal, context);
+      verdict =
+        planModeDenial(input.action, context) ?? (await this.review(input, signal, context));
       signal.throwIfAborted();
       if (
         !verdict ||
