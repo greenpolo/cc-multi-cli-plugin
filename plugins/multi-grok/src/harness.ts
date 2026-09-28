@@ -263,6 +263,7 @@ export class GrokHarness {
       body.model ?? selection.model.model,
       prepared.inputTokens,
       emit,
+      body.safeguards,
     );
     const policyIdentity = digest(policy);
     writeNotices(response, {

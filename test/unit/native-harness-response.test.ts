@@ -74,6 +74,54 @@ test('streamed text becomes one assistant block and its terminal events are held
   assert.deepEqual(response.takeTerminalEvents(), []);
 });
 
+test('native display rows receive evaluated results, including buffered and empty replies', () => {
+  const safeguards = [{ type: 'dangerous_tool_use' }];
+  const streamed = collector();
+  const response = new HarnessResponse('native-1', 1, streamed.emit, safeguards);
+  response.displayRow({
+    type: 'tool_use',
+    id: 'toolu_multi_12345678901234567890123456789012',
+    name: 'mcp__multi-core__run_command',
+    input: {},
+  });
+  const result = response.finish(undefined);
+  const expected = [
+    {
+      type: 'dangerous_tool_use',
+      status: {
+        type: 'available',
+        tool_uses: {
+          toolu_multi_12345678901234567890123456789012: {
+            type: 'evaluated',
+            outcome: 'not_flagged',
+          },
+        },
+      },
+    },
+  ];
+  assert.deepEqual(result.safeguard_results, expected);
+  const delta = response.takeTerminalEvents()[0]?.[1];
+  assert.deepEqual((delta as { delta?: unknown } | undefined)?.delta, {
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    safeguard_results: expected,
+  });
+  const empty = new HarnessResponse('native-1', 1, () => {}, safeguards).finish(undefined);
+  assert.deepEqual(empty.safeguard_results?.[0].status.tool_uses, {});
+  for (const malformed of [undefined, {}, [null]]) {
+    const omitted = new HarnessResponse('native-1', 1, () => {}, malformed).finish(undefined);
+    assert.equal(omitted.safeguard_results, undefined);
+  }
+  const restored = new HarnessResponse('native-1', 1, () => {}, undefined, {
+    requested: true,
+  }).finish(undefined);
+  assert.deepEqual(restored.safeguard_results?.[0].status.tool_uses, {});
+  const unrequested = new HarnessResponse('native-1', 1, () => {}, undefined, {
+    requested: false,
+  }).finish(undefined);
+  assert.equal(unrequested.safeguard_results, undefined);
+});
+
 test('a run without usage reports an estimate and keeps its requested input count', () => {
   const { emit } = collector();
   const response = new HarnessResponse('native-1', 11, emit);

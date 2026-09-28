@@ -12,6 +12,10 @@ import type {
   ResponseContentBlock,
   StopReason,
 } from '../../multi-core/src/gateway/messages.ts';
+import {
+  type SafeguardProvider,
+  safeguardResults,
+} from '../../multi-core/src/gateway/safeguards.ts';
 import { callId, toolName } from '../../multi-core/src/gateway/tools.ts';
 
 // Anthropic Messages <-> OpenAI Responses, for native Claude Code workers.
@@ -577,6 +581,8 @@ function outputValue(item: ResponsesOutputItem): unknown {
 }
 
 export interface ResponseOptions {
+  safeguards?: unknown;
+  safeguardProvider?: SafeguardProvider;
   toolNames?: ReadonlyMap<string, string>;
   stopSequences?: readonly string[];
   signaturePrefix?: string;
@@ -674,8 +680,20 @@ class ResponseStream {
     };
     message.stop_reason = stopReason;
     message.stop_sequence = this.stopped;
+    const safeguard_results = safeguardResults(
+      this.options.safeguards,
+      message.content,
+      this.options.safeguardProvider ?? 'openai',
+    );
+    if (safeguard_results) {
+      message.safeguard_results = safeguard_results;
+    }
     this.emit('message_delta', {
-      delta: { stop_reason: stopReason, stop_sequence: this.stopped },
+      delta: {
+        stop_reason: stopReason,
+        stop_sequence: this.stopped,
+        ...(safeguard_results === undefined ? {} : { safeguard_results }),
+      },
       usage: message.usage,
     });
     this.emit('message_stop', {});

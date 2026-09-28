@@ -1602,5 +1602,23 @@ test('plan mode binds OpenAI review and denies planned edits without review', as
   await classify({ Write: { file_path: 'edit.txt', content: 'edited' } });
   assert.equal(contexts.length, 2);
   assert.equal(contexts.at(-1)?.planMode, undefined);
+  const safeguarded = await call({
+    model,
+    metadata,
+    stream: false,
+    messages: [{ role: 'user', content: 'plan from classifier context' }],
+    tools: [{ name: 'Bash', input_schema: { type: 'object' } }],
+    safeguards: [
+      {
+        type: 'dangerous_tool_use',
+        classifier_context: { permission_mode: 'plan' },
+      },
+    ],
+  });
+  assert.equal(safeguarded.status, 200);
+  await safeguarded.text();
+  await classify({ Bash: 'node -p 1' });
+  assert.equal(contexts.at(-1)?.requestPermissionMode, 'plan');
+  assert.equal(contexts.at(-1)?.planMode, true);
   assert.throws(() => modes.planning('unknown-session'), /permission mode is unavailable/);
 });

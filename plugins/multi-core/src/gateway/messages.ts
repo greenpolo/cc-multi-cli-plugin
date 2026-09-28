@@ -1,3 +1,5 @@
+import type { SafeguardResults } from './safeguards.ts';
+
 // ---------------------------------------------------------------------------
 // Anthropic Messages, as Claude Code sends them. These arrive as untrusted JSON:
 // fields the gateway inspects rather than forwards stay `unknown` so every use
@@ -68,6 +70,7 @@ export interface MessagesRequest {
   output_format?: OutputFormat;
   stream?: boolean;
   thinking?: { type: string; budget_tokens?: number };
+  safeguards?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +100,7 @@ export interface MessagesResponse {
   stop_reason: StopReason | null;
   stop_sequence: string | null;
   usage: Usage;
+  safeguard_results?: SafeguardResults;
   /** Provider accounting metadata; estimates are never presented as billed usage. */
   multi_usage?: {
     source: 'provider' | 'estimate' | 'mixed' | 'unavailable';
@@ -145,7 +149,14 @@ export type StreamEventBody =
   | { index: number; content_block: ResponseContentBlock }
   | { index: number; delta: BlockDelta }
   | { index: number }
-  | { delta: { stop_reason: StopReason | null; stop_sequence: string | null }; usage: Usage }
+  | {
+      delta: {
+        stop_reason: StopReason | null;
+        stop_sequence: string | null;
+        safeguard_results?: SafeguardResults;
+      };
+      usage: Usage;
+    }
   | { error: { type: string; message: string } }
   | Record<string, never>;
 

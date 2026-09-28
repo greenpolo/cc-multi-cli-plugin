@@ -37,6 +37,7 @@ import { type NativeHarness, nativeHarnessErrorStatus } from './native-harness.t
 import type { PendingApprovalTool } from './permission-hook.ts';
 import { ProviderUsageDashboard, type ProviderUsageReader } from './provider-usage.ts';
 import { ReceiptLedger } from './receipts.ts';
+import { dangerousToolMode, safeguardResults } from './safeguards.ts';
 import { estimateInputTokens } from './tokens.ts';
 import { forwardObservedTools, ToolObserver } from './tool-observer.ts';
 import { originalToolNames } from './tools.ts';
@@ -336,6 +337,7 @@ export function createNativeGateway({
       rootRequest: agentId
         ? approvalContexts.get(JSON.stringify([identity, 'main']))?.request
         : undefined,
+      requestPermissionMode: dangerousToolMode(body.safeguards),
     });
   }
   function reviewCandidatesFor(parsed: Record<string, unknown>, sourceSession: string) {
@@ -515,6 +517,10 @@ export function createNativeGateway({
       stop_sequence: null,
       usage: context ? { ...context, output_tokens: 0 } : { input_tokens: 0, output_tokens: 0 },
     };
+    const safeguard_results = safeguardResults(body.safeguards, result.content, 'native');
+    if (safeguard_results) {
+      result.safeguard_results = safeguard_results;
+    }
     if (body.stream) {
       exchange.startStream();
       emit('message_start', { message: { ...result, content: [], stop_reason: null } });
@@ -522,7 +528,11 @@ export function createNativeGateway({
       emit('content_block_delta', { index: 0, delta: { type: 'text_delta', text } });
       emit('content_block_stop', { index: 0 });
       emit('message_delta', {
-        delta: { stop_reason: 'end_turn', stop_sequence: null },
+        delta: {
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          ...(safeguard_results === undefined ? {} : { safeguard_results }),
+        },
         usage: result.usage,
       });
       emit('message_stop', {});
@@ -620,7 +630,12 @@ export function createNativeGateway({
       upstream.body,
       externalModel,
       body.stream ? emit : undefined,
-      { toolNames, stopSequences: body.stop_sequences, inputTokens: estimateInputTokens(request) },
+      {
+        toolNames,
+        stopSequences: body.stop_sequences,
+        inputTokens: estimateInputTokens(request),
+        safeguards: body.safeguards,
+      },
     );
     rememberResult(exchange, result);
     if (result.stop_reason === 'stop_sequence') {
@@ -672,6 +687,8 @@ export function createNativeGateway({
       signaturePrefix: prepared.signaturePrefix,
       requireUsage: true,
       inputTokens: prepared.inputTokens,
+      safeguards: body.safeguards,
+      safeguardProvider: 'zen' as const,
     };
     const translate = prepared.endpoint === 'responses' ? fromResponses : fromChat;
     const result = await translate(
@@ -727,7 +744,7 @@ export function createNativeGateway({
     }
     const [session, worker] = JSON.parse(context.scope) as [string, string];
     const agent = worker === 'main' ? undefined : worker;
-    let planMode = context.permissionMode === 'plan';
+    let planMode = context.permissionMode === 'plan' || context.requestPermissionMode === 'plan';
     if (!planMode && permissionModes && (agent || context.permissionMode === undefined)) {
       planMode = permissionModes.planning(session, agent);
     }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DisplayToolUse } from './display-rows.ts';
 import type { HarnessEvent } from './harness-exchange.ts';
 import type { Emit, MessagesResponse } from './messages.ts';
+import { restoredNativeSafeguardResults, safeguardResults } from './safeguards.ts';
 
 const maxOutputBytes = 32 * 1024 * 1024;
 
@@ -96,9 +97,19 @@ export class HarnessResponse {
   private bytes = 0;
   private rows = false;
   private deferred = '';
+  private readonly safeguards: unknown;
+  private readonly restoredSafeguardRequest?: { requested: boolean };
 
-  constructor(model: string, inputTokens: number, emit: Emit) {
+  constructor(
+    model: string,
+    inputTokens: number,
+    emit: Emit,
+    safeguards?: unknown,
+    restoredSafeguardRequest?: { requested: boolean },
+  ) {
     this.emit = emit;
+    this.safeguards = safeguards;
+    this.restoredSafeguardRequest = restoredSafeguardRequest;
     this.response = {
       id: `msg_${randomUUID()}`,
       type: 'message',
@@ -182,9 +193,26 @@ export class HarnessResponse {
       ...(effort === undefined ? {} : { effort }),
       ...consumption(usage),
     };
+    const safeguard_results =
+      this.restoredSafeguardRequest === undefined
+        ? safeguardResults(this.safeguards, this.response.content, 'native')
+        : restoredNativeSafeguardResults(
+            this.restoredSafeguardRequest.requested,
+            this.response.content,
+          );
+    if (safeguard_results) {
+      this.response.safeguard_results = safeguard_results;
+    }
     this.terminalEvents.push([
       'message_delta',
-      { delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: this.response.usage },
+      {
+        delta: {
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          ...(safeguard_results === undefined ? {} : { safeguard_results }),
+        },
+        usage: this.response.usage,
+      },
     ]);
     this.terminalEvents.push(['message_stop', {}]);
     return this.response;

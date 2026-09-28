@@ -45,6 +45,113 @@ test('Chat reports the final usage snapshot without summing or retaining stale m
   });
 });
 
+test('Zen Chat reports auto, plan, and missing-mode safeguard verdicts', async () => {
+  const events = [
+    {
+      id: 'chat-safeguard',
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              { index: 0, id: 'call-a', function: { name: readAlias, arguments: '{}' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    },
+    { id: 'chat-safeguard', choices: [], usage: { prompt_tokens: 10, completion_tokens: 3 } },
+  ];
+  const cases = [
+    ['auto', { type: 'evaluated', outcome: 'not_flagged' }],
+    ['default', { type: 'evaluated', outcome: 'not_flagged' }],
+    ['acceptEdits', { type: 'evaluated', outcome: 'not_flagged' }],
+    ['dontAsk', { type: 'evaluated', outcome: 'not_flagged' }],
+    ['bypassPermissions', { type: 'evaluated', outcome: 'not_flagged' }],
+    [
+      'plan',
+      {
+        type: 'evaluated',
+        outcome: 'flagged',
+        explanation: 'Plan mode: Zen has no reviewer, so actions that need review are refused.',
+      },
+    ],
+    [
+      undefined,
+      {
+        type: 'evaluated',
+        outcome: 'flagged',
+        explanation:
+          'Zen permission mode is unavailable or unknown, so actions that need review are refused.',
+      },
+    ],
+    [
+      'unknown',
+      {
+        type: 'evaluated',
+        outcome: 'flagged',
+        explanation:
+          'Zen permission mode is unavailable or unknown, so actions that need review are refused.',
+      },
+    ],
+    [
+      'bypass',
+      {
+        type: 'evaluated',
+        outcome: 'flagged',
+        explanation:
+          'Zen permission mode is unavailable or unknown, so actions that need review are refused.',
+      },
+    ],
+    [
+      '',
+      {
+        type: 'evaluated',
+        outcome: 'flagged',
+        explanation:
+          'Zen permission mode is unavailable or unknown, so actions that need review are refused.',
+      },
+    ],
+  ] as const;
+  for (const [mode, verdict] of cases) {
+    const seen = capture();
+    const result = await fromChat(sse(events), model, seen.emit, {
+      safeguards: [{ type: 'dangerous_tool_use', classifier_context: { permission_mode: mode } }],
+      toolNames: new Map([[readAlias, 'Read File']]),
+    });
+    const expected = [
+      {
+        type: 'dangerous_tool_use',
+        status: { type: 'available', tool_uses: { 'call-a': verdict } },
+      },
+    ];
+    assert.deepEqual(result.safeguard_results, expected);
+    const delta = seen.events.find((event) => event.type === 'message_delta')?.value;
+    assert.deepEqual(
+      (delta as { delta?: { safeguard_results?: unknown } } | undefined)?.delta?.safeguard_results,
+      expected,
+    );
+  }
+  const missing = await fromChat(sse(events), model, undefined, { safeguards: [null] });
+  assert.equal(missing.safeguard_results, undefined);
+  const absent = await fromChat(sse(events), model);
+  assert.equal(absent.safeguard_results, undefined);
+  const textOnly = await fromChat(
+    sse([
+      {
+        id: 'chat-text-safeguard',
+        choices: [{ index: 0, delta: { content: 'Done' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 2, completion_tokens: 1 },
+      },
+    ]),
+    model,
+    undefined,
+    { safeguards: [{ type: 'dangerous_tool_use' }] },
+  );
+  assert.deepEqual(textOnly.safeguard_results?.[0].status.tool_uses, {});
+});
+
 test('toChat keeps assistant call groups and only replays own model reasoning', () => {
   const own = {
     type: 'thinking',

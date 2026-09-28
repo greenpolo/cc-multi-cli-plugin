@@ -325,7 +325,12 @@ export class AntigravityHarness {
       const nativeDenied = deniedForRun(policy, context);
       const nativeAllowed = allowedForRun(policy, context);
       const notice = noticeForRun(policy, context);
-      const response = new HarnessResponse(body.model ?? model.model, prepared.inputTokens, emit);
+      const response = new HarnessResponse(
+        body.model ?? model.model,
+        prepared.inputTokens,
+        emit,
+        body.safeguards,
+      );
       const policyIdentity = digest({
         denied: nativeDenied,
         allowed: nativeAllowed ?? null,

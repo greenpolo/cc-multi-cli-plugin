@@ -25,6 +25,8 @@ export interface ApprovalContext {
   planMode?: boolean;
   /** Claude's current mode, reported with the pending action by its PreToolUse hook. */
   permissionMode?: string;
+  /** Mode in the originating model request's safeguard classifier context. */
+  requestPermissionMode?: string;
 }
 
 export interface ApprovalAction {

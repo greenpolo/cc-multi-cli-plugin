@@ -6,6 +6,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Keep subscription auto-mode checks free after non-Claude replies.** Multi now
+  returns the server-side safeguard results Claude Code expects from OpenAI, Zen,
+  Cursor, Antigravity, and Grok replies, so a non-Claude turn no longer switches
+  the whole subscription session to billed local classifier requests. OpenAI
+  actions needing review still use its reviewer; Zen auto mode is unreviewed,
+  while plan mode refuses actions needing review.
 - **Keep plan mode binding across workers and mid-turn changes.** A native Cursor,
   Antigravity, or Grok worker spawned in auto kept auto when its parent later
   entered plan mode and resumed it, and a worker definition with its own

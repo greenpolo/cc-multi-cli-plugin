@@ -55,6 +55,7 @@ import type {
   MessagesResponse,
 } from '../../multi-core/src/gateway/messages.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
+import { dangerousToolMode } from '../../multi-core/src/gateway/safeguards.ts';
 import { settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
 import { CursorProviderError, cursorRunError } from './errors.ts';
 import { type CursorModelOption, cursorSelection } from './models.ts';
@@ -75,6 +76,7 @@ type PendingRun = {
   model: string;
   effort?: string;
   inputTokens: number;
+  safeguarded?: boolean;
 };
 /**
  * The persisted half. Version 3 carries the shared `provider`/`identity` header.
@@ -521,9 +523,15 @@ export class CursorHarness {
       return undefined;
     }
     const events: HarnessEvent[] = [];
-    const response = new HarnessResponse(pending.model, pending.inputTokens, (name, value) => {
-      events.push([name, structuredClone(value)]);
-    });
+    const response = new HarnessResponse(
+      pending.model,
+      pending.inputTokens,
+      (name, value) => {
+        events.push([name, structuredClone(value)]);
+      },
+      undefined,
+      { requested: pending.safeguarded === true },
+    );
     response.text(result.result ?? '');
     const finished = response.finish(cursorUsage(result.usage), pending.model, pending.effort);
     events.push(...response.takeTerminalEvents());
@@ -653,8 +661,9 @@ export class CursorHarness {
     model: string,
     inputTokens: number,
     effort?: string,
+    safeguarded?: boolean,
   ) {
-    session.saved.pendingRun = { key, model, inputTokens, effort };
+    session.saved.pendingRun = { key, model, inputTokens, effort, safeguarded };
     // Durability write: a gateway crash before a terminal result arrives leaves
     // the session interrupted, so the next request resumes it with a notice
     // instead of guessing what the dispatched run did.
@@ -695,7 +704,12 @@ export class CursorHarness {
       if (session.saved.interrupted) {
         prepared.prompt.text = `${interruptedNotice('Cursor')}\n\n${prepared.prompt.text ?? ''}`;
       }
-      const stream = new HarnessResponse(body.model ?? '', prepared.inputTokens, emit);
+      const stream = new HarnessResponse(
+        body.model ?? '',
+        prepared.inputTokens,
+        emit,
+        body.safeguards,
+      );
       // Each finished SDK tool call becomes a display row in this reply, named
       // after Cursor's own tool; the terse summary is written when the run ends.
       const actions = new NativeActionTracker('Cursor', observeProgress, (block) =>
@@ -724,6 +738,7 @@ export class CursorHarness {
         selection.id,
         prepared.inputTokens,
         selectedEffort(selection),
+        dangerousToolMode(body.safeguards) !== undefined,
       );
       dispatched = true;
       signal.throwIfAborted();
@@ -865,6 +880,7 @@ function validPendingRun(pending: PendingRun | undefined) {
       typeof pending.model === 'string' &&
       Number.isSafeInteger(pending.inputTokens) &&
       pending.inputTokens >= 0 &&
+      (pending.safeguarded === undefined || typeof pending.safeguarded === 'boolean') &&
       (pending.runId === undefined ||
         (typeof pending.runId === 'string' && pending.runId.length > 0)))
   );
