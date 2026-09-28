@@ -157,7 +157,8 @@ function windowsCandidates(name: string, pathext: string | undefined): string[] 
 }
 
 function quoteWindows(value: string): string {
-  if (!/[\s"&()^|<>]/.test(value)) {
+  // An unquoted empty argument vanishes from the command line, shifting later values.
+  if (value && !/[\s"&()^|<>]/.test(value)) {
     return value;
   }
   return `"${value.replaceAll(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;

@@ -6,6 +6,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## 0.3.0 — 2026-09-28
 
+- **Keep empty arguments when launching npm's `claude.cmd` on Windows.** Multi runs
+  `.cmd` shims it cannot unwrap through `cmd.exe`, which dropped an empty argument
+  such as `--setting-sources ""`. Claude then read the next word as the setting
+  source and startup failed with `Invalid setting source: plugin`.
 - **Defer tool definitions the way Claude Code does natively.** Multi opted back
   into Claude Code's on-demand tool loading with `ENABLE_TOOL_SEARCH=auto`, which
   loads every tool up front once they fit in 10% of the context window. With a 1M

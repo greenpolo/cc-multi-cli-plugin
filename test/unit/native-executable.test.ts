@@ -55,6 +55,19 @@ test('honors explicit executable paths and fails clearly when absent', () => {
   );
 });
 
+test('keeps empty arguments when invoking cmd shims through ComSpec', () => {
+  assert.deepEqual(
+    executableInvocation(
+      'C:\\npm\\claude.cmd',
+      ['--setting-sources', '', 'plugin', 'list'],
+      'win32',
+      { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+      { readShim: () => 'unexpected shim body' },
+    ).args,
+    ['/d', '/s', '/c', '"C:\\npm\\claude.cmd --setting-sources "" plugin list"'],
+  );
+});
+
 test('invokes cmd shims through ComSpec without shell mode', () => {
   assert.deepEqual(
     executableInvocation(
