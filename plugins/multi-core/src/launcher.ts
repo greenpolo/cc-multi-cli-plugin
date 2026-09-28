@@ -1184,8 +1184,9 @@ function gatewayEnvironment(port: number, token: string, anthropic: boolean) {
     API_TIMEOUT_MS: process.env.API_TIMEOUT_MS ?? '2147483647',
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
     // A custom base URL disables Claude's on-demand tool loading unless opted in.
-    // We forward Claude tool references; preserve an explicit user preference.
-    ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH ?? 'auto',
+    // We forward Claude tool references, so match the direct default of always
+    // deferring; 'auto' loads every tool once a 1M window makes them under 10%.
+    ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH ?? 'true',
     MULTI_GATEWAY_TOKEN: token,
     CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1',
     MULTI_MOD_GATEWAY_URL: `http://127.0.0.1:${port}`,

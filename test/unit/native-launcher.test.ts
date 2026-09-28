@@ -103,7 +103,7 @@ const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'ut
     assert.equal(result.backgroundTasks, undefined);
     assert.equal(result.functionHooks, '1');
     assert.equal(result.apiTimeout, auth === 'api' ? '1000' : '2147483647');
-    assert.equal(result.toolSearch, auth === 'api' ? 'false' : 'auto');
+    assert.equal(result.toolSearch, auth === 'api' ? 'false' : 'true');
     assert.deepEqual(result.settings.permissions.deny, ['Bash(denied)']);
     assert.equal(
       result.settings.permissions.disableAutoMode,

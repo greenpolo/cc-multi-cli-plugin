@@ -259,7 +259,11 @@ function readGauge(report: string) {
   assert.ok(gauge?.[1] && gauge[2], report);
   const categories = report.split('### Estimated usage by category')[1]?.split('###')[0] ?? '';
   const estimate = [...categories.matchAll(/^\| ([^|]+?) \| ([\d.]+k?) \|/gm)]
-    .filter(([, name]) => name !== 'Free space' && name !== 'Autocompact buffer')
+    // Deferred tools are listed but not part of the context Claude counts.
+    .filter(
+      ([, name]) =>
+        name !== 'Free space' && name !== 'Autocompact buffer' && !name?.endsWith('(deferred)'),
+    )
     .reduce((sum, [, , tokens]) => sum + thousands(tokens ?? '0'), 0);
   assert.ok(estimate > 0, report);
   return { report, total: thousands(gauge[1]), window: thousands(gauge[2]), estimate };

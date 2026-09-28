@@ -6,6 +6,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Defer tool definitions the way Claude Code does natively.** Multi opted back
+  into Claude Code's on-demand tool loading with `ENABLE_TOOL_SEARCH=auto`, which
+  loads every tool up front once they fit in 10% of the context window. With a 1M
+  window that put about 100k tokens of connector tools into every session before
+  the first prompt. Multi now uses `true`, matching Claude Code's direct default of
+  always deferring. An explicit `ENABLE_TOOL_SEARCH` you set is still respected.
 - **Keep subscription auto-mode checks free after non-Claude replies.** Multi now
   returns the server-side safeguard results Claude Code expects from OpenAI, Zen,
   Cursor, Antigravity, and Grok replies, so a non-Claude turn no longer switches

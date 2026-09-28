@@ -179,7 +179,13 @@ test('interactive plan: approve ExitPlanMode before the edit executes', async (t
             },
           };
         }
+        // Claude defers ExitPlanMode behind ToolSearch, as on a direct connection.
         if (index === 1) {
+          return {
+            tool: { name: 'ToolSearch', input: { query: 'select:ExitPlanMode', max_results: 1 } },
+          };
+        }
+        if (index === 2) {
           return {
             tool: {
               name: 'ExitPlanMode',
@@ -187,7 +193,7 @@ test('interactive plan: approve ExitPlanMode before the edit executes', async (t
             },
           };
         }
-        if (index === 2) {
+        if (index === 3) {
           return {
             tool: { name: 'Write', input: { file_path: 'planned.txt', content: 'approved' } },
           };
