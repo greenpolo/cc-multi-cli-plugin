@@ -11,7 +11,14 @@ for (const gatewayTimeoutMs of [undefined, 50]) {
         ANTHROPIC_AUTH_TOKEN: 'e2e-oauth',
         ANTHROPIC_CUSTOM_HEADERS: 'anthropic-beta: e2e-beta',
       },
-      upstream: { anthropic: () => ({ text: 'Slow stream completed.', delayMs: 400 }) },
+      // A loaded gateway can fire a 50 ms timer hundreds of milliseconds late; the
+      // timed-out reply stays pending long enough that only the deadline can end it.
+      upstream: {
+        anthropic: () => ({
+          text: 'Slow stream completed.',
+          delayMs: gatewayTimeoutMs ? 5000 : 400,
+        }),
+      },
     });
     if (!result) {
       return;

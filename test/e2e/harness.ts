@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -158,7 +158,11 @@ export async function runScenario(t: TestContext, scenario: Scenario) {
     return undefined;
   }
   const selected = live?.scenario ?? scenario;
-  const root = await mkdtemp(path.join(process.env.MULTI_E2E_SCRATCH ?? os.tmpdir(), 'multi e2e '));
+  // macOS temp paths sit behind the /var -> /private/var link; native processes report
+  // the resolved cwd, so scenarios compare against the resolved workspace.
+  const root = await realpath(
+    await mkdtemp(path.join(process.env.MULTI_E2E_SCRATCH ?? os.tmpdir(), 'multi e2e ')),
+  );
   t.after(() => rm(root, { recursive: true, force: true }));
   await Promise.all(['workspace', 'config', 'codex'].map((name) => mkdir(path.join(root, name))));
   await fixtureFiles(root, {

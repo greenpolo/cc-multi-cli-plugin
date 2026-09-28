@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
@@ -20,7 +20,9 @@ export async function sessionRoot(t: TestContext, scenario: Scenario) {
   if (liveRequested && !live) {
     return undefined;
   }
-  const root = await mkdtemp(path.join(process.env.MULTI_E2E_SCRATCH ?? os.tmpdir(), 'session-'));
+  const root = await realpath(
+    await mkdtemp(path.join(process.env.MULTI_E2E_SCRATCH ?? os.tmpdir(), 'session-')),
+  );
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const directory of ['workspace', 'config', 'codex']) {
     await mkdir(path.join(root, directory));

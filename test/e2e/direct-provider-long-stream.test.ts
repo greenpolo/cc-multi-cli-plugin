@@ -14,8 +14,13 @@ for (const [provider, model] of [
         model: `multi/${provider}/${model}`,
         enabledProviders: [provider],
         gatewayTimeoutMs,
+        // A loaded gateway can fire a 50 ms timer hundreds of milliseconds late; the
+        // timed-out reply stays pending long enough that only the deadline can end it.
         upstream: {
-          [provider]: () => ({ text: 'Slow provider stream completed.', delayMs: 400 }),
+          [provider]: () => ({
+            text: 'Slow provider stream completed.',
+            delayMs: gatewayTimeoutMs ? 5000 : 400,
+          }),
         },
       });
       if (!result) {
