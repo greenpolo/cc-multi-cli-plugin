@@ -4,7 +4,7 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
-## Unreleased
+## 0.3.0 — 2026-09-28
 
 - **Defer tool definitions the way Claude Code does natively.** Multi opted back
   into Claude Code's on-demand tool loading with `ENABLE_TOOL_SEARCH=auto`, which
