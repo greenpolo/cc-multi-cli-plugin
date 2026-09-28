@@ -16,7 +16,6 @@ const options = cursorModelOptions([
 ]);
 
 test('Cursor catalog preserves actual IDs and presets; effort never silently substitutes', () => {
-  assert.equal(options[0].worker, 'cursor-test-model');
   assert.equal(options[0].description, 'Test Model via Cursor · low effort');
   assert.deepEqual(cursorSelection(options[0], 'high'), {
     id: 'test-model',
@@ -41,7 +40,6 @@ test('Cursor base routes explicitly disable Fast even when the account defaults 
   const base = catalog.find((option) => option.model === 'multi/cursor/composer-2.5');
   assert(base);
   assert.deepEqual(base.selection.params, [{ id: 'fast', value: 'false' }]);
-  assert.equal(base.worker, 'cursor-composer-2-5');
   assert.deepEqual(cursorSelection(base).params, [{ id: 'fast', value: 'false' }]);
   assert.deepEqual(cursorPickerOptions(catalog)[0].selection, base.selection);
   assert.throws(
@@ -59,7 +57,7 @@ test('Cursor base routes explicitly disable Fast even when the account defaults 
   );
 });
 
-test('catalog cross-products stay selectable without multiplying named workers', () => {
+test('catalog cross-products stay selectable as routes', () => {
   const catalog = cursorModelOptions([
     {
       id: 'composer-test',
@@ -91,10 +89,6 @@ test('catalog cross-products stay selectable without multiplying named workers',
     },
   ]);
   assert.equal(catalog.length, 4);
-  assert.deepEqual(
-    catalog.filter((o) => o.nativeWorker).map((o) => o.worker),
-    ['cursor-composer-test', 'cursor-composer-test-effort-high'],
-  );
   assert(catalog.some((o) => o.model.includes('fast=true')));
 });
 
@@ -134,8 +128,6 @@ test('Cursor picker defaults to Auto, Grok and Composer, excluding other provide
   );
   assert.equal(picker[0].label, 'Auto via Cursor');
   assert.deepEqual(picker[0].selection, { id: 'default' });
-  assert.equal(picker[0].worker, 'cursor-default');
-  assert.equal(picker[0].nativeWorker, true);
   assert(picker.every((o) => o.model.split('/').length === 3));
   assert.deepEqual(
     catalog,
@@ -186,8 +178,8 @@ test('Cursor extras expose only a base effort row while preserving parameters an
     { id: 'fast', value: 'false' },
     { id: 'reasoning_effort', value: 'high' },
   ]);
-  const explicit = catalog.find(({ worker }) => worker === 'cursor-extra-reasoning-effort-high');
-  assert(explicit?.nativeWorker);
+  const explicit = catalog.find(({ model }) => model.endsWith('reasoning_effort=high'));
+  assert(explicit);
   assert.equal(cursorSelection(explicit, 'low').params?.[0].value, 'high');
 });
 

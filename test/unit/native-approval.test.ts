@@ -427,6 +427,8 @@ test('headerless classifier uses pending worker context and rejects ambiguous ac
   assert(contexts[0].scope.includes('worker-b'));
   assert.equal(contexts[0].cwd, classifierCwd);
   assert.equal(contexts[0].request.messages?.[0].content, 'worker-b');
+  // The mode Claude reports with the pending action binds review mid-turn.
+  assert.equal(contexts[0].planMode, true);
   await prepare('worker-b', 'node b.js', 'plan', 'cd /other-workspace && node b.js');
   assert.equal((await send(request(1, session, 'node b.js'))).status, 400);
   await prepare(
@@ -442,6 +444,9 @@ test('headerless classifier uses pending worker context and rejects ambiguous ac
   await prepare('worker-a', 'node b.js');
   assert.equal((await send(request(1, session, 'node b.js'))).status, 400);
   assert.equal(contexts.length, 2);
+  await prepare('worker-a', 'node a.js');
+  assert.equal((await send(request(1, session, 'node a.js'))).status, 200);
+  assert.equal(contexts[2]?.planMode, undefined);
 });
 
 const toolEvents = (id: string, command: string) => [

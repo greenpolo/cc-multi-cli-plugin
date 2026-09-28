@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Emit, StreamEventBody } from '../../plugins/multi-core/src/gateway/messages.ts';
+import { safeguardResults } from '../../plugins/multi-core/src/gateway/safeguards.ts';
 import { fromResponses, toResponses } from '../../plugins/multi-openai/src/responses.ts';
 
 const model = 'multi/openai/gpt-6-astra';
@@ -89,6 +90,82 @@ test('message_start carries the local input estimate until the provider reports 
     cache_creation_input_tokens: 0,
     output_tokens: 20,
   });
+});
+
+test('OpenAI reports unavailable per tool and an empty map without tools, including buffered replies', async () => {
+  const safeguards = [
+    { type: 'dangerous_tool_use', classifier_context: { permission_mode: 'auto' } },
+  ];
+  const seen = capture();
+  const result = await fromResponses(stream([created, terminal([tool])]), model, seen.emit, {
+    safeguards,
+  });
+  const expected = [
+    {
+      type: 'dangerous_tool_use',
+      status: {
+        type: 'available',
+        tool_uses: { call_a: { type: 'unavailable', reason: 'error' } },
+      },
+    },
+  ];
+  assert.deepEqual(result.safeguard_results, expected);
+  const delta = seen.events.find((event) => event.type === 'message_delta')?.value;
+  assert.deepEqual((delta as { delta?: unknown } | undefined)?.delta, {
+    stop_reason: 'tool_use',
+    stop_sequence: null,
+    safeguard_results: expected,
+  });
+  const empty = await fromResponses(stream([created, terminal([text])]), model, undefined, {
+    safeguards,
+  });
+  assert.deepEqual(empty.safeguard_results?.[0].status.tool_uses, {});
+  for (const malformed of [undefined, {}, [null], [{ type: 'dangerous_tool_use' }, 7]]) {
+    const omitted = await fromResponses(stream([created, terminal([tool])]), model, undefined, {
+      safeguards: malformed,
+    });
+    assert.equal(omitted.safeguard_results, undefined);
+  }
+});
+
+test('Zen Responses uses Zen verdicts instead of OpenAI review fallback', async () => {
+  const result = await fromResponses(stream([created, terminal([tool])]), model, undefined, {
+    safeguards: [{ type: 'dangerous_tool_use', classifier_context: { permission_mode: 'plan' } }],
+    safeguardProvider: 'zen',
+  });
+  assert.deepEqual(result.safeguard_results, [
+    {
+      type: 'dangerous_tool_use',
+      status: {
+        type: 'available',
+        tool_uses: {
+          call_a: {
+            type: 'evaluated',
+            outcome: 'flagged',
+            explanation: 'Plan mode: Zen has no reviewer, so actions that need review are refused.',
+          },
+        },
+      },
+    },
+  ]);
+});
+
+test('a __proto__ tool ID remains an own property after safeguard serialization', () => {
+  const result = safeguardResults(
+    [{ type: 'dangerous_tool_use' }],
+    [{ type: 'tool_use', id: '__proto__', name: 'Read', input: {} }],
+    'openai',
+  );
+  const encoded = JSON.stringify(result);
+  const decoded = JSON.parse(encoded) as [{ status: { tool_uses: Record<string, unknown> } }];
+  assert.equal(Object.hasOwn(decoded[0].status.tool_uses, '__proto__'), true);
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(decoded[0].status.tool_uses, '__proto__')?.value,
+    {
+      type: 'unavailable',
+      reason: 'error',
+    },
+  );
 });
 
 test('terminal output finishes partial arguments and interleaved calls in output order exactly once', async () => {

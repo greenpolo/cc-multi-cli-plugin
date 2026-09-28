@@ -10,7 +10,6 @@ export interface AntigravityModel {
   id: string;
   model: string;
   label: string;
-  worker: string;
   effort?: 'low' | 'medium' | 'high';
 }
 
@@ -26,7 +25,6 @@ export function parseAntigravityModels(output: string): AntigravityModel[] {
       id,
       model: `multi/antigravity/${id}`,
       label: `Antigravity · ${label}`,
-      worker: `antigravity-${id}`,
     });
   }
   if (!models.size) {
@@ -84,12 +82,41 @@ export function antigravityPickerOptions(models: readonly AntigravityModel[]): A
       rows.set(base, {
         id: base,
         model: `multi/antigravity/${base}`,
-        worker: `antigravity-${base}`,
         label: option.label.replace(/(?:\s*[-·]\s*|\s+|\s*\()(low|medium|high)\)?$/i, ''),
       });
     }
   }
   return [...rows.values()];
+}
+
+/**
+ * The model a `multi-antigravity` worker runs when the Agent call names none: the newest
+ * Gemini generation, a Pro model before a Flash of the same version. `agy models` marks no
+ * default and lists in its own order, so the version decides.
+ */
+export function antigravityDefaultWorkerModel(ids: readonly string[]): string | undefined {
+  let best: { id: string; rank: number[] } | undefined;
+  for (const id of ids) {
+    const match = /^gemini-(\d+)(?:\.(\d+))?(?:-|$)/.exec(id);
+    if (!match) {
+      continue;
+    }
+    const rank = [Number(match[1]), Number(match[2] ?? 0), id.includes('-pro') ? 1 : 0];
+    if (!best || compareRank(rank, best.rank) > 0) {
+      best = { id, rank };
+    }
+  }
+  return best?.id;
+}
+
+function compareRank(left: readonly number[], right: readonly number[]): number {
+  for (let index = 0; index < left.length; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
 }
 
 function defaultVariant(models: readonly AntigravityModel[], base: string) {

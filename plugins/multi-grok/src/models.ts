@@ -20,7 +20,6 @@ export interface GrokModel {
   id: string;
   model: string;
   label: string;
-  worker: string;
   default: boolean;
 }
 
@@ -31,11 +30,6 @@ export interface GrokSelection {
 
 function route(id: string): string {
   return `multi/grok/${id}`;
-}
-
-function workerName(id: string): string {
-  const slug = id.replace(/^grok-/, '').replace(/[^a-z0-9]+/g, '-');
-  return `grok-${slug || id.replace(/[^a-z0-9]+/g, '-')}`;
 }
 
 function label(id: string): string {
@@ -58,7 +52,6 @@ export function parseGrokModels(output: string): GrokModel[] {
       id,
       model: route(id),
       label: label(id),
-      worker: workerName(id),
       default: Boolean(marker),
     });
   }
@@ -106,6 +99,11 @@ export async function discoverGrokModels(
 }
 
 /** Restrict Grok rows without hiding the other providers. */
+/** The model a `multi-grok` worker runs when the Agent call names none: the CLI's default. */
+export function grokDefaultWorkerModel(models: readonly GrokModel[]): string | undefined {
+  return models.find((model) => model.default)?.id;
+}
+
 export function grokPickerOptions(models: readonly GrokModel[], selection?: string): GrokModel[] {
   if (selection === undefined) {
     return [...models].sort((left, right) => Number(right.default) - Number(left.default));

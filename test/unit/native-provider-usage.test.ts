@@ -72,7 +72,10 @@ test('provider dashboard coalesces reads, caches account data, refreshes and kee
   ledger.observe({ route: 'cursor', session: 'a', usage: { input_tokens: 10, output_tokens: 20 } });
   const cached = await dashboard.read('a', ledger.snapshot('a'));
   assert.equal(calls, 1);
-  assert(cached.providers[1].details.includes('Tokens: 10 input · 20 output'));
+  assert(
+    cached.providers[1].details.includes('Tokens: context 10 · consumed 10 input · cached 0 read'),
+  );
+  assert(cached.providers[1].details.includes('Output: 20 · cache written 0'));
   cached.providers[1].details.push('mutation');
   assert(!(await dashboard.read('a', empty())).providers[1].details.includes('mutation'));
   await dashboard.read('b', empty());

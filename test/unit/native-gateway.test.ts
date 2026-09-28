@@ -5,6 +5,10 @@ import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
 import { AgentCatalog } from '../../plugins/multi-core/src/gateway/agent-catalog.ts';
+import {
+  type ApprovalContext,
+  NativeApprovalBridge,
+} from '../../plugins/multi-core/src/gateway/approval.ts';
 import type { GatewayFetch } from '../../plugins/multi-core/src/gateway/fetch.ts';
 import type {
   MessagesRequest,
@@ -13,7 +17,9 @@ import type {
   StreamEventBody,
   StreamEventName,
 } from '../../plugins/multi-core/src/gateway/messages.ts';
+import { PermissionModes } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { ReceiptLedger } from '../../plugins/multi-core/src/gateway/receipts.ts';
+import type { GatewayEvent, GatewayOptions } from '../../plugins/multi-core/src/gateway/server.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import { estimateInputTokens } from '../../plugins/multi-core/src/gateway/tokens.ts';
 import {
@@ -23,7 +29,7 @@ import {
 } from '../../plugins/multi-core/src/gateway/tools.ts';
 import { readCodexAuth } from '../../plugins/multi-openai/src/auth.ts';
 import { openaiInstructions } from '../../plugins/multi-openai/src/instructions.ts';
-import { OPENAI_WORKERS } from '../../plugins/multi-openai/src/models.ts';
+import { MODELS, OPENAI_WORKER_EFFORT } from '../../plugins/multi-openai/src/models.ts';
 import type {
   ResponsesInputContent,
   ResponsesInputItem,
@@ -424,7 +430,7 @@ test('fragmented SSE and truncated or failed responses never become successful c
 async function gateway(
   t: TestContext,
   fetchImpl: GatewayFetch,
-  options: { timeoutMs?: number; agentCatalog?: AgentCatalog; receipts?: ReceiptLedger } = {},
+  options: Partial<GatewayOptions> = {},
 ) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'native-gateway-test-'));
   const authFile = path.join(cwd, 'auth.json');
@@ -776,15 +782,10 @@ test('all registered model and reasoning choices reach OpenAI without substituti
     assert.equal(request.reasoning.effort, effort);
     return new Response(sse(textEvents));
   });
-  for (const [name, slug] of [
-    ['openai-native', 'gpt-6-astra'],
-    ['openai-sol', 'gpt-6-sol'],
-    ['openai-terra', 'gpt-5.6-terra'],
-    ['openai-luna', 'gpt-6-luna'],
-  ]) {
-    assert.deepEqual(OPENAI_WORKERS[name], { model: slug, effort: 'medium' });
+  assert.equal(OPENAI_WORKER_EFFORT, 'medium');
+  for (const slug of ['gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
+    assert(Object.values(MODELS).includes(slug), slug);
     for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
-      assert.deepEqual(OPENAI_WORKERS[`${name}-${effort}`], { model: slug, effort });
       const response = await call(
         { ...body, model: `multi/openai/${slug}`, output_config: { effort } },
         { 'x-claude-code-agent-id': `${slug}:${effort}` },
@@ -1294,4 +1295,330 @@ test('an explicit OpenAI timeout aborts upstream inference', async (t) => {
   assert.equal(response.status, 502);
   assert.equal(aborted, true);
   assert.match(await response.text(), /timeout|timed out/i);
+});
+
+const harnessReply = (model: string, text = 'native'): MessagesResponse => ({
+  id: 'msg_harness',
+  type: 'message',
+  role: 'assistant',
+  model,
+  content: [{ type: 'text', text }],
+  stop_reason: 'end_turn',
+  stop_sequence: null,
+  usage: { input_tokens: 3, output_tokens: 2 },
+});
+
+async function harnessPermissionModes(session = 'routing-session') {
+  const modes = new PermissionModes(async () => ({}));
+  await modes.record({
+    hook_event_name: 'UserPromptSubmit',
+    session_id: session,
+    permission_mode: 'auto',
+    prompt: 'route',
+  });
+  return modes;
+}
+
+test('provider routing sends each external model to one handler route', async (t) => {
+  const session = 'routing-session';
+  const modes = await harnessPermissionModes(session);
+  const hits = {
+    cursor: 0,
+    antigravity: 0,
+    grok: 0,
+    openai: 0,
+    zen: 0,
+    anthropic: 0,
+  };
+  const routes: GatewayEvent['route'][] = [];
+  const endpoints: string[] = [];
+  const call = await gateway(
+    t,
+    async (url) => {
+      if (url.includes('api.anthropic.com')) {
+        hits.anthropic++;
+        return Response.json({ content: [{ type: 'text', text: 'claude' }] });
+      }
+      if (url.includes('opencode.ai')) {
+        hits.zen++;
+        return new Response(
+          `data: ${JSON.stringify({
+            type: 'response.completed',
+            response: {
+              id: 'zen_route',
+              output: [{ type: 'message', content: [{ type: 'output_text', text: 'zen' }] }],
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+          })}\n\n`,
+        );
+      }
+      hits.openai++;
+      return new Response(sse(textEvents));
+    },
+    {
+      permissionModes: modes,
+      zen: { apiKey: 'zen-route-fixture' },
+      onEvent: (event) => {
+        if (event.path === '/v1/messages') {
+          routes.push(event.route);
+        }
+        if (event.endpoint) {
+          endpoints.push(event.endpoint);
+        }
+      },
+      cursor: {
+        validate: () => 4,
+        handle: async () => {
+          hits.cursor++;
+          return harnessReply('multi/cursor/auto');
+        },
+      },
+      antigravity: {
+        validate: () => 4,
+        handle: async () => {
+          hits.antigravity++;
+          return harnessReply('multi/antigravity/gemini-test-low');
+        },
+      },
+      grok: {
+        validate: () => 4,
+        handle: async () => {
+          hits.grok++;
+          return harnessReply('multi/grok/grok-4.6');
+        },
+      },
+    },
+  );
+  const headers = { 'x-claude-code-session-id': session };
+  const cases: {
+    label: string;
+    payload: Record<string, unknown>;
+    route: GatewayEvent['route'];
+    endpoint?: string;
+    hit: keyof typeof hits;
+  }[] = [
+    {
+      label: 'cursor',
+      payload: { messages: [{ role: 'user', content: 'hi' }], model: 'multi/cursor/auto' },
+      route: 'cursor',
+      endpoint: '@cursor/sdk',
+      hit: 'cursor',
+    },
+    {
+      label: 'antigravity',
+      payload: {
+        messages: [{ role: 'user', content: 'hi' }],
+        model: 'multi/antigravity/gemini-test-low',
+      },
+      route: 'antigravity',
+      endpoint: 'agy',
+      hit: 'antigravity',
+    },
+    {
+      label: 'grok',
+      payload: {
+        messages: [{ role: 'user', content: 'hi' }],
+        model: 'multi/grok/grok-4.6',
+      },
+      route: 'grok',
+      endpoint: 'grok',
+      hit: 'grok',
+    },
+    {
+      label: 'zen',
+      payload: {
+        messages: [{ role: 'user', content: 'hi' }],
+        model: 'multi/zen/gpt-5.6-luna',
+      },
+      route: 'zen',
+      hit: 'zen',
+    },
+    {
+      label: 'openai',
+      payload: { ...body, model: 'multi/openai/gpt-6-astra' },
+      route: 'openai',
+      hit: 'openai',
+    },
+    {
+      label: 'claude',
+      payload: { messages: [{ role: 'user', content: 'hi' }], model: 'claude-opus-4-6' },
+      route: 'anthropic',
+      hit: 'anthropic',
+    },
+    {
+      label: 'missing model',
+      payload: { messages: [{ role: 'user', content: 'hi' }] },
+      route: 'anthropic',
+      hit: 'anthropic',
+    },
+  ];
+  for (const row of cases) {
+    const before = { ...hits };
+    routes.length = 0;
+    endpoints.length = 0;
+    const response = await call(row.payload, headers);
+    assert.equal(response.status, 200, row.label);
+    await response.text();
+    assert.equal(routes.at(-1), row.route, row.label);
+    if (row.endpoint) {
+      assert.equal(endpoints.at(-1), row.endpoint, row.label);
+    }
+    const touched = Object.keys(hits).filter(
+      (key) => hits[key as keyof typeof hits] > before[key as keyof typeof hits],
+    );
+    assert.deepEqual(touched, [row.hit], row.label);
+  }
+});
+
+test('OpenAI streaming records tool memory from SSE observation, not rememberResult', async (t) => {
+  const streamSession = JSON.stringify({ session_id: 'stream-tool-session' });
+  const bufferedSession = JSON.stringify({ session_id: 'buffered-tool-session' });
+  const command = 'node stream-tool-memory.js';
+  const toolId = 'call_stream_tool_memory';
+  const toolItem: SseEvent = {
+    type: 'function_call',
+    call_id: toolId,
+    name: 'Bash',
+    arguments: JSON.stringify({ command }),
+  };
+  const upstream: GatewayFetch = async () => new Response(sse(events(toolItem)));
+  let reviews = 0;
+  const bridge = new NativeApprovalBridge(async () => {
+    reviews++;
+    return { outcome: 'allow', model: 'codex-auto-review' };
+  });
+  const call = await gateway(t, upstream, {
+    guardAuto: true,
+    approvalBridge: bridge,
+    blockAnthropic: true,
+  });
+  const inference = {
+    model,
+    metadata: { user_id: bufferedSession },
+    messages: [{ role: 'user', content: command }],
+    tools: [
+      {
+        name: 'Bash',
+        input_schema: { type: 'object', properties: { command: { type: 'string' } } },
+      },
+    ],
+  };
+  const classify = (streamed: boolean) =>
+    call(
+      {
+        model: 'claude-sonnet-5',
+        metadata: { user_id: streamed ? streamSession : bufferedSession },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: '<transcript>\n' },
+              { type: 'text', text: `${JSON.stringify({ Bash: command })}\n` },
+              { type: 'text', text: '</transcript>\n' },
+              { type: 'text', text: 'Stage 1 does NOT apply user intent\n<severity>N</severity>' },
+            ],
+          },
+        ],
+      },
+      streamed ? { 'x-claude-code-agent-id': 'stream-worker' } : {},
+    );
+
+  const buffered = await call({ ...inference, stream: false });
+  assert.equal(buffered.status, 200);
+  const bufferedMessage = await readMessage(buffered);
+  const bufferedTool = bufferedMessage.content.find((block) => block.type === 'tool_use');
+  assert(bufferedTool?.type === 'tool_use');
+  assert.equal(bufferedTool.id, toolId);
+  assert.equal((await classify(false)).status, 200);
+  assert.equal(reviews, 1);
+
+  const worker = { 'x-claude-code-agent-id': 'stream-worker' };
+  const streamed = await call({ ...inference, stream: true }, worker);
+  assert.equal(streamed.status, 200);
+  assert.match(streamed.headers.get('content-type') ?? '', /event-stream/);
+  await streamed.text();
+  assert.equal((await classify(true)).status, 400);
+  assert.equal(reviews, 1);
+});
+
+test('plan mode binds OpenAI review and denies planned edits without review', async (t) => {
+  const session = 'plan-review-session';
+  const modes = new PermissionModes(async () => ({}));
+  const prompt = (mode: string) =>
+    modes.record({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: session,
+      permission_mode: mode,
+      prompt: 'review',
+    });
+  const contexts: (ApprovalContext | undefined)[] = [];
+  const bridge = new NativeApprovalBridge(async (_input, _signal, context) => {
+    contexts.push(context);
+    return { outcome: 'allow', model: 'codex-auto-review' };
+  });
+  const call = await gateway(t, async () => new Response(sse(textEvents)), {
+    approvalBridge: bridge,
+    permissionModes: modes,
+  });
+  const metadata = { user_id: JSON.stringify({ session_id: session }) };
+  const classify = async (action: Record<string, unknown>) => {
+    const response = await call({
+      model: 'claude-sonnet-5',
+      metadata,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '<transcript>\n' },
+            { type: 'text', text: `${JSON.stringify(action)}\n` },
+            { type: 'text', text: '</transcript>\n' },
+            { type: 'text', text: 'Stage 1 does NOT apply user intent\n<severity>N</severity>' },
+          ],
+        },
+      ],
+    });
+    assert.equal(response.status, 200);
+    return JSON.stringify(await response.json());
+  };
+  await prompt('plan');
+  const inference = await call({
+    model,
+    metadata,
+    stream: false,
+    messages: [{ role: 'user', content: 'plan' }],
+    tools: [{ name: 'Bash', input_schema: { type: 'object' } }],
+  });
+  assert.equal(inference.status, 200);
+  await inference.text();
+
+  assert.match(await classify({ Bash: 'node -p 1' }), /<severity>0</);
+  assert.equal(contexts.at(-1)?.planMode, true);
+  const denied = await classify({ Write: { file_path: 'edit.txt', content: 'edited' } });
+  assert.match(denied, /<severity>100</);
+  assert.match(denied, /multi-plan-mode/);
+  assert.equal(contexts.length, 1);
+
+  await prompt('auto');
+  await classify({ Write: { file_path: 'edit.txt', content: 'edited' } });
+  assert.equal(contexts.length, 2);
+  assert.equal(contexts.at(-1)?.planMode, undefined);
+  const safeguarded = await call({
+    model,
+    metadata,
+    stream: false,
+    messages: [{ role: 'user', content: 'plan from classifier context' }],
+    tools: [{ name: 'Bash', input_schema: { type: 'object' } }],
+    safeguards: [
+      {
+        type: 'dangerous_tool_use',
+        classifier_context: { permission_mode: 'plan' },
+      },
+    ],
+  });
+  assert.equal(safeguarded.status, 200);
+  await safeguarded.text();
+  await classify({ Bash: 'node -p 1' });
+  assert.equal(contexts.at(-1)?.requestPermissionMode, 'plan');
+  assert.equal(contexts.at(-1)?.planMode, true);
+  assert.throws(() => modes.planning('unknown-session'), /permission mode is unavailable/);
 });

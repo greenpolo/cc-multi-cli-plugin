@@ -15,20 +15,26 @@ Codex stores the ChatGPT login in its `auth.json`. Credential renewal is CLI-own
 
 Use `/model multi/openai/<model-id>` or choose a row in `/model`. Use `/effort <value>` for the main session.
 
-| Picker row | Model | Named worker |
-| --- | --- | --- |
-| OpenAI · `gpt-6-astra` | `gpt-6-astra` | `openai-native` |
-| OpenAI · `gpt-6-sol` | `gpt-6-sol` | `openai-sol` |
-| OpenAI · `gpt-5.6-terra` | `gpt-5.6-terra` | `openai-terra` |
-| OpenAI · `gpt-6-luna` | `gpt-6-luna` | `openai-luna` |
-
-Each worker has `-low`, `-medium`, `-high`, `-xhigh`, and `-max` variants. An unsuffixed worker uses medium effort. For example, `openai-luna-high` sends `high` as OpenAI reasoning effort.
+| Picker row | Model |
+| --- | --- |
+| OpenAI · `gpt-6-astra` | `gpt-6-astra` |
+| OpenAI · `gpt-6-sol` | `gpt-6-sol` |
+| OpenAI · `gpt-5.6-terra` | `gpt-5.6-terra` |
+| OpenAI · `gpt-6-luna` | `gpt-6-luna` |
 
 Picker rows include `behavesAs` metadata for Claude client compatibility. This metadata selects a Claude profile for picker behavior and does not change the `multi/openai/...` ID or claim provider equivalence.
 
 ## Workers
 
-Ask Claude to use a named worker, such as `openai-luna-high`. Workers appear as native subagent entries with model activity, elapsed time, progress, and completion status. Cancelling the Claude request aborts the OpenAI request and worker activity.
+The Agent tool's `multi-openai` type runs any row above: pass `model: <id>`
+(for example `model: gpt-6-luna`) to pick one, or omit `model` to run the
+default, `gpt-6-astra`. An unknown id, another provider's model, or an
+effort-suffixed name such as `gpt-6-luna-high` refuses the spawn, naming the
+available OpenAI models. `multi-openai` runs one provider-wide medium effort;
+effort is never part of the model name, and the session's `/effort` does not
+change it. Workers appear as native subagent entries with model activity,
+elapsed time, progress, and completion status. Cancelling the Claude request
+aborts the OpenAI request and worker activity.
 
 ## Instruction profile
 

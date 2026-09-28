@@ -12,6 +12,7 @@ import {
   CursorHarness,
 } from '../../plugins/multi-cursor/src/harness.ts';
 import { cursorModelOptions } from '../../plugins/multi-cursor/src/models.ts';
+import { CURSOR_TOOLS } from '../../plugins/multi-cursor/src/progress.ts';
 import { removeTemporary } from '../temporary.ts';
 
 const options = cursorModelOptions([{ id: 'test-model', displayName: 'Test Model' }]);
@@ -93,6 +94,7 @@ test('Cursor harness serves isolated main and worker SSE progress without replay
     token: 'test-token',
     authFile: 'unused',
     cursor: harness,
+    displayTools: { cursor: CURSOR_TOOLS },
     timeoutMs: 5,
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -125,21 +127,45 @@ test('Cursor harness serves isolated main and worker SSE progress without replay
   // A whole Cursor run outlives the configured single-model request deadline.
   const firstSse = await first.text();
   assert.match(firstSse, /\[Cursor\] Compacting context/);
-  assert.match(firstSse, /\[Cursor\] Shell: printf native started/);
-  assert.match(firstSse, /\[Cursor\] Shell completed \(exit 0\)/);
+  assert.match(firstSse, /\[Cursor\] 1 native action: 1 shell\./);
+  assert.doesNotMatch(firstSse, /started\.|completed \(exit/);
   assert.match(firstSse, /\[Cursor\] Context compacted/);
   assert.match(firstSse, /event: message_stop/);
   assert.doesNotMatch(firstSse, /tool_use/);
+  const expectShellAction = async (agent: string) => {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/multi/mod/lifecycle?sessionId=session-1&agentId=${agent}`,
+      { headers: { 'x-multi-gateway-token': 'test-token' } },
+    );
+    assert.equal(response.status, 200);
+    const status = (await response.json()) as { state: string; detail: string };
+    assert.equal(status.state, 'completed');
+    assert.equal(status.detail, 'Shell: printf native');
+  };
+  await expectShellAction('main');
 
   const retry = await request();
   assert.equal(retry.status, 200);
   assert.equal(await retry.text(), firstSse);
   assert.equal(sends, 1, 'identical HTTP retry must replay the cached response');
 
+  // Once the mod registered the display tools, the worker's own stream carries the
+  // native action as a row named after Cursor's tool, with its native arguments.
+  const acknowledged = await fetch(`http://127.0.0.1:${address.port}/multi/mod/display-tools`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-multi-gateway-token': 'test-token' },
+    body: JSON.stringify({ sessionId: 'session-1', registered: ['shell'] }),
+  });
+  assert.equal(acknowledged.status, 200);
   const worker = await request('worker-1');
   assert.equal(worker.status, 200);
-  assert.match(await worker.text(), /event: message_stop/);
+  const workerSse = await worker.text();
+  assert.match(workerSse, /event: message_stop/);
+  assert.match(workerSse, /"name":"mcp__multi-core__shell"/);
+  assert.match(workerSse, /\\"command\\":\\"printf native\\"/);
+  assert.doesNotMatch(workerSse, /1 native action/, 'the summary waits for the follow-up');
   assert.equal(sends, 2, 'worker scope must own a separate native agent');
+  await expectShellAction('worker-1');
 });
 
 test('native SSE cancellation stops the SDK run without reporting successful completion', {
@@ -239,7 +265,7 @@ test('native SSE cancellation stops the SDK run without reporting successful com
   await harness.close();
   const sse = await response.text();
   assert.equal(cancellations, 1);
-  assert.match(sse, /\[Cursor\] Shell: printf native started/);
+  assert.doesNotMatch(sse, /\[Cursor\] Shell: printf native started/);
   assert.match(sse, /event: error/);
   assert.doesNotMatch(sse, /event: message_stop|"stop_reason":"end_turn"|tool_use/);
   const retry = await request();

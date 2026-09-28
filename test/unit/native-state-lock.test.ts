@@ -171,6 +171,25 @@ test('recovers when a Windows delete-pending marker vanishes between open and st
   await release();
 });
 
+test('rejects non-positive maxAttempts before touching the lock file', async () => {
+  let opened = false;
+  const open = async () => {
+    opened = true;
+    throw new Error('lock file must not be opened');
+  };
+  for (const maxAttempts of [0, -1, 1.5, Number.NaN]) {
+    await assert.rejects(
+      lockStateFile('/tmp/state.lock', { maxAttempts, open }),
+      (error: unknown) => {
+        assert.equal(error instanceof RangeError, true);
+        assert.match(String(error), /positive integer/);
+        return true;
+      },
+    );
+  }
+  assert.equal(opened, false);
+});
+
 test('an empty marker left by the previous flock-based lock is taken over', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'state-lock-legacy-'));
   t.after(() => removeTemporary(directory));

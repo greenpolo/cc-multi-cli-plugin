@@ -15,13 +15,6 @@ export interface ZenModel {
 
 export interface ZenModelOption extends ZenModel {
   model: string;
-  worker: string;
-  nativeWorker: true;
-}
-
-export interface ZenWorker {
-  model: string;
-  effort?: Effort;
 }
 
 const GPT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const satisfies readonly Effort[];
@@ -81,15 +74,6 @@ export const ZEN_MODELS: readonly ZenModel[] = Object.freeze([
     maxOutputTokens: 128000,
   },
   {
-    id: 'kimi-k2.7-code',
-    protocol: 'chat',
-    label: 'Kimi K2.7 Code',
-    description: 'OpenCode Zen · Chat Completions',
-    images: true,
-    documents: false,
-    maxOutputTokens: 262144,
-  },
-  {
     id: 'glm-5.2',
     protocol: 'chat',
     label: 'GLM-5.2',
@@ -107,78 +91,15 @@ export const ZEN_MODELS: readonly ZenModel[] = Object.freeze([
     documents: false,
     maxOutputTokens: 131072,
   },
+  // Zen /v1/models still lists retired IDs (deepseek-v4-pro, kimi-k2.7-code) that
+  // answer 404, and free-tier IDs that refuse use outside OpenCode; each entry here
+  // served a live request on 2026-09-26.
   {
-    id: 'big-pickle',
+    id: 'deepseek-v4.1-flash',
     protocol: 'chat',
-    label: 'Big Pickle',
+    label: 'DeepSeek V4.1 Flash',
     description: 'OpenCode Zen · Chat Completions',
-    images: false,
-    documents: false,
-    maxOutputTokens: 32000,
-  },
-  // Free catalog verified against Zen /v1/models and models.dev on 2026-09-09.
-  {
-    id: 'mimo-v2.5-free',
-    protocol: 'chat',
-    label: 'MiMo V2.5 Free',
-    description: 'OpenCode Zen · Free',
     images: true,
-    documents: false,
-    maxOutputTokens: 32000,
-  },
-  {
-    id: 'ling-3.0-flash-fin-free',
-    protocol: 'chat',
-    label: 'Ling 3.0 Flash Fin Free',
-    description: 'OpenCode Zen · Free',
-    images: false,
-    documents: false,
-    maxOutputTokens: 32768,
-  },
-  {
-    id: 'nemotron-3-ultra-free',
-    protocol: 'chat',
-    label: 'Nemotron 3 Ultra Free',
-    description: 'OpenCode Zen · Free',
-    images: false,
-    documents: false,
-    maxOutputTokens: 128000,
-  },
-  {
-    id: 'nemotron-3.5-lightning-free',
-    protocol: 'chat',
-    label: 'Nemotron 3.5 Lightning Free',
-    description: 'OpenCode Zen · Free',
-    images: false,
-    documents: false,
-    maxOutputTokens: 262144,
-  },
-  {
-    id: 'muse-spark-1.3-contributor-free',
-    protocol: 'responses',
-    label: 'Muse Spark 1.3 Free',
-    description: 'OpenCode Zen · Free',
-    efforts: ['low', 'medium', 'high', 'xhigh'],
-    images: true,
-    documents: true,
-    maxOutputTokens: 131072,
-  },
-  {
-    id: 'muse-spark-1.2-contributor-free',
-    protocol: 'responses',
-    label: 'Muse Spark 1.2 Free',
-    description: 'OpenCode Zen · Free',
-    efforts: ['low', 'medium', 'high', 'xhigh'],
-    images: true,
-    documents: true,
-    maxOutputTokens: 131072,
-  },
-  {
-    id: 'deepseek-v4-pro',
-    protocol: 'chat',
-    label: 'DeepSeek V4 Pro',
-    description: 'OpenCode Zen · Chat Completions',
-    images: false,
     documents: false,
     maxOutputTokens: 384000,
   },
@@ -232,8 +153,7 @@ export const ZEN_MODELS: readonly ZenModel[] = Object.freeze([
 
 // Curated default picker; other supported models remain explicitly selectable.
 const DEFAULT_ZEN_MODELS = [
-  'deepseek-v4-pro',
-  'deepseek-v4-flash',
+  'deepseek-v4.1-flash',
   'kimi-k3',
   'glm-5.3',
   'glm-5.3-flash',
@@ -241,10 +161,6 @@ const DEFAULT_ZEN_MODELS = [
 ];
 
 const modelById = new Map(ZEN_MODELS.map((model) => [model.id, model]));
-
-function workerName(id: string): string {
-  return `zen-${id}`;
-}
 
 function route(id: string): string {
   return `multi/zen/${id}`;
@@ -256,29 +172,17 @@ export function zenModelOptions(availableIds?: readonly string[]): ZenModelOptio
   return ZEN_MODELS.filter((model) => available?.has(model.id) ?? true).map((model) => ({
     ...model,
     model: route(model.id),
-    worker: workerName(model.id),
-    nativeWorker: true,
   }));
 }
 
-export const ZEN_WORKERS: Readonly<Record<string, ZenWorker>> = Object.freeze(
-  Object.fromEntries(
-    ZEN_MODELS.flatMap((model) => {
-      const base = [
-        [workerName(model.id), { model: route(model.id), effort: defaultEffort(model) }],
-      ];
-      const efforts = (model.efforts ?? []).map((effort) => [
-        `${workerName(model.id)}-${effort}`,
-        { model: route(model.id), effort },
-      ]);
-      return [...base, ...efforts];
-    }),
-  ),
-);
+/** The model a `multi-zen` worker runs when the Agent call names none. */
+export const ZEN_DEFAULT_WORKER_MODEL = DEFAULT_ZEN_MODELS[0];
 
-function defaultEffort(model: ZenModel): Effort | undefined {
-  return model.efforts?.includes('medium') ? 'medium' : undefined;
-}
+/**
+ * Every Zen model with adjustable effort accepts medium, and the native-reasoning
+ * models ignore it, so one provider-wide default replaces per-model name variants.
+ */
+export const ZEN_WORKER_EFFORT: Effort = 'medium';
 
 export function zenModel(id: string): ZenModel | undefined {
   return modelById.get(id);

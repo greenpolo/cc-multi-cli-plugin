@@ -26,23 +26,34 @@ and does not read provider tokens or call Antigravity model endpoints.
 
 The picker reads the models advertised by `agy`.
 
-| Picker entry | Route | Named worker |
-| --- | --- | --- |
-| Advertised base family | `multi/antigravity/<base>` | `antigravity-<base>` |
-| Advertised `-low`, `-medium`, or `-high` variant | `multi/antigravity/<id>` | `antigravity-<id>` |
-| Unsuffixed advertised model | `multi/antigravity/<id>` | `antigravity-<id>` |
+| Picker entry | Route |
+| --- | --- |
+| Advertised base family | `multi/antigravity/<base>` |
+| Advertised `-low`, `-medium`, or `-high` variant | `multi/antigravity/<id>` |
+| Unsuffixed advertised model | `multi/antigravity/<id>` |
 
 Suffix variants group behind a base row when no independent base model exists.
 The default variant order is medium, high, then low. `/effort` accepts only an
 advertised low, medium, or high variant. Unknown models and unavailable effort
 variants fail explicitly.
 
+Workers: the Agent tool's `multi-antigravity` type runs any row above, except
+an id that only adds an effort suffix to another listed row (`<base>-high`
+beside `<base>`) — that stays selectable through `/effort`, not through
+`model`. Pass `model: <id>` (for example `model: gemini-3.8-flash`) to pick a
+model, or omit `model` to run the newest Gemini generation, Pro before Flash
+at the same version (for example `gemini-3.8-flash` when 3.8 is newest).
+Effort is never part of the model name: the session's `/effort` applies, and
+Antigravity picks its advertised low/medium/high variant from it.
+
 ### Context window
 
-Gemini rows and their workers carry a `[1m]` tag on the model ID, so Claude sizes
-the session to the million input tokens Gemini 3.x accepts. The tag is Claude-side
-display metadata: `agy` never sees it, both spellings select the same native model,
-and `/effort` still offers only the advertised low, medium, and high variants.
+Gemini picker rows carry a `[1m]` tag on the model ID, so Claude sizes the
+session to the million input tokens Gemini 3.x accepts; a `multi-antigravity`
+worker resolved to one of these rows keeps the tag on its spawned model. The
+tag is Claude-side display metadata: `agy` never sees it, both spellings select
+the same native model, and `/effort` still offers only the advertised low,
+medium, and high variants.
 
 Other advertised models keep Claude's 200K default, because their window is smaller
 or unestablished: GPT-OSS 120B accepts 131,072 tokens, and the Claude models served
@@ -58,15 +69,24 @@ Claude's window governs when the session compacts. It is separate from the nativ
 Claude's permission mode and tool rules take precedence. `agy` runs with native
 permissions skipped. The namespaced global hook reads `MULTI_ANTIGRAVITY_DENY`
 and denies Claude-excluded native tools. Native children and MCP tools are always
-denied. External actions appear as display text and are never replayed as
-executable Claude tools. Claude and OpenAI parents can spawn named Antigravity
+denied. Each finished tool step is a row under agy's own tool name (`view_file`,
+`run_command`, ...) with its native parameters and `tool_info.output`, in the
+`/model` Antigravity session or inside the Antigravity worker's transcript; the
+names come from agy's `init` toolset. Rows are never replayed as executable Claude
+tools. `agy` does not distinguish a failed tool step: a failing command such as
+`cat /nonexistent/file` ends `DONE` with the error only in its output and no exit
+code, so the row shows as done and its output carries the error; Multi does not
+guess failure from the text. The transcript keeps streamed text, run diagnostics,
+and one closing summary of action counts, changed files, and failed steps. Claude and OpenAI parents can spawn Antigravity
 workers.
 
 Every run selects its native workspace explicitly with `--add-dir`; subprocess
 cwd alone does not select it. Auto, acceptEdits, and Bypass use the native CLI
 without a reviewer, while the hook enforces explicit Claude restrictions. Plan
-also passes `--mode plan` and denies shell, write, edit, notebook-edit, and
-delegation tools. Unsupported modes, tool restrictions, and policy controls fail
+also passes `--mode plan`, which only steers agy's model: with permissions
+skipped it still runs shell and write tools. The hook therefore allows only
+native read, search, and web lookup tools in Plan and denies every other tool,
+including ones newer agy releases add. Compaction turns allow no tools. Unsupported modes, tool restrictions, and policy controls fail
 explicitly.
 
 The hook command uses a POSIX shell guard on Linux, macOS, and other Unix hosts.
@@ -82,7 +102,21 @@ continue on the native conversation; native state is never rewound.
 
 Completed identical requests can replay saved output. CLI usage is cumulative,
 so resumed usage is differenced from the previous recorded total. Cache reuse is
-best-effort. An uncertain run is never replayed. If a run reports a conversation
+best-effort.
+
+A turn's `result` usage is the sum of every model call agy made in that turn;
+each call's own usage arrives earlier on its `agent_response` step. The Messages
+response therefore reports the last call's input and cache reads in its standard
+fields, which Claude Code reads as the worker's live context, and the turn sums as
+`multi_usage.consumed_*` with `model_calls`, which receipts and `/multi-usage`
+charge as spend. The resume difference applies only to the sums; the last call is
+already that call's own count. Gemini on Antigravity reports no prompt caching
+(zero cache reads, so every call resends its full context), and its consumption
+looks large next to Claude or Codex workers: a 19-action Gemini run reported about
+800k consumed input over a live context near 20k. Claude models on the same CLI
+read the cache after their first call. The quota impact measured on September 22,
+2026 was negligible: about 2M Gemini Flash tokens moved the 5-hour bucket by about
+0.1 points. An uncertain run is never replayed. If a run reports a conversation
 ID but no terminal result, the next request streams an interruption notice before
 continuing. Non-success terminal results are reported as errors and are retried
 by a later identical request.

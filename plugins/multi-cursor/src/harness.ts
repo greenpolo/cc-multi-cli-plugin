@@ -2,7 +2,14 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { AgentOptions, AgentUsage, Run, SDKAgent, TokenUsage } from '@cursor/sdk';
+import type {
+  AgentOptions,
+  AgentUsage,
+  InteractionUpdate,
+  Run,
+  SDKAgent,
+  TokenUsage,
+} from '@cursor/sdk';
 import type { WorkerPermissions } from '../../multi-core/src/gateway/agent-definitions.ts';
 import {
   archiveHarnessReply,
@@ -22,6 +29,10 @@ import {
   terminalSuffix,
   writeNotices,
 } from '../../multi-core/src/gateway/harness-notices.ts';
+import {
+  NativeActionTracker,
+  type NativeProgressObserver,
+} from '../../multi-core/src/gateway/harness-progress.ts';
 import {
   HarnessResponse,
   type HarnessUsageFields,
@@ -44,6 +55,7 @@ import type {
   MessagesResponse,
 } from '../../multi-core/src/gateway/messages.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
+import { dangerousToolMode } from '../../multi-core/src/gateway/safeguards.ts';
 import { settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
 import { CursorProviderError, cursorRunError } from './errors.ts';
 import { type CursorModelOption, cursorSelection } from './models.ts';
@@ -52,8 +64,7 @@ import {
   cursorPermissionPolicy,
   mergeCursorPermissions,
 } from './permissions.ts';
-import type { NativeRowObserver } from './progress.ts';
-import { cursorRowObservation, formatCursorProgress } from './progress.ts';
+import { cursorContextNotice, observeCursorUpdate } from './progress.ts';
 import { prepareCursorRequest } from './request.ts';
 import { legacyCursorSessionFile, restoreCursorSession } from './session-record.ts';
 
@@ -65,6 +76,7 @@ type PendingRun = {
   model: string;
   effort?: string;
   inputTokens: number;
+  safeguarded?: boolean;
 };
 /**
  * The persisted half. Version 3 carries the shared `provider`/`identity` header.
@@ -104,9 +116,10 @@ const hash = (value: unknown) =>
 type CursorExchange = HarnessExchange<RunState>;
 
 /**
- * Cursor is the one harness whose reply is not text alone: a mod display row is
- * persisted as a `tool_use` block, so a replay that rejected it would fail the
- * turn forever. The block is display-only and is never executed as a tool.
+ * A Cursor reply holds text and display rows (tool_use blocks named after the
+ * native tool). Records written before 0.2.2 may hold the display-only blocks of
+ * the retired `mcp__multi-core__cursor_*` rows, and a replay that rejected them
+ * would fail those turns forever, so any tool_use block remains loadable.
  */
 const cursorContentBlock: ContentBlockCheck = (block) =>
   textContentBlock(block) ||
@@ -156,7 +169,7 @@ async function boundedUsage(request: Promise<AgentUsage>) {
   }
 }
 
-/** Cursor owns state, tools and review. External actions are display-only text. */
+/** Cursor owns state, tools and review. Its native actions are display rows only. */
 export class CursorHarness {
   private readonly options: Map<string, CursorModelOption>;
   private readonly store: HarnessSessionStore<SavedSession, CursorRuntime>;
@@ -261,6 +274,11 @@ export class CursorHarness {
    */
   private identity(scope: string) {
     return JSON.stringify([this.cwd, scope]);
+  }
+
+  /** The scope's last reply from its session record, read without taking the record. */
+  recordedResponse(scope: string) {
+    return this.store.recordedResponse(this.identity(scope));
   }
 
   /** Fetch Cursor's billed usage on demand; this is not inferred from turn tokens. */
@@ -369,7 +387,7 @@ export class CursorHarness {
     signal: AbortSignal,
     emit?: Emit,
     context?: PermissionContext,
-    rowObserver?: NativeRowObserver,
+    observeProgress?: NativeProgressObserver,
   ) {
     if (this.closed) {
       throw new Error('Cursor harness is closed');
@@ -393,7 +411,7 @@ export class CursorHarness {
       if (this.registry.size >= maximumExchanges && !this.registry.evictSettled()) {
         throw new Error('Too many concurrent Cursor requests');
       }
-      exchange = this.startExchange(body, scope, key, permissions, rowObserver);
+      exchange = this.startExchange(body, scope, key, permissions, observeProgress);
     }
     return this.registry.observe(exchange, signal, emit);
   }
@@ -403,7 +421,7 @@ export class CursorHarness {
     scope: string,
     key: string,
     context: PermissionContext,
-    rowObserver?: NativeRowObserver,
+    observeProgress?: NativeProgressObserver,
   ): CursorExchange {
     return this.registry.start(
       key,
@@ -415,7 +433,7 @@ export class CursorHarness {
           exchange,
           emit,
           context,
-          rowObserver,
+          observeProgress,
         );
         exchange.meta.succeeded = true;
         return response;
@@ -439,7 +457,7 @@ export class CursorHarness {
     exchange: CursorExchange,
     emit: Emit,
     context: PermissionContext,
-    rowObserver?: NativeRowObserver,
+    observeProgress?: NativeProgressObserver,
   ): Promise<MessagesResponse> {
     const lease = await this.takeTurn(scope);
     const session = lease.session;
@@ -458,7 +476,7 @@ export class CursorHarness {
       if (cached !== undefined) {
         return cached;
       }
-      return await this.execute(body, session, key, exchange, emit, context, rowObserver);
+      return await this.execute(body, session, key, exchange, emit, context, observeProgress);
     } finally {
       if (this.closed) {
         this.closeAgent(session.runtime.agent);
@@ -505,9 +523,15 @@ export class CursorHarness {
       return undefined;
     }
     const events: HarnessEvent[] = [];
-    const response = new HarnessResponse(pending.model, pending.inputTokens, (name, value) => {
-      events.push([name, structuredClone(value)]);
-    });
+    const response = new HarnessResponse(
+      pending.model,
+      pending.inputTokens,
+      (name, value) => {
+        events.push([name, structuredClone(value)]);
+      },
+      undefined,
+      { requested: pending.safeguarded === true },
+    );
     response.text(result.result ?? '');
     const finished = response.finish(cursorUsage(result.usage), pending.model, pending.effort);
     events.push(...response.takeTerminalEvents());
@@ -637,8 +661,9 @@ export class CursorHarness {
     model: string,
     inputTokens: number,
     effort?: string,
+    safeguarded?: boolean,
   ) {
-    session.saved.pendingRun = { key, model, inputTokens, effort };
+    session.saved.pendingRun = { key, model, inputTokens, effort, safeguarded };
     // Durability write: a gateway crash before a terminal result arrives leaves
     // the session interrupted, so the next request resumes it with a notice
     // instead of guessing what the dispatched run did.
@@ -654,7 +679,7 @@ export class CursorHarness {
     exchange: CursorExchange,
     emit: Emit,
     context: PermissionContext,
-    rowObserver?: NativeRowObserver,
+    observeProgress?: NativeProgressObserver,
   ) {
     const signal = exchange.controller.signal;
     signal.throwIfAborted();
@@ -679,9 +704,17 @@ export class CursorHarness {
       if (session.saved.interrupted) {
         prepared.prompt.text = `${interruptedNotice('Cursor')}\n\n${prepared.prompt.text ?? ''}`;
       }
-      const stream = new HarnessResponse(body.model ?? '', prepared.inputTokens, emit, {
-        multiBlock: true,
-      });
+      const stream = new HarnessResponse(
+        body.model ?? '',
+        prepared.inputTokens,
+        emit,
+        body.safeguards,
+      );
+      // Each finished SDK tool call becomes a display row in this reply, named
+      // after Cursor's own tool; the terse summary is written when the run ends.
+      const actions = new NativeActionTracker('Cursor', observeProgress, (block) =>
+        stream.displayRow(block),
+      );
       writeNotices(stream, {
         tag: 'Cursor',
         interrupted: session.saved.interrupted,
@@ -705,6 +738,7 @@ export class CursorHarness {
         selection.id,
         prepared.inputTokens,
         selectedEffort(selection),
+        dangerousToolMode(body.safeguards) !== undefined,
       );
       dispatched = true;
       signal.throwIfAborted();
@@ -718,7 +752,7 @@ export class CursorHarness {
         (delta) => {
           text += delta;
         },
-        rowObserver,
+        (update) => observeCursorUpdate(update, actions),
       );
       dispatch.runId = session.runtime.run.id;
       await this.store.save(session);
@@ -733,11 +767,8 @@ export class CursorHarness {
         throw cursorRunError(result);
       }
       signal.throwIfAborted();
-      const suffix = terminalSuffix(text, result.result ?? '');
-      if (suffix) {
-        rowObserver?.({ type: 'text', text: suffix });
-      }
-      stream.text(suffix);
+      stream.text(terminalSuffix(text, result.result ?? ''));
+      stream.text(actions.text());
       const response = stream.finish(
         cursorUsage(result.usage),
         selection.id,
@@ -779,25 +810,21 @@ export class CursorHarness {
     signal: AbortSignal,
     stream: HarnessResponse,
     appendText: (delta: string) => void,
-    rowObserver?: NativeRowObserver,
+    observeAction: (update: InteractionUpdate) => void,
   ) {
     return session.runtime.agent.send(prompt, {
       ...options,
       onDelta: ({ update }) => {
         signal.throwIfAborted();
-        const observation = rowObserver ? cursorRowObservation(update) : undefined;
-        const display = observation ? rowObserver?.(observation) : undefined;
-        if (display) {
-          stream.displayRow(display);
-        }
         if (update.type === 'text-delta') {
           appendText(update.text);
           stream.text(update.text);
-        } else if (!rowObserver) {
-          const progress = formatCursorProgress(update);
-          if (progress) {
-            stream.text(`\n${progress}\n`);
-          }
+          return;
+        }
+        observeAction(update);
+        const notice = cursorContextNotice(update);
+        if (notice) {
+          stream.text(`\n${notice}\n`);
         }
       },
     });
@@ -853,6 +880,7 @@ function validPendingRun(pending: PendingRun | undefined) {
       typeof pending.model === 'string' &&
       Number.isSafeInteger(pending.inputTokens) &&
       pending.inputTokens >= 0 &&
+      (pending.safeguarded === undefined || typeof pending.safeguarded === 'boolean') &&
       (pending.runId === undefined ||
         (typeof pending.runId === 'string' && pending.runId.length > 0)))
   );

@@ -1,5 +1,5 @@
+import type { NativeProgressObserver } from './harness-progress.ts';
 import type { Emit, MessagesRequest, MessagesResponse } from './messages.ts';
-import type { ModDisplayEvent, NativeObservation } from './mod-bridge.ts';
 import type { PermissionContext } from './mode-hook.ts';
 
 /** The gateway contract implemented by provider-owned native harnesses. */
@@ -11,8 +11,16 @@ export interface NativeHarness {
     signal: AbortSignal,
     emit?: Emit,
     context?: PermissionContext,
-    observe?: (observation: NativeObservation) => ModDisplayEvent | undefined,
+    observe?: NativeProgressObserver,
   ): Promise<MessagesResponse>;
+  /**
+   * The scope's last reply as its durable native session record holds it, read
+   * without running anything, so a reply's deferred answer survives a restart.
+   */
+  recordedResponse?(
+    scope: string,
+    context?: PermissionContext,
+  ): Promise<MessagesResponse | undefined>;
 }
 
 /** Provider failures expose an HTTP status without coupling core to their classes. */

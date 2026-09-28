@@ -1,3 +1,4 @@
+import { nativeToolRules } from '../../multi-core/src/gateway/display-rows.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 
 /** Native names reachable from each mapped Claude tool. */
@@ -15,6 +16,19 @@ const TOOL_MAP = {
 
 const PLAN_DENIED_CLAUDE_TOOLS = new Set(['Bash', 'Edit', 'Write', 'NotebookEdit']);
 
+/**
+ * agy's own plan mode only steers its model: with permissions skipped it still runs
+ * shell and write tools, and its catalog has side-effecting tools (browser, schedule,
+ * messaging) no Claude tool maps to. Plan therefore allows only these read-only tools.
+ */
+const PLAN_READ_ONLY = [
+  ...TOOL_MAP.Read,
+  ...TOOL_MAP.Grep,
+  ...TOOL_MAP.Glob,
+  ...TOOL_MAP.WebFetch,
+  ...TOOL_MAP.WebSearch,
+];
+
 /** Native child-agent and MCP tools; agy runs with permissions skipped, so these are always denied. */
 const ALWAYS_DENIED = [
   'invoke_subagent',
@@ -27,6 +41,8 @@ const ALWAYS_DENIED = [
 
 export interface AntigravityPolicy {
   denied: string[];
+  /** When present, every native tool outside this list is denied, including unknown ones. */
+  allowed?: string[];
   plan: boolean;
   notice: string;
 }
@@ -58,6 +74,7 @@ export function antigravityPermissionPolicy(context: PermissionContext): Antigra
   }
   return {
     denied: [...denied],
+    ...(plan ? { allowed: PLAN_READ_ONLY.filter((tool) => !denied.has(tool)) } : {}),
     plan,
     notice: policyNotice(context.permissionMode),
   };
@@ -70,15 +87,17 @@ export function antigravityCompactionDenyList(): string[] {
 
 function policyNotice(mode: PermissionContext['permissionMode']): string {
   if (mode === 'plan') {
-    return 'Plan: native shell, edits and delegation are blocked.';
+    return 'Plan: only native read, search and web lookup tools run.';
   }
   return 'Claude Code rules take precedence; native permission prompts are skipped. No reviewer.';
 }
 
-function toolRules(rules: string[] | undefined): Set<string> | undefined {
-  if (rules === undefined) {
+function toolRules(value: string[] | undefined): Set<string> | undefined {
+  if (value === undefined) {
     return undefined;
   }
+  // A display-row grant (`mcp__multi-core`) draws Claude Code rows; it maps to no native tool.
+  const rules = Array.isArray(value) ? nativeToolRules(value) : value;
   const supported = new Set([
     'Read',
     'Grep',
@@ -98,16 +117,26 @@ function toolRules(rules: string[] | undefined): Set<string> | undefined {
   return new Set(rules);
 }
 
+function toolList(serialized: string): string[] {
+  const tools: unknown = JSON.parse(serialized);
+  if (!Array.isArray(tools) || tools.some((tool) => typeof tool !== 'string')) {
+    throw new Error('Invalid native tool policy');
+  }
+  return tools;
+}
+
 /** No policy means an ordinary native CLI session, outside this gateway. */
-export function antigravityToolDecision(input: unknown, serializedPolicy?: string) {
+export function antigravityToolDecision(
+  input: unknown,
+  serializedPolicy?: string,
+  serializedAllowed?: string,
+) {
   if (serializedPolicy === undefined) {
     return undefined;
   }
   try {
-    const denied: unknown = JSON.parse(serializedPolicy);
-    if (!Array.isArray(denied) || denied.some((tool) => typeof tool !== 'string')) {
-      throw new Error('Invalid native tool policy');
-    }
+    const denied = toolList(serializedPolicy);
+    const allowed = serializedAllowed === undefined ? undefined : toolList(serializedAllowed);
     if (!input || typeof input !== 'object' || !('toolCall' in input)) {
       throw new Error('Missing native tool call');
     }
@@ -115,7 +144,7 @@ export function antigravityToolDecision(input: unknown, serializedPolicy?: strin
     if (!call || typeof call !== 'object' || !('name' in call) || typeof call.name !== 'string') {
       throw new Error('Invalid native tool call');
     }
-    if (denied.includes(call.name)) {
+    if (denied.includes(call.name) || (allowed && !allowed.includes(call.name))) {
       return {
         decision: 'deny',
         reason: 'Claude session policy excludes this native Antigravity tool.',

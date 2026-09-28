@@ -9,8 +9,9 @@ usage. Provider setup and limits are documented in [docs/installation.md](docs/i
 ## Overview
 
 The plugin puts external models and coding harnesses inside one Claude Code
-session. The launcher registers provider models and named workers. The Node
-gateway routes requests, preserves Claude passthrough, and coordinates sessions.
+session. The launcher registers provider models and one Agent-tool worker type
+per provider. The Node gateway routes requests, preserves Claude passthrough,
+and coordinates sessions.
 Claude Mods provide the in-engine control plane for model rows, worker rows,
 permission state, progress, and compaction. [The local Mods reference](docs/claude-mods.md)
 is required reading for changes to Claude Code UI or extensibility. Provider adapters own their model
@@ -32,9 +33,27 @@ Claude Code session (/model, workers, prompts)
 
 Claude Code sends Anthropic Messages traffic and provider requests to the gateway.
 The gateway passes Anthropic traffic through and translates direct-provider
-requests. `/model` exposes provider model and effort rows. Named workers expose
-explicit provider choices. Each run reports a visible lifecycle: row, elapsed
-time, streamed progress, completion, failure, and cancellation.
+requests. `/model` exposes provider model and effort rows. Each connected
+provider's Agent-tool worker type runs that provider's picker rows; the Agent
+tool's `model` parameter picks which. Each run reports a visible lifecycle: row,
+elapsed time, streamed progress, completion, failure, and cancellation.
+
+## Worker types
+
+The Agent tool offers exactly one type per signed-in or enabled provider:
+`multi-openai`, `multi-zen`, `multi-cursor`, `multi-antigravity`, and
+`multi-grok`. A type's models are exactly that provider's rows in the session's
+`/model` picker, so `--models`, `MULTI_MODELS`, and the provider-specific
+`_EXTRA_MODELS`/`_MODELS` environment variables bound them. The Agent tool's
+`model` parameter names a model as a short id (`composer-2.5`, `gpt-6-luna`) or
+the full `multi/<provider>/<id>`; a Multi mod hook takes it out before Claude's
+Agent schema check and resolves it against the catalog at spawn, rewriting the
+spawn to the full id. An unknown id, another provider's model, a Claude alias,
+or an effort-suffixed name (`gpt-6-luna-high`) refuses the spawn, naming the
+provider's available models. Omitting `model` runs the provider default.
+Effort is never part of a type or model name: OpenAI and Zen workers carry one
+provider-wide default effort, while Cursor, Antigravity, and Grok workers apply
+the session's `/effort`, validated by the provider.
 
 ## Execution contracts per provider
 
@@ -54,17 +73,24 @@ review stays with the originating OpenAI account. Zen never borrows Codex
 review. Missing GPT review fails explicitly.
 
 Cursor, Antigravity and Grok are harness integrations. Their SDK or CLI executes
-tools, keeps native state, and applies provider authentication. Claude displays external
-actions and progress; it never replays those actions as executable Claude tool
-calls. Cursor supports Auto, Plan, and Bypass. Antigravity uses its native CLI
+tools, keeps native state, and applies provider authentication. Each finished native
+action becomes a display row in the harness's own reply: a tool_use block named after
+the native tool (`mcp__multi-core__run_command`) with the native parameters and a
+gateway-issued token, answered by the Multi mod with the native output, so the row
+sits in the transcript of the `/model` session or worker that ran it. Display tools
+are never model tools: the gateway strips them from every provider's tools and
+history, the mod defers them and refuses any call without an issued token, and the
+gateway answers the engine's follow-up request with the reply's remaining text
+without a native run. Nothing is replayed or re-executed. Cursor supports Auto, Plan, and Bypass. Antigravity uses its native CLI
 with Claude policy enforcement at the prompt boundary. Grok carries the same
 policy in its own run arguments, and each announced toolset is checked against
 it because an unknown removal is accepted and ignored by that CLI.
 
 All three harnesses share their session store, in-flight exchange registry,
-response builder, durable completion, and notices from
+response builder, durable completion, notices, and the transcript action summary from
 `plugins/multi-core/src/gateway/harness-*.ts`. Grok and Antigravity additionally
-share native process execution and text prompt preparation; Cursor retains its
+share native process execution, text prompt preparation, and the native action
+tracker (Cursor uses it too) that turns native actions into display rows; Cursor retains its
 SDK and image-aware prompt format. Each provider still owns
 its own event grammar, CLI argument construction, usage accounting, and (for
 Cursor) SDK agent lifecycle. The shared layer owns turn leases, lock lifetime,
@@ -119,6 +145,9 @@ the saved response, the harness emits a notice and continues on its native recor
 it does not require a matching prompt hash or unique response anchor. Native state
 is never rewound. Compaction summarizes authenticated context while preserving the
 native record. Cache reuse and usage accounting remain provider-owned.
+The shared response builder reports a harness turn's last model call, its live
+context, in the standard usage fields and the turn's consumption in `multi_usage`
+([docs/claude-mods.md](docs/claude-mods.md)); each adapter supplies both.
 
 `HarnessSessionStore` (`gateway/harness-session.ts`) owns the loading gate,
 record validation, and lock lifetime. Persisted `saved` fields are separate from
@@ -146,9 +175,9 @@ Handles with an in-flight billed usage query are not evicted. A detached SDK
 record's `running` status is not a live ownership claim: the existing interrupted
 continuation notice remains the fallback when no terminal result can be recovered.
 
-Replay validation is provider-parameterized: Cursor's replies may carry the
-display-only `tool_use` blocks a Claude Mods row produces, while Grok and
-Antigravity stay text-only. `gateway/conversation.ts` normalizes Messages content
+Replay validation is provider-parameterized: new replies from every harness are
+text-only, and Cursor still accepts the display-only `tool_use` blocks that the
+retired pseudo-MCP rows wrote into records before 0.2.2, so those records replay. `gateway/conversation.ts` normalizes Messages content
 and media for Cursor and OpenAI without coupling Cursor to OpenAI request
 construction; provider-specific reasoning decoding stays with OpenAI.
 

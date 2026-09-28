@@ -29,15 +29,19 @@ and a failed run says to run `grok login`.
 
 The picker reads the models advertised by `grok models`.
 
-| Picker entry | Route | Named worker |
-| --- | --- | --- |
-| Advertised model | `multi/grok/<id>` | `grok-<id>` |
+| Picker entry | Route |
+| --- | --- |
+| Advertised model | `multi/grok/<id>` |
 
 `MULTI_GROK_MODELS` restricts the rows to a comma-separated list of advertised
 IDs, leaving other providers unchanged. `/effort` accepts `low`, `medium`,
 `high`, `xhigh`, and `max`; the CLI also supports `none` and `minimal`, which
 have no Claude row and are refused explicitly. The model that answers is not
 always the row's name — usage and receipts report the model the CLI billed.
+
+Workers: the Agent tool's `multi-grok` type runs any row above; pass `model:
+<id>` to pick one, or omit `model` to run the CLI's `(default)`-marked model.
+Effort is never part of the model name; the session's `/effort` applies.
 
 ## Execution and permissions
 
@@ -67,9 +71,14 @@ Plan mode alone removes no native tool, so Multi reconstructs it with explicit
 denials rather than trusting the flag. Unsupported modes, untranslatable tool
 restrictions, and an unenforced policy fail explicitly.
 
-External actions appear as display text and are never replayed as executable
-Claude tools. There is no Grok reviewer, and Multi never borrows another
-provider's.
+Each finished tool call is a row under Grok's own tool name (`read_file`,
+`run_terminal_command`, ...) with its raw input and output, in the `/model` Grok
+session or inside the Grok worker's transcript; refusals show as errored rows. New
+names in an announced toolset are registered for later runs. Rows are never
+replayed as executable Claude tools.
+The transcript keeps streamed text and one closing summary of action counts,
+changed files, and failed or refused actions. There is no Grok reviewer, and
+Multi never borrows another provider's.
 
 ### MCP is denied, not hidden
 
@@ -124,7 +133,11 @@ A completed identical request replays its saved output. A run that ends without
 a terminal event is never assumed complete: the next request resumes with an
 interruption notice. An answer returned on a different native session is refused
 rather than merged. Cost and token counts come from the run's own terminal event;
-`grok usage <session>` reports the session total the CLI itself recorded.
+`grok usage <session>` reports the session total the CLI itself recorded. The CLI
+also emits one `usage` event per model call before that terminal event, so the
+Messages response reports the last call's input and cache reads (the live
+context) in its standard fields and the terminal sums as `multi_usage.consumed_*`
+with `model_calls` (the count of those events, or `num_turns` without them).
 
 A failure that repeats on every attempt — a policy the CLI would not apply, a
 missing binary, a denied path — is reported as a request error so the session

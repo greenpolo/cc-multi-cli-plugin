@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { AgentCatalog } from '../../plugins/multi-core/src/gateway/agent-catalog.ts';
 import {
   checkLauncherArgumentLimit,
+  workerCatalog,
   workerDefinitions,
 } from '../../plugins/multi-core/src/launcher.ts';
 import { cursorModelOptions, cursorPickerOptions } from '../../plugins/multi-cursor/src/models.ts';
@@ -102,7 +103,7 @@ const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'ut
     assert.equal(result.backgroundTasks, undefined);
     assert.equal(result.functionHooks, '1');
     assert.equal(result.apiTimeout, auth === 'api' ? '1000' : '2147483647');
-    assert.equal(result.toolSearch, auth === 'api' ? 'false' : 'auto');
+    assert.equal(result.toolSearch, auth === 'api' ? 'false' : 'true');
     assert.deepEqual(result.settings.permissions.deny, ['Bash(denied)']);
     assert.equal(
       result.settings.permissions.disableAutoMode,
@@ -244,7 +245,7 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
   const pickerModels = result.settings.modelPicker.options.map(
     (option: { model: string }) => option.model,
   );
-  assert(pickerModels.includes('multi/zen/deepseek-v4-pro'));
+  assert(pickerModels.includes('multi/zen/deepseek-v4.1-flash'));
   assert(pickerModels.includes('multi/zen/muse-spark-1.3'));
   assert.equal(
     result.settings.modelPicker.options.find(
@@ -254,22 +255,20 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
   );
   assert.equal(
     result.settings.modelPicker.options.find(
-      (row: { model: string }) => row.model === 'multi/zen/deepseek-v4-pro',
+      (row: { model: string }) => row.model === 'multi/zen/deepseek-v4.1-flash',
     ).behavesAs,
     'claude-haiku-4-5',
   );
   assert.match(
     result.settings.modelPicker.options.find(
-      (row: { model: string }) => row.model === 'multi/zen/deepseek-v4-pro',
+      (row: { model: string }) => row.model === 'multi/zen/deepseek-v4.1-flash',
     ).description,
     /effort not applicable/,
   );
   assert(!pickerModels.includes('multi/zen/gpt-5.6-luna'));
-  assert(!pickerModels.includes('multi/zen/big-pickle'));
-  assert(!result.agents.includes('zen-gpt-5.6-luna'));
-  assert(!result.agents.includes('zen-gpt-5.6-luna-high'));
-  assert(!result.agents.includes('zen-big-pickle'));
-  assert(!result.agents.includes('zen-big-pickle-medium'));
+  assert(!pickerModels.includes('multi/zen/minimax-m2.7'));
+  // One Zen worker: its models are the picker's, never a type per model or effort.
+  assert.deepEqual(result.agents, ['multi-zen']);
   assert.equal(result.zenKeyInChild, undefined);
   assert.equal(result.settings.permissions.disableAutoMode, 'disable');
   assert(result.args.includes('--dangerously-skip-permissions'));
@@ -305,39 +304,40 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
         CODEX_HOME: cwd,
         OPENCODE_API_KEY: 'zen-fixture-key',
         MULTI_MODELS: selection,
-        MULTI_ZEN_MODELS: 'big-pickle,glm-5.2',
+        MULTI_ZEN_MODELS: 'minimax-m2.7,glm-5.2',
       },
     });
   const filtered = JSON.parse(
-    (await launchFiltered(' multi/zen/big-pickle, multi/zen/glm-5.2,multi/zen/big-pickle ')).stdout,
+    (await launchFiltered(' multi/zen/minimax-m2.7, multi/zen/glm-5.2,multi/zen/minimax-m2.7 '))
+      .stdout,
   );
   assert.deepEqual(
     filtered.settings.modelPicker.options.map((option: { model: string }) => option.model),
-    ['multi/zen/big-pickle', 'multi/zen/glm-5.2'],
+    ['multi/zen/minimax-m2.7', 'multi/zen/glm-5.2'],
   );
-  assert.deepEqual(filtered.models, ['multi/zen/big-pickle']);
-  assert.deepEqual(filtered.agents.sort(), ['zen-big-pickle', 'zen-glm-5.2']);
-  const outsideDefaults = JSON.parse((await launchFiltered('multi/zen/kimi-k2.7-code')).stdout);
+  assert.deepEqual(filtered.models, ['multi/zen/minimax-m2.7']);
+  assert.deepEqual(filtered.agents, ['multi-zen']);
+  const outsideDefaults = JSON.parse((await launchFiltered('multi/zen/deepseek-v4-flash')).stdout);
   assert.deepEqual(
     outsideDefaults.settings.modelPicker.options.map((option: { model: string }) => option.model),
-    ['multi/zen/kimi-k2.7-code'],
+    ['multi/zen/deepseek-v4-flash'],
   );
-  assert.deepEqual(outsideDefaults.agents, ['zen-kimi-k2.7-code']);
+  assert.deepEqual(outsideDefaults.agents, ['multi-zen']);
   const all = JSON.parse((await launchFiltered('all')).stdout);
   assert(all.settings.modelPicker.options.length >= ZEN_MODELS.length);
-  assert(all.agents.includes('zen-kimi-k2.7-code'));
-  const plus = JSON.parse((await launchFiltered('+multi/zen/kimi-k2.7-code')).stdout);
+  assert.deepEqual(all.agents, ['multi-zen']);
+  const plus = JSON.parse((await launchFiltered('+multi/zen/deepseek-v4-flash')).stdout);
   assert(
     plus.settings.modelPicker.options.some(
-      (option: { model: string }) => option.model === 'multi/zen/kimi-k2.7-code',
+      (option: { model: string }) => option.model === 'multi/zen/deepseek-v4-flash',
     ),
   );
   assert(
     plus.settings.modelPicker.options.some(
-      (option: { model: string }) => option.model === 'multi/zen/big-pickle',
+      (option: { model: string }) => option.model === 'multi/zen/minimax-m2.7',
     ),
   );
-  assert(plus.agents.includes('zen-kimi-k2.7-code'));
+  assert.deepEqual(plus.agents, ['multi-zen']);
   const hidden = JSON.parse(
     (await launchFiltered('', ['--model', 'multi/zen/gpt-5.6-luna'])).stdout,
   );
@@ -385,15 +385,15 @@ result(JSON.stringify({settings,models:args.filter(x=>x.startsWith('multi/')),ze
       XDG_DATA_HOME: path.join(cwd, 'data'),
       CLAUDE_CONFIG_DIR: path.join(cwd, 'claude'),
       CODEX_HOME: cwd,
-      MULTI_ZEN_MODELS: 'mimo-v2.5-free,big-pickle',
+      MULTI_ZEN_MODELS: 'glm-5.2,minimax-m2.7',
     },
   });
   const result = JSON.parse(stdout);
-  assert.deepEqual(result.models, ['multi/zen/mimo-v2.5-free']);
+  assert.deepEqual(result.models, ['multi/zen/glm-5.2']);
   assert.equal(result.zenKeyInChild, undefined);
   assert.deepEqual(
     result.settings.modelPicker.options.map((option: { model: string }) => option.model),
-    ['multi/zen/mimo-v2.5-free', 'multi/zen/big-pickle'],
+    ['multi/zen/glm-5.2', 'multi/zen/minimax-m2.7'],
   );
 });
 
@@ -484,15 +484,11 @@ result(JSON.stringify({settings,agents,args,models:args.filter(x=>x.startsWith('
   assert.equal(rows[0].behavesAs, 'claude-sonnet-4-6');
   assert.deepEqual(rows[2], custom);
   assert.deepEqual(settings.hooks.Stop, []);
-  for (const effort of ['low', 'medium', 'high']) {
-    assert.equal(agents[`antigravity-gemini-${effort}`].effort, effort);
-    assert.equal(
-      agents[`antigravity-gemini-${effort}`].model,
-      `multi/antigravity/gemini-${effort}[1m]`,
-    );
-  }
-  assert.doesNotMatch(agents['antigravity-sonnet-thinking'].model, /\[1m\]/);
-  assert.equal(agents['antigravity-gemini'].model, rows[0].model);
+  // One Antigravity worker, no effort variants; its default carries the row's tag.
+  assert.deepEqual(Object.keys(agents), ['multi-antigravity']);
+  assert.equal(agents['multi-antigravity'].model, rows[0].model);
+  assert.equal(agents['multi-antigravity'].effort, undefined);
+  assert.match(agents['multi-antigravity'].description, /\(gemini, sonnet-thinking\)/);
   const catalog = new AgentCatalog(
     agents,
     rows.map(({ model }) => model),
@@ -513,9 +509,7 @@ result(JSON.stringify({settings,agents,args,models:args.filter(x=>x.startsWith('
       ],
     }),
   );
-  assert.match(compacted, /- antigravity-gemini:/);
-  assert.match(compacted, /- antigravity-sonnet-thinking:/);
-  assert.doesNotMatch(compacted, /antigravity-gemini-(low|medium|high):/);
+  assert.match(compacted, /- multi-antigravity:/);
 
   // The opt-out has to stay reversible. A selection saved while rows were tagged is the
   // spelling the user copied out of the picker, so it must still name a row once the tag
@@ -573,7 +567,7 @@ result(JSON.stringify({settings,agents,args,models:args.filter(x=>x.startsWith('
   assert.deepEqual(untagged.models, ['multi/antigravity/gemini']);
 });
 
-test('launcher registers only Cursor picker workers and keeps the representative catalog under 30 KB', () => {
+test('launcher registers one worker per provider from the picker rows', () => {
   const cursor = cursorModelOptions(
     ['default', 'grok-4.7', 'composer-2.5', 'catalog-only'].map((id) => ({
       id,
@@ -581,76 +575,47 @@ test('launcher registers only Cursor picker workers and keeps the representative
       variants: [{ displayName: 'Default', isDefault: true, params: [] }],
     })),
   );
-  const picker = cursorPickerOptions(cursor);
-  const antigravity = [
-    'gemini',
-    'claude',
-    'gpt',
-    'sonnet',
-    'opus',
-    'flash',
-    'thinking',
-    'gemini-low',
-    'gemini-medium',
-    'gemini-high',
-  ].map((id) => ({
-    id,
-    model: `multi/antigravity/${id}`,
-    label: `Antigravity · ${id}`,
-    worker: `antigravity-${id}`,
-  }));
-  const agents = workerDefinitions(true, picker, true, antigravity, []);
-  const definitions = JSON.stringify(agents);
-  const definitionBytes = Buffer.byteLength(definitions);
-  assert.equal(Object.keys(agents).filter((name) => name.startsWith('cursor-')).length, 3);
-  assert(!Object.keys(agents).some((name) => name.includes('catalog-only')));
-  assert(definitionBytes < 30000, `representative worker JSON was ${definitionBytes} bytes`);
-  assert.equal(ZEN_MODELS.length, 21);
-});
-
-test('worker registration follows selected models and retains their effort aliases', () => {
-  const selected = ['multi/openai/gpt-6-luna', 'multi/zen/gpt-5.6-sol'];
-  const agents = workerDefinitions(true, [], true, [], [], selected);
-  assert.deepEqual(new Set(Object.values(agents).map((worker) => worker.model)), new Set(selected));
-  assert.equal(Object.keys(agents).length, 12);
-  assert.equal(agents['openai-luna-high'].effort, 'high');
-  assert.equal(agents['zen-gpt-5.6-sol-max'].effort, 'max');
-  assert.deepEqual(workerDefinitions(true, [], true, [], [], []), {});
-});
-
-test('selected synthesized Antigravity rows retain variants without selecting independent rows', () => {
-  const models = ['gemini-low', 'gemini-high', 'claude', 'claude-high'].map((id) => ({
-    id,
-    model: `multi/antigravity/${id}`,
-    worker: `antigravity-${id}`,
-    label: id,
-  }));
-  const agents = workerDefinitions(
-    false,
-    [],
-    false,
-    models,
-    [],
-    ['multi/antigravity/gemini', 'multi/antigravity/claude'],
-  );
-  assert.deepEqual(Object.keys(agents).sort(), [
-    'antigravity-claude',
-    'antigravity-gemini',
-    'antigravity-gemini-high',
-    'antigravity-gemini-low',
+  const rows = [
+    'multi/openai/gpt-6-luna',
+    'multi/openai/gpt-6-astra',
+    ...cursorPickerOptions(cursor).map(({ model }) => model),
+    'multi/cursor/composer-2.5/effort=high',
+    'multi/antigravity/gemini-3.1-pro[1m]',
+    'multi/antigravity/gemini-3.8-flash[1m]',
+    'multi/antigravity/claude-opus-4-6-thinking',
+    'multi/zen/kimi-k3',
+    'multi/zen/deepseek-v4.1-flash',
+    'custom/model',
+  ].map((model) => ({ model }));
+  const agents = workerDefinitions(workerCatalog(rows));
+  assert.deepEqual(Object.keys(agents), [
+    'multi-openai',
+    'multi-zen',
+    'multi-cursor',
+    'multi-antigravity',
   ]);
-  assert.deepEqual(
-    Object.keys(workerDefinitions(false, [], false, models, [], ['multi/antigravity/claude-high'])),
-    ['antigravity-claude-high'],
+  // Each default is the provider's newest or native default, not the first row.
+  assert.equal(agents['multi-openai'].model, 'multi/openai/gpt-6-astra');
+  assert.equal(agents['multi-openai'].effort, 'medium');
+  assert.equal(agents['multi-zen'].model, 'multi/zen/deepseek-v4.1-flash');
+  assert.equal(agents['multi-zen'].effort, 'medium');
+  assert.equal(agents['multi-cursor'].model, 'multi/cursor/default');
+  assert.equal(agents['multi-cursor'].effort, undefined);
+  assert.equal(agents['multi-antigravity'].model, 'multi/antigravity/gemini-3.8-flash[1m]');
+  assert.equal(
+    agents['multi-cursor'].description,
+    'Cursor worker (native Cursor agent). Pass model (default, grok-4.7, composer-2.5) or omit it for default.',
   );
-  // Picker rows carry the context tag while native IDs never do; selection compares
-  // the untagged spelling, so a tagged row keeps its own effort workers.
-  assert.deepEqual(
-    Object.keys(
-      workerDefinitions(false, [], false, models, [], ['multi/antigravity/gemini[1m]']),
-    ).sort(),
-    ['antigravity-gemini', 'antigravity-gemini-high', 'antigravity-gemini-low'],
+  assert.equal(
+    agents['multi-openai'].description,
+    "OpenAI worker (Claude Code's tools). Pass model (gpt-6-luna, gpt-6-astra) or omit it for gpt-6-astra.",
   );
+  assert.deepEqual(agents['multi-openai'].tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
+  assert.equal(agents['multi-cursor'].tools.at(-1), 'mcp__multi-core');
+  assert.equal(agents['multi-antigravity'].tools.at(-1), 'mcp__multi-core');
+  // No type or model name carries an effort or a preset.
+  assert(!JSON.stringify(agents).includes('effort=high'));
+  assert.deepEqual(workerDefinitions(workerCatalog([])), {});
 });
 
 test('launcher argument limits are platform-aware and identify largest providers', () => {
@@ -709,5 +674,5 @@ test('the Zen model listing is available without authentication', async () => {
     },
   });
   const models = JSON.parse(stdout);
-  assert(models.some((model: { id: string }) => model.id === 'big-pickle'));
+  assert(models.some((model: { id: string }) => model.id === 'minimax-m2.7'));
 });

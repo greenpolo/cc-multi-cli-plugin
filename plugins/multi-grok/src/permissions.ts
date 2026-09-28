@@ -1,3 +1,4 @@
+import { nativeToolRules } from '../../multi-core/src/gateway/display-rows.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 import type { GrokPermissionMode } from './cli.ts';
 
@@ -7,7 +8,7 @@ import type { GrokPermissionMode } from './cli.ts';
  * `--disallowed-tools` name is accepted and ignored, so removals are expressed as
  * an allowlist and verified against the announced toolset.
  */
-const GROK_TOOLS = [
+export const GROK_TOOLS = [
   'run_terminal_command',
   'read_file',
   'search_replace',
@@ -126,10 +127,12 @@ function grokMode(mode: PermissionContext['permissionMode']): GrokPermissionMode
   );
 }
 
-function toolRules(rules: string[] | undefined): Set<string> | undefined {
-  if (rules === undefined) {
+function toolRules(value: string[] | undefined): Set<string> | undefined {
+  if (value === undefined) {
     return undefined;
   }
+  // A display-row grant (`mcp__multi-core`) draws Claude Code rows; it maps to no native tool.
+  const rules = Array.isArray(value) ? nativeToolRules(value) : value;
   if (!Array.isArray(rules) || rules.some((rule) => !SUPPORTED_CLAUDE_TOOLS.has(rule))) {
     throw new Error('Grok cannot enforce this Claude tool restriction.');
   }

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentModeOption, AgentOptions } from '@cursor/sdk';
 import type { WorkerPermissions } from '../../multi-core/src/gateway/agent-definitions.ts';
+import { nativeToolRules } from '../../multi-core/src/gateway/display-rows.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 
 export const TOOL_CAPABILITIES = [
@@ -37,10 +38,12 @@ export function cursorPermissionPolicy(context: PermissionContext): {
   return { mode, tools, autoReview, identity: JSON.stringify([mode, tools, autoReview]) };
 }
 
-function claudeToolRules(rules: string[] | undefined): Set<string> | undefined {
-  if (rules === undefined) {
+function claudeToolRules(value: string[] | undefined): Set<string> | undefined {
+  if (value === undefined) {
     return undefined;
   }
+  // A display-row grant (`mcp__multi-core`) draws Claude Code rows; it maps to no native tool.
+  const rules = nativeToolRules(value) ?? [];
   const supported = new Set<string>(TOOL_CAPABILITIES.flatMap(([, names]) => [...names]));
   // These capabilities are always absent: recognizing their restrictions cannot enable them.
   supported.add('Agent');

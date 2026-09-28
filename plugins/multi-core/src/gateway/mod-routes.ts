@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { DisplayRows } from './display-rows.ts';
 import type { ModBridge } from './mod-bridge.ts';
 import type { ModCompactions } from './mod-compaction.ts';
 import { usageRoute } from './mod-usage.ts';
@@ -42,6 +43,7 @@ export async function handleModRoute(
   receipts?: ReceiptLedger,
   billedUsage?: (session: string) => Promise<unknown>,
   dashboard?: ProviderUsageDashboard,
+  rows?: DisplayRows,
 ) {
   try {
     if (
@@ -65,6 +67,7 @@ export async function handleModRoute(
             bridge,
             permissionModes,
             compactions,
+            rows,
           );
         }
         method(req, 'GET');
@@ -88,6 +91,13 @@ export async function handleModRoute(
             ),
           ) ?? {},
         );
+      case '/multi/mod/display-tools':
+        if (req.method === 'GET') {
+          return reply(res, rows?.catalog() ?? { revision: 0, names: [] });
+        }
+        return displayRoute(req, res, url.pathname, parsed, rows);
+      case '/multi/mod/display':
+        return displayRoute(req, res, url.pathname, parsed, rows);
       case '/multi/mod/mode':
         method(req, 'GET');
         return modeRoute(
@@ -105,6 +115,7 @@ export async function handleModRoute(
           bridge,
           permissionModes,
           compactions,
+          rows,
         );
     }
   } catch (error) {
@@ -124,6 +135,7 @@ async function handlePostRoute(
   bridge: ModBridge,
   permissionModes?: PermissionModes,
   compactions?: ModCompactions,
+  rows?: DisplayRows,
 ) {
   method(req, 'POST');
   if (!record(parsed)) {
@@ -154,6 +166,7 @@ async function handlePostRoute(
     case '/multi/mod/detach':
       compactions?.cancel(sessionId);
       bridge.forgetSession(sessionId);
+      rows?.forgetSession(sessionId);
       permissionModes?.forgetSession(sessionId);
       return reply(res, { accepted: true });
     case '/multi/mod/telemetry':
@@ -182,6 +195,39 @@ async function handlePostRoute(
   }
 }
 
+/**
+ * Display rows: the mod acknowledges the display tools it registered, and
+ * answers a row's call with the native output only for a token this gateway
+ * issued for that session and call. Any other call is refused.
+ */
+function displayRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  route: string,
+  parsed: unknown,
+  rows: DisplayRows | undefined,
+) {
+  method(req, 'POST');
+  if (!record(parsed)) {
+    throw new Error('Expected an object');
+  }
+  const sessionId = text(parsed.sessionId, 'sessionId');
+  if (!rows) {
+    throw new Error('Display rows are unavailable');
+  }
+  if (route === '/multi/mod/display-tools') {
+    return reply(res, rows.acknowledge(parsed.registered));
+  }
+  const row = rows.verify(sessionId, parsed.token, parsed.toolUseId);
+  if (!row) {
+    return reply(
+      res,
+      { error: 'This row was not issued by the Multi gateway for this call.' },
+      403,
+    );
+  }
+  return reply(res, row);
+}
 function modeRoute(res: ServerResponse, sessionId: string, agentId: unknown, bridge: ModBridge) {
   const snapshot = bridge.mode(sessionKey(sessionId, agentId));
   return snapshot ? reply(res, snapshot) : reply(res, { accepted: false, stale: true }, 409);

@@ -16,15 +16,18 @@ The mode snapshot applies at the next prompt. Direct Claude, OpenAI, and Zen
 workers record prompt identity and resolve tool permissions in Claude's loop.
 Cursor, Antigravity and Grok load the full settings-policy snapshot at their prompts,
 or lazily when a direct-model conversation requests a harness worker. Worker modes inherit or resolve from the parent
-context according to the worker definition. A missing or unsupported mode fails
-explicitly.
+context according to the worker definition, except that a parent in Plan keeps
+every worker in Plan, including one spawned earlier and resumed later. OpenAI
+automatic review also reads the mode Claude reports with each pending action, so
+entering or leaving Plan inside a turn applies to the next reviewed action. A
+missing or unsupported mode fails explicitly.
 
 ## Provider enforcement
 
 | Provider or action | What enforces the permission |
 | --- | --- |
 | OpenAI direct models | Claude Code's Read, Grep, Glob, Bash, Edit, and Write tools run the tool loop. The originating OpenAI account supplies GPT review for GPT actions when automatic review is requested. |
-| Zen direct models | Claude Code runs and authorizes the tools. Zen has no independent reviewer and never uses the OpenAI reviewer. |
+| Zen direct models | Claude Code runs and authorizes the tools. Zen auto mode is unreviewed like bypass; plan mode refuses actions that need review. Zen has no independent reviewer and never uses the OpenAI reviewer. |
 | Cursor native harness | Native review belongs to the originating Cursor account and run. Cursor receives the prompt-boundary mode and capability restrictions. See [docs/cursor.md](cursor.md). |
 | Antigravity native harness | A namespaced global pre-tool hook enforces Claude's denials while the native CLI runs. See [docs/antigravity.md](antigravity.md). |
 | Grok native harness | Each run carries Claude's mode, a bounded native toolset and deny rules that outrank every mode; the announced toolset is checked against the policy. See [docs/grok.md](grok.md). |
@@ -32,9 +35,12 @@ explicitly.
 
 Claude `PreToolUse` and `PermissionRequest` hooks govern Claude-executed tools,
 not each action inside a native harness. Provider SDK/CLI events supply native
-action observations and progress; Claude Mods displays them. Native harness
-admission and provider policy enforce the actions without replaying them as
-executable Claude tools. The launcher currently disables whole-session agent-view
+action observations, which the gateway writes as display rows under the native tool
+names (see [claude-mods.md](claude-mods.md)). A display row grants nothing: the
+`mcp__multi-core` entry in a harness worker's tools only admits those rows, the
+permission mappers drop it, and the mod refuses any call the gateway did not issue.
+Native harness admission and provider policy enforce the actions without replaying
+them as executable Claude tools. The launcher currently disables whole-session agent-view
 handoff because its gateway and generated worker settings belong to the launcher;
 ordinary background subagent tasks remain supported.
 

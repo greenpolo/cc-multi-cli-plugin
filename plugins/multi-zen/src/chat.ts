@@ -7,6 +7,7 @@ import type {
   ResponseContentBlock,
   StopReason,
 } from '../../multi-core/src/gateway/messages.ts';
+import { safeguardResults } from '../../multi-core/src/gateway/safeguards.ts';
 import { callId, toolName } from '../../multi-core/src/gateway/tools.ts';
 import { prefixSafeLength, readSse } from '../../multi-openai/src/responses.ts';
 
@@ -601,6 +602,7 @@ function finishReason(value: unknown): StopReason | undefined {
 }
 
 export interface ChatResponseOptions {
+  safeguards?: unknown;
   toolNames?: ReadonlyMap<string, string>;
   stopSequences?: readonly string[];
   /** Local input estimate for message_start; Chat Completions report usage last. */
@@ -901,8 +903,13 @@ class ChatAccumulator {
     const resultUsage = usage(this.usageValue);
     const stopSequence = this.stoppedSequence;
     const stop = stopSequence ? 'stop_sequence' : this.stop;
+    const safeguard_results = safeguardResults(this.options.safeguards, this.content, 'zen');
     this.emit('message_delta', {
-      delta: { stop_reason: stop, stop_sequence: stopSequence },
+      delta: {
+        stop_reason: stop,
+        stop_sequence: stopSequence,
+        ...(safeguard_results === undefined ? {} : { safeguard_results }),
+      },
       usage: resultUsage,
     });
     this.emit('message_stop', {});
@@ -915,6 +922,7 @@ class ChatAccumulator {
       stop_reason: stop,
       stop_sequence: stopSequence,
       usage: resultUsage,
+      ...(safeguard_results === undefined ? {} : { safeguard_results }),
       multi_usage: {
         source: 'provider',
         total_tokens: this.usageValue.prompt_tokens + this.usageValue.completion_tokens,

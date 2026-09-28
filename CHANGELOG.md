@@ -4,14 +4,133 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
-## Unreleased
+## 0.3.0 — 2026-09-28
 
+- **Keep empty arguments when launching npm's `claude.cmd` on Windows.** Multi runs
+  `.cmd` shims it cannot unwrap through `cmd.exe`, which dropped an empty argument
+  such as `--setting-sources ""`. Claude then read the next word as the setting
+  source and startup failed with `Invalid setting source: plugin`.
+- **Defer tool definitions the way Claude Code does natively.** Multi opted back
+  into Claude Code's on-demand tool loading with `ENABLE_TOOL_SEARCH=auto`, which
+  loads every tool up front once they fit in 10% of the context window. With a 1M
+  window that put about 100k tokens of connector tools into every session before
+  the first prompt. Multi now uses `true`, matching Claude Code's direct default of
+  always deferring. An explicit `ENABLE_TOOL_SEARCH` you set is still respected.
+- **Keep subscription auto-mode checks free after non-Claude replies.** Multi now
+  returns the server-side safeguard results Claude Code expects from OpenAI, Zen,
+  Cursor, Antigravity, and Grok replies, so a non-Claude turn no longer switches
+  the whole subscription session to billed local classifier requests. OpenAI
+  actions needing review still use its reviewer; Zen auto mode is unreviewed,
+  while plan mode refuses actions needing review.
+- **Keep plan mode binding across workers and mid-turn changes.** A native Cursor,
+  Antigravity, or Grok worker spawned in auto kept auto when its parent later
+  entered plan mode and resumed it, and a worker definition with its own
+  `permissionMode` overrode a planning parent. A planning parent now keeps every
+  worker in plan. OpenAI automatic review also follows plan mode entered or left
+  inside a turn, and fails closed for a worker whose permissions are unknown.
+- **Admit Grok settings with Grok's own rules.** Grok runs were checked against
+  Cursor's settings validator, which rejected restrictions such as a `WebFetch`
+  deny that Grok can enforce.
+- **Allow only read-only Antigravity tools in plan mode.** agy's own `--mode plan`
+  only steers its model: with permissions skipped it still ran shell and file-write
+  tools, and Multi's plan deny list missed side-effecting native tools such as
+  browser JavaScript, `schedule`, and `send_message`. In plan mode Multi's hook now
+  allows only native read, search, and web lookup tools and denies everything else,
+  including tools newer agy releases add. Compaction turns allow no tools.
+- **Enforce plan mode in OpenAI automatic review.** When you enter plan mode from
+  auto mode, Claude Code asks its auto-mode classifier about each Bash call, and for
+  OpenAI sessions and workers Multi answers with the OpenAI reviewer. That reviewer
+  did not know about plan mode, so it could approve a command that writes files.
+  The gateway now passes the session's plan mode to review: file edits are denied
+  without asking the reviewer, and the reviewer must deny anything not read-only.
 - **Stop cutting Claude responses at three minutes.** The gateway no longer applies
   an implicit 180-second deadline to Claude passthrough, matching the OpenAI and Zen
   routes. Long streamed Claude turns, including server-side advisor calls, previously
   ended mid-response ("Server error mid-response"; `claude-multi -p` reported the
   truncated text as success). Client disconnects and explicit gateway timeouts still
   abort upstream requests.
+- **Drop Zen models that no longer serve requests.** `deepseek-v4-pro` (the previous
+  Zen default) and `kimi-k2.7-code` are still listed by Zen but answer 404, and the
+  free-tier models (`big-pickle`, `mimo-v2.5-free`, `ling-3.0-flash-fin-free`,
+  `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, and both
+  `muse-spark-*-contributor-free`) refuse use outside OpenCode. DeepSeek V4.1 Flash
+  replaces DeepSeek V4 Pro as the first Zen default; every remaining catalog entry
+  served a live request on 2026-09-26.
+
+- **Replace one worker per model and effort with one worker type per provider.**
+  The Agent tool now offers five types, `multi-openai`, `multi-zen`,
+  `multi-cursor`, `multi-antigravity`, `multi-grok`, instead of about twenty
+  per-model, per-effort types. `model` picks the model, as a short id or the
+  full `multi/<provider>/<id>`, resolved against the `/model` catalog at spawn;
+  an unknown, wrong-provider, or effort-suffixed id is refused, naming that
+  provider's available models. Omitting `model` runs the provider default.
+  Effort is never part of a name. The Agent row, the running-agents list and
+  the task notification show `<description> · <provider> · <model>`.
+
+- **Keep a native reply's held-back answer with the session that ran it.** The
+  answer a reply with action rows hands over on the next request is bound to its
+  session, worker, and provider and to that reply's rows; a request from another
+  session or worker naming those rows is refused (HTTP 403), and a session's
+  answers are dropped when it ends. After a gateway restart the answer is read back
+  from the harness's session record; when no record holds it the request fails
+  with an explicit error instead of an empty "Native run finished." success.
+- **Stop drawing unconfirmed native actions as successes.** An action whose
+  completion never arrived before its run ended now draws a grey dot with an
+  `Unconfirmed:` result, is left out of the `Changed:` summary, and is counted on
+  an `Unconfirmed:` line of the closing summary.
+- **Retry display tool registration after a failed acknowledgement.** The mod
+  now records the catalog as synced only once the gateway confirms the registered
+  names, so a timeout or HTTP failure no longer suppresses rows until the catalog changes.
+
+- **Draw Cursor, Antigravity, and Grok actions as Claude Code draws its own tools.**
+  A native action's row now carries the input of the built-in it mirrors (Read,
+  Bash, Grep, Glob, LS, Edit, Write; the native parameters kept under `native`)
+  and is drawn like that built-in: the same dot, bold name and argument, `⎿`
+  result line, `Read 5 lines` and `Found 3 files` summaries, write previews, edit
+  diffs, and red `Error:` results, with shell output left to Claude Code's own
+  compact and ctrl+o views. Only the tool name differs (`view_file`, not `Read`).
+  A Cursor `edit` row takes its old and new text from the edit's reported diff, and
+  one that created a file draws as Write (`Wrote 2 lines to created.txt`).
+
+- **Report a harness worker's live context separately from what its turn consumed.**
+  Antigravity and Grok responses now carry the turn's last model call in their
+  standard usage fields, so Claude Code's context meter, auto-compaction, and
+  worker token counts no longer read an Antigravity turn's summed calls (10-40x too
+  high) as context. Turn sums move to `multi_usage.consumed_*` with a
+  `model_calls` count; receipts and `/multi-usage` charge those and show context,
+  consumption, and cache reads side by side, and the closing native summary names
+  the model call count. Cursor reports only run sums and keeps them. The receipts
+  tab of `/multi-usage` also loads again instead of being refused by the engine.
+
+- **Run native harness workers with `isolation: "worktree"`.** A Cursor,
+  Antigravity, or Grok worker started by the Agent tool in a Claude worktree
+  (`.claude/worktrees/<name>`) now binds to its acknowledged spawn and runs in
+  that worktree instead of failing with "no acknowledged spawn". Settings policy
+  stays admitted from the parent checkout. Other working directories are still
+  refused, and a refused worker's error now states why its spawn acknowledgement
+  failed (for example, the parent and start directories).
+
+- **Keep running native harness workers alive across Claude-loop snapshots.** A
+  later prompt or Claude worker boundary in a session with a Claude main model no
+  longer revokes an already acknowledged Cursor, Antigravity, or Grok worker with
+  "settings policy has not been admitted"; the worker keeps its admitted settings
+  restrictions, while the main loop and new harness spawns still require admission.
+
+- **Show native harness actions as tool rows under their native names, inside the
+  session that ran them.** Each finished Cursor, Antigravity, or Grok action is now a
+  Claude Code tool row named after the harness's own tool (`run_command`,
+  `view_file`, `read_file`, `shell`, ...) with its native parameters and native
+  output, in the `/model` harness session or in the harness worker's own subagent
+  transcript (expand with ctrl+o), where Claude Code folds reads and searches like
+  its own. The mod registers the names each harness has or announces; they are
+  display tools, not model tools: the gateway strips them from every provider's tools
+  and history, `tool.describe` defers them, and `tool.check` refuses any call without
+  a gateway-issued token. The worker's final answer is the turn's last message, so a
+  parent still receives it. Actions whose completion never arrives are settled when
+  the run ends. A failed or refused harness run names the gateway's reason in its
+  error and status line. The six `mcp__multi-core__cursor_*` rows and
+  `MULTI_CURSOR_DISPLAY_TOOLS` are replaced; Cursor records holding their blocks
+  still replay.
 
 ## 0.2.1 — 2026-09-22
 
