@@ -38,6 +38,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   request over 8 MiB, so a Claude conversation with a few screenshots or PDFs
   failed with "Request too large (max 32MB)" well before Anthropic's limit. It
   now allows 32 MB and answers an oversized request with Anthropic's own error.
+- **Add GPT-6.1 Sol to the Zen catalog.** Select it with
+  `/model multi/zen/gpt-6.1-sol` or `model: gpt-6.1-sol` on a `multi-zen` worker.
+  Codex does not serve it on ChatGPT plans yet, so the OpenAI provider still runs
+  `gpt-6-sol`.
+
 ## 0.3.0 — 2026-09-28
 
 - **Keep empty arguments when launching npm's `claude.cmd` on Windows.** Multi runs

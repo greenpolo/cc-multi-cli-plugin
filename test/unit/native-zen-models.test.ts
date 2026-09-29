@@ -173,6 +173,7 @@ test('Zen catalog exposes bounded protocols and only supported effort workers', 
   assert.deepEqual(
     ZEN_MODELS.map((model) => [model.id, model.protocol]),
     [
+      ['gpt-6.1-sol', 'responses'],
       ['gpt-6-luna', 'responses'],
       ['gpt-6-sol', 'responses'],
       ['gpt-5.6-luna', 'responses'],
