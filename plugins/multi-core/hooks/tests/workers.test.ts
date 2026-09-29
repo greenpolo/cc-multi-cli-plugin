@@ -371,3 +371,98 @@ test('the Agent tool description tells every model how to pick a provider model'
   expect(described.description).toContain('For a multi-* agent type');
   expect(described.description.startsWith('Launch a new agent.')).toBe(true);
 });
+
+/** The gateway classifies the type at offer, as it does before the model can name it. */
+async function offerClaudeType(
+  $: Parameters<Parameters<typeof test>[1]>[0],
+  on: On,
+  agent: string,
+) {
+  on('agent.offer', () => ({ isOffered: true }));
+  on('session.model', () => ({ value: 'claude-sonnet-5' }));
+  await $.agent.offer({
+    agent,
+    description: agent,
+    source: 'plugin',
+    provider: { plugin: 'engine', tier: 'core' },
+  });
+}
+
+/** A gateway that classifies every type as Claude-loop and records each call. */
+function claudeGateway(on: On) {
+  const sent: string[] = [];
+  on('env.get', (_$, event) => ({
+    value: event.name === 'MULTI_GATEWAY_TOKEN' ? 'token' : 'http://127.0.0.1:4000',
+  }));
+  on('session.id', () => ({ value: 's' }));
+  on('session.cwd', () => ({ value: '/workspace' }));
+  on('http.fetch', (_$, event) => {
+    sent.push(event.url);
+    return {
+      value: {
+        ok: true,
+        status: 200,
+        headers: {},
+        text: '{"execution":"claude","isOffered":true}',
+      },
+    };
+  });
+  return sent;
+}
+
+test('a native Claude subagent spawns without any gateway call', async ($, on) => {
+  const sent = claudeGateway(on);
+  on('agent.spawn', () => ({ model: 'haiku', agentId: 'native' }));
+  await offerClaudeType($, on, 'Explore');
+  const before = sent.length;
+  const result = await $.agent.spawn({
+    prompt: 'task',
+    subagentType: 'Explore',
+    model: 'haiku',
+    parentModel: 'claude-sonnet-5',
+  });
+  expect(result.agentId).toBe('native');
+  expect(sent.length).toBe(before);
+});
+
+test('a subagent of a Multi model session still reaches the gateway', async ($, on) => {
+  const sent = claudeGateway(on);
+  on('agent.spawn', () => ({ model: 'multi/cursor/auto', agentId: 'inherited' }));
+  await offerClaudeType($, on, 'Explore');
+  const before = sent.length;
+  await $.agent.spawn({
+    prompt: 'task',
+    subagentType: 'Explore',
+    parentModel: 'multi/cursor/auto',
+  });
+  expect(sent.length).toBeGreaterThan(before);
+});
+
+test('a type not offered as Claude-loop keeps gateway admission', async ($, on) => {
+  const sent = catalogGateway(on);
+  on('agent.spawn', () => ({ model: 'multi/cursor/auto', agentId: 'worker' }));
+  await $.agent.spawn({ prompt: 'task', subagentType: 'cursor-auto', parentModel: 'claude' });
+  expect(sent.some((item) => item.url.endsWith('/multi/mod/worker-model'))).toBe(true);
+});
+
+test('a Claude tool call posts nothing to the gateway', async ($, on) => {
+  const sent = catalogGateway(on);
+  on('session.model', () => ({ value: 'claude-sonnet-5' }));
+  on('tool.call', () => ({ result: 'ran' }));
+  await $.tool.call({ tool: 'Read', tool_use_id: 'toolu_1' } as never);
+  expect(sent.length).toBe(0);
+});
+
+test('a provider model tool call is attributed to the gateway reviewer', async ($, on) => {
+  const sent = catalogGateway(on);
+  on('session.model', () => ({ value: 'multi/openai/gpt-6-astra' }));
+  on('tool.call', () => ({ result: 'ran' }));
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_1' } as never);
+  expect(sent.map((item) => item.url.replace(/^.*(?=\/multi)/, ''))).toEqual(['/multi/permission']);
+  expect(sent[0]?.body).toEqual({
+    session_id: 's',
+    tool_use_id: 'toolu_1',
+    tool_name: 'Bash',
+    cwd: '/workspace',
+  });
+});

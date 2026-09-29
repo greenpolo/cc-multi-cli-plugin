@@ -134,7 +134,7 @@ test('quota advice is opt-in, session scoped, advisory and removed on detach', a
     env: {
       get: async (name: string) => (name === 'MULTI_GATEWAY_TOKEN' ? 'secret' : 'http://localhost'),
     },
-    session: { id: async () => session },
+    session: { id: async () => session, model: async () => 'claude-sonnet-5' },
     http: {
       fetch: async () => {
         reads++;

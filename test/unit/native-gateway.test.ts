@@ -1238,13 +1238,14 @@ test('oversized uploads receive HTTP 413 while the client is still streaming', a
     signal: AbortSignal.timeout(5000),
     body: new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new Uint8Array(8 * 1024 * 1024 + 1));
+        controller.enqueue(new Uint8Array(32 * 1024 * 1024 + 1));
       },
     }),
   };
   const response = await fetch(`http://127.0.0.1:${address.port}/v1/messages`, init);
   assert.equal(response.status, 413);
-  assert.equal(await response.text(), 'Request too large');
+  const body = (await response.json()) as { error: { type: string } };
+  assert.equal(body.error.type, 'request_too_large');
 });
 
 test('OpenAI and Claude passthrough have no implicit request deadline while explicit limits bound both', async (t) => {
@@ -1270,6 +1271,18 @@ test('OpenAI and Claude passthrough have no implicit request deadline while expl
   assert.equal((await bounded(body)).status, 200);
   assert.equal((await bounded({ model: 'claude-sonnet-5', messages })).status, 200);
   assert.deepEqual(durations, [25, 25]);
+});
+
+test('a Claude passthrough request is never refused for disagreeing session identity, an external one is', async (t) => {
+  const call = await gateway(t, async (url) =>
+    url.includes('api.anthropic.com')
+      ? new Response('{}', { headers: { 'content-type': 'application/json' } })
+      : new Response(sse(textEvents)),
+  );
+  const metadata = { user_id: JSON.stringify({ session_id: 'from-metadata' }) };
+  const headers = { 'x-claude-code-session-id': 'from-header' };
+  assert.equal((await call({ model: 'claude-sonnet-5', messages, metadata }, headers)).status, 200);
+  assert.equal((await call({ ...body, metadata }, headers)).status, 400);
 });
 
 test('an explicit OpenAI timeout aborts upstream inference', async (t) => {

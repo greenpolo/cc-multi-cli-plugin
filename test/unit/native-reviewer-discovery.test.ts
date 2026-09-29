@@ -104,7 +104,7 @@ globalThis.fetch = async (url, init) => {
         settings.permissions?.disableAutoMode,
         review === 'yes' || auth !== 'no' ? undefined : 'disable',
       );
-      assert.equal(settings.hooks.PreToolUse.length, 1);
+      assert.equal(settings.hooks?.PreToolUse, undefined);
     }
   }
   const catalogCalls = (await readFile(calls, 'utf8'))

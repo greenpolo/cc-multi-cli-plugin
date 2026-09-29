@@ -102,7 +102,11 @@ const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'ut
     assert.equal(result.agentView, '1');
     assert.equal(result.backgroundTasks, undefined);
     assert.equal(result.functionHooks, '1');
-    assert.equal(result.apiTimeout, auth === 'api' ? '1000' : '2147483647');
+    assert.equal(
+      result.apiTimeout,
+      auth === 'api' ? '1000' : undefined,
+      'Claude keeps its native request timeout unless the user sets one',
+    );
     assert.equal(result.toolSearch, auth === 'api' ? 'false' : 'true');
     assert.deepEqual(result.settings.permissions.deny, ['Bash(denied)']);
     assert.equal(
@@ -115,7 +119,11 @@ const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'ut
       'local hooks authenticate independently of Claude login',
     );
     assert.equal(result.auth, { no: 'local', api: 'api', yes: 'native' }[auth]);
-    assert.equal(result.settings.hooks.PreToolUse?.length, 1);
+    assert.equal(
+      result.settings.hooks.PreToolUse,
+      undefined,
+      'no command hook runs on Claude tool calls',
+    );
   }
   const baseEnvironment = {
     PATH: path.join(cwd, 'bin') + path.delimiter + process.env.PATH,

@@ -4,6 +4,40 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## Unreleased
+
+- **Stop the gateway from altering native Claude requests.** Claude requests now
+  reach Anthropic as Claude Code sent them, and Anthropic's answer or failure
+  reaches Claude Code as it would natively. A tool call cut off by `max_tokens`
+  no longer ends the stream with an injected "Unexpected end of JSON input"
+  error: tool observation is best effort and stops quietly when it cannot parse,
+  while the stream passes through unchanged and uncapped. A connection failure
+  now drops the connection (so Claude Code's own retry runs) instead of
+  becoming a "Native gateway: fetch failed" 502 or an injected stream error.
+  Every `/v1/*` request other than Messages, such as `/v1/files` and
+  `/v1/files/{id}/content`, is forwarded to Anthropic as raw bytes with the
+  caller's own headers; it no longer needs the gateway token, which Claude Code
+  does not send to those routes, and adds no credential of its own.
+- **Keep Claude's native request timeout and retries.** Multi set `API_TIMEOUT_MS`
+  to its maximum so long native runs would not time out, which also meant a stuck
+  Anthropic connection never timed out or retried. Claude Code's timer only bounds
+  the wait for response headers, and every streamed provider reply already sends its
+  headers and periodic `ping` events while it works, so Multi no longer sets it. An
+  `API_TIMEOUT_MS` you set is still respected.
+- **Stop running a command on every Claude tool call.** Multi registered a
+  `PreToolUse` command hook that started Node for each tool call, including
+  Claude's own, only to tell the gateway which provider proposed an action. That
+  attribution now runs inside Claude Mods, and only for provider models.
+- **Never refuse a Claude request over session identity.** A Claude request whose
+  session header and metadata disagreed was rejected with a 400. The check now
+  applies only to provider models, where session identity matters.
+- **Skip gateway calls when Claude starts its own subagents.** Every native Claude
+  subagent triggered two gateway lookups. A subagent the gateway already classified
+  as Claude's, in a Claude session, now starts without any.
+- **Accept requests up to Claude's own 32 MB limit.** The gateway refused any
+  request over 8 MiB, so a Claude conversation with a few screenshots or PDFs
+  failed with "Request too large (max 32MB)" well before Anthropic's limit. It
+  now allows 32 MB and answers an oversized request with Anthropic's own error.
 ## 0.3.0 — 2026-09-28
 
 - **Keep empty arguments when launching npm's `claude.cmd` on Windows.** Multi runs

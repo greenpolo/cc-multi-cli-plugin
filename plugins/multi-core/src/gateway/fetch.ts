@@ -7,7 +7,9 @@
 interface GatewayFetchInit {
   method: string;
   headers: Record<string, string>;
-  body?: Buffer | string;
+  body?: Buffer | string | ReadableStream<Uint8Array>;
+  /** Node's fetch requires half duplex for streamed request bodies. */
+  duplex?: 'half';
   signal: AbortSignal;
   redirect: 'error';
 }
