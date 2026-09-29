@@ -10,8 +10,13 @@ export function forgetUsageSession(session: string) {
   panes.delete(session);
 }
 
-export const register: Register = (on) => {
+export const register = (
+  on: Parameters<Register>[0],
+  _options?: Parameters<Register>[1],
+  agentModels: ReadonlyMap<string, string> = new Map(),
+) => {
   on('classic.PreToolUse', async ($, event, next) => {
+    await attributeToolCall($, event, agentModels);
     // `Task` is the Agent tool's legacy name; a worker's own spawn carries its agentId.
     const tool: string = event.tool;
     if (
@@ -220,6 +225,49 @@ async function request($: EngineInterface, route: string): Promise<unknown> {
     return result.ok ? JSON.parse(result.text) : undefined;
   } catch {
     return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Reviewer attribution for a provider's tool call: the gateway learns the session, call,
+ * and workspace it needs to match the reviewer request to it. A Claude loop's tool call
+ * is Claude's own and costs no gateway call. The reply never decides the call.
+ */
+async function attributeToolCall(
+  $: EngineInterface,
+  event: { tool: string; tool_use_id: string },
+  agentModels: ReadonlyMap<string, string>,
+) {
+  const agentId = (event as { agentId?: string }).agentId;
+  const model = agentId === undefined ? await $.session.model() : agentModels.get(agentId);
+  const base = await $.env.get('MULTI_MOD_GATEWAY_URL');
+  const token = await $.env.get('MULTI_GATEWAY_TOKEN');
+  if (!model?.startsWith('multi/') || !base || !token) {
+    return;
+  }
+  const mode = (event as { permission_mode?: unknown }).permission_mode;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      $.http.fetch(`${base}/multi/permission`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-multi-gateway-token': token },
+        body: JSON.stringify({
+          session_id: await $.session.id(),
+          tool_use_id: event.tool_use_id,
+          tool_name: event.tool,
+          cwd: await $.session.cwd(),
+          ...(typeof mode === 'string' ? { permission_mode: mode } : {}),
+        }),
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Attribution timeout')), 1500);
+      }),
+    ]);
+  } catch {
+    // Attribution is best effort; Claude's own checks decide the call.
   } finally {
     clearTimeout(timer);
   }

@@ -44,7 +44,9 @@ import { originalToolNames } from './tools.ts';
 
 const OPENAI_URL = 'https://chatgpt.com/backend-api/codex/responses';
 const ANTHROPIC_URL = 'https://api.anthropic.com';
-const MAX_BODY = 8 * 1024 * 1024;
+// Anthropic's own Messages API limit is 32 MB; the gateway buffers up to it and leaves
+// the verdict to the provider, so a request Claude Code could send natively still goes.
+const MAX_BODY = 32 * 1024 * 1024;
 const STRIPPED_REQUEST_HEADERS = [
   'host',
   'connection',
@@ -52,6 +54,12 @@ const STRIPPED_REQUEST_HEADERS = [
   'transfer-encoding',
   'x-multi-gateway-token',
   'accept-encoding',
+  'keep-alive',
+  'te',
+  'trailer',
+  'upgrade',
+  'proxy-connection',
+  'proxy-authorization',
 ];
 const STRIPPED_RESPONSE_HEADERS = [
   'content-encoding',
@@ -712,25 +720,79 @@ export function createNativeGateway({
     if (req.method === 'POST') {
       forwarded = cleaned === body ? raw : Buffer.from(JSON.stringify(cleaned));
     }
-    const upstream = await fetchImpl(ANTHROPIC_URL + url.pathname + url.search, {
-      method: req.method ?? 'GET',
-      headers,
-      body: forwarded,
-      signal,
-      redirect: 'error',
-    });
-    onEvent({ route: 'anthropic', status: upstream.status, model: body.model });
+    try {
+      const upstream = await fetchImpl(ANTHROPIC_URL + url.pathname + url.search, {
+        method: req.method ?? 'GET',
+        headers,
+        body: forwarded,
+        signal,
+        redirect: 'error',
+      });
+      onEvent({ route: 'anthropic', status: upstream.status, model: body.model });
+      await relayAnthropic(
+        upstream,
+        res,
+        signal,
+        body.tools?.length ? exchange.remember : undefined,
+      );
+    } catch {
+      // Anthropic failures are not rebranded: Claude Code sees a dropped connection.
+      res.destroy();
+    }
+  }
+  async function relayAnthropic(
+    upstream: Response,
+    res: http.ServerResponse,
+    signal: AbortSignal,
+    remember?: (tool: { id: string; name: string; input: unknown }) => void,
+  ) {
     const responseHeaders = Object.fromEntries(upstream.headers);
     for (const name of STRIPPED_RESPONSE_HEADERS) {
       delete responseHeaders[name];
     }
     res.writeHead(upstream.status, responseHeaders);
-    if (guardAuto && upstream.ok && body.tools?.length) {
-      await forwardObservedTools(upstream, res, exchange.remember, signal);
+    if (guardAuto && upstream.ok && remember) {
+      await forwardObservedTools(upstream, res, remember, signal);
     } else if (upstream.body) {
       await pipeline(Readable.fromWeb(upstream.body), res);
     } else {
       res.end();
+    }
+  }
+  /** Any /v1 request the gateway does not route itself goes to Anthropic as raw bytes. */
+  async function handleRawAnthropic(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: URL,
+    abort: AbortController,
+  ) {
+    if (req.headers.origin) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
+    if (blockAnthropic) {
+      throw new BadRequest('Anthropic is not signed in. Select an external model.');
+    }
+    const method = req.method ?? 'GET';
+    const hasBody = method !== 'GET' && method !== 'HEAD';
+    const headers = anthropicHeaders(req);
+    if (req.headers['content-length'] !== undefined) {
+      headers['content-length'] = String(req.headers['content-length']);
+    }
+    try {
+      const upstream = await fetchImpl(ANTHROPIC_URL + url.pathname + url.search, {
+        method,
+        headers,
+        body: hasBody ? (Readable.toWeb(req) as ReadableStream<Uint8Array>) : undefined,
+        duplex: hasBody ? 'half' : undefined,
+        signal: providerSignal(abort.signal, null, timeoutMs),
+        redirect: 'error',
+      });
+      onEvent({ route: 'anthropic', status: upstream.status, model: undefined });
+      await relayAnthropic(upstream, res, abort.signal);
+    } catch {
+      res.destroy();
     }
   }
   /**
@@ -986,10 +1048,13 @@ export function createNativeGateway({
       return res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...value })}\n\n`);
     };
     try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      if (isRawAnthropicPath(url.pathname)) {
+        return await handleRawAnthropic(req, res, url, abort);
+      }
       if (!authorizeRequest(req, res, token, guardAuto)) {
         return;
       }
-      const url = new URL(req.url ?? '', 'http://localhost');
       const request = await readRequest(req, agentCatalog);
       const { parsed } = request;
       if (url.pathname.startsWith('/multi/mod/')) {
@@ -1016,6 +1081,7 @@ export function createNativeGateway({
         parsed,
         agentId,
         header(req.headers['x-claude-code-session-id']),
+        external !== null,
       );
       sourceModel = String(body.model ?? '');
       sourceSession = metadata.session;
@@ -1059,6 +1125,13 @@ export function createNativeGateway({
 }
 
 class RequestTooLarge extends Error {}
+
+/** Everything under /v1 except the Messages API the gateway parses and may route. */
+function isRawAnthropicPath(pathName: string) {
+  return (
+    pathName.startsWith('/v1/') && !['/v1/messages', '/v1/messages/count_tokens'].includes(pathName)
+  );
+}
 
 /**
  * Display rows are Claude Code UI: no provider sees them as tools or history. A
@@ -1199,6 +1272,7 @@ function requestIdentity(
   parsed: Record<string, unknown>,
   agentId?: string,
   sessionHeader?: string,
+  provider = true,
 ) {
   const rawIdentity =
     isRecord(parsed.metadata) && typeof parsed.metadata.user_id === 'string'
@@ -1215,7 +1289,9 @@ function requestIdentity(
       /* Unknown identity cannot grant auto capability. */
     }
   }
-  if (session && sessionHeader && session !== sessionHeader) {
+  // Session identity matters to provider routes. A Claude passthrough request is
+  // never refused for it: Anthropic owns that request.
+  if (provider && session && sessionHeader && session !== sessionHeader) {
     throw new BadRequest('Session header and metadata disagree');
   }
   session = session || sessionHeader || '';
@@ -1303,7 +1379,6 @@ function authorizeRequest(
     ![
       '/v1/messages',
       '/v1/messages/count_tokens',
-      '/v1/models',
       '/api/hello',
       '/multi/mod/session',
       '/multi/mod/worker',
@@ -1340,8 +1415,17 @@ function failResponse(res: http.ServerResponse, emit: Emit, error: unknown) {
   }
   const status = errorStatus(error);
   if (error instanceof RequestTooLarge) {
-    res.writeHead(413);
-    res.end('Request too large');
+    // Anthropic's own 413 body, so Claude Code reads it as it would natively.
+    res.writeHead(413, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'request_too_large',
+          message: 'Request exceeds the maximum allowed number of bytes.',
+        },
+      }),
+    );
     return;
   }
   const errorTypes: Record<number, string> = {

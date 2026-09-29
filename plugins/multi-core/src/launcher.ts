@@ -74,7 +74,6 @@ import { DISPLAY_TOOL_SERVER } from './gateway/display-rows.ts';
 import { executableInvocation, resolveExecutable } from './gateway/executable.ts';
 import { ModBridge } from './gateway/mod-bridge.ts';
 import { PermissionModes } from './gateway/mode-hook.ts';
-import { hookCommand } from './gateway/permission-hook.ts';
 import type { ProviderUsageReader } from './gateway/provider-usage.ts';
 import { ReceiptLedger } from './gateway/receipts.ts';
 import type { GatewayEvent } from './gateway/server.ts';
@@ -946,17 +945,6 @@ function configureApproval(
   if (!anthropic && !nativeHarness && (!provider || !providers.includes(provider))) {
     settings.permissions = { ...settings.permissions, disableAutoMode: 'disable' };
   }
-  // Observe tool workspace information for reviewer attribution. This hook never
-  // vetoes execution; Claude's checks and the actual reviewer request decide.
-  const command = hookCommand(new URL('./gateway/permission-hook.ts', import.meta.url));
-  const hooks = settings.hooks as Record<string, unknown[]> | undefined;
-  settings.hooks = {
-    ...hooks,
-    PreToolUse: [
-      ...(hooks?.PreToolUse ?? []),
-      { hooks: [{ type: 'command', command, timeout: 10 }] },
-    ],
-  };
 }
 
 async function handleCommand(command?: string) {
@@ -1179,9 +1167,6 @@ function gatewayEnvironment(port: number, token: string, anthropic: boolean) {
   return {
     ...env,
     CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
-    // Native runs and extended OpenAI reasoning can outlive Claude's default
-    // API timer; preserve explicit user limits.
-    API_TIMEOUT_MS: process.env.API_TIMEOUT_MS ?? '2147483647',
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
     // A custom base URL disables Claude's on-demand tool loading unless opted in.
     // We forward Claude tool references, so match the direct default of always

@@ -22,11 +22,11 @@ type GatewayResponse = {
 // Claude Code 2.1.272 loads exactly one entry from hooks.json `modules`; compose here.
 export const register: Register = (on, options) => {
   const policyState: PolicyState = {};
-  registerUsage(on, options);
   // Detaching makes the gateway forget this session's mode; keeping its generation
   // here would leave every later prompt stale against a gateway holding nothing.
   const agentModels = new Map<string, string>();
   const spawnModels = new Map<string, string>();
+  registerUsage(on, options, agentModels);
   registerLifecycle(
     on,
     options,

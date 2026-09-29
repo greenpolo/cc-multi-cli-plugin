@@ -1,6 +1,5 @@
 import { once } from 'node:events';
 import type { ServerResponse } from 'node:http';
-import { readSse } from '../../../multi-openai/src/responses.ts';
 
 interface Tool {
   id: string;
@@ -78,7 +77,45 @@ export class ToolObserver {
   }
 }
 
-/** Keep passthrough bytes unchanged and couple observation to client backpressure. */
+/** Incremental SSE reader for observation only; it throws when it cannot keep up. */
+class SseObserver {
+  private decoder = new TextDecoder();
+  private pending = '';
+  private data: string[] = [];
+  private observer: ToolObserver;
+
+  constructor(observer: ToolObserver) {
+    this.observer = observer;
+  }
+
+  push(chunk: Uint8Array) {
+    this.pending += this.decoder.decode(chunk, { stream: true });
+    if (this.pending.length > MAX_BYTES) {
+      throw new Error('Observed SSE buffer exceeds 8 MiB');
+    }
+    for (let index = this.pending.indexOf('\n'); index !== -1; index = this.pending.indexOf('\n')) {
+      const line = this.pending.slice(0, index).replace(/\r$/, '');
+      this.pending = this.pending.slice(index + 1);
+      this.line(line);
+    }
+  }
+
+  private line(line: string) {
+    if (line.startsWith('data:')) {
+      this.data.push(line.slice(5).replace(/^ /, ''));
+    } else if (!line && this.data.length) {
+      const value = this.data.join('\n');
+      this.data = [];
+      this.observer.event(JSON.parse(value));
+    }
+  }
+}
+
+/**
+ * Pass the upstream bytes through unchanged and observe them on the side. An
+ * observation failure (partial tool JSON, oversized input) only stops observing;
+ * it never reaches Claude Code. The passthrough itself has no size cap.
+ */
 export async function forwardObservedTools(
   upstream: Response,
   res: ServerResponse,
@@ -90,32 +127,36 @@ export async function forwardObservedTools(
     return;
   }
   const observer = new ToolObserver(remember);
-  if (upstream.headers.get('content-type')?.includes('text/event-stream')) {
-    const source = upstream.body;
-    const forwarded = async function* () {
-      for await (const chunk of source) {
-        if (!res.write(chunk)) {
-          await once(res, 'drain', { signal });
-        }
-        yield chunk;
-      }
-    };
-    for await (const event of readSse(forwarded())) {
-      observer.event(event);
+  const streamed = upstream.headers.get('content-type')?.includes('text/event-stream');
+  const sse = new SseObserver(observer);
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  let observing = true;
+  for await (const chunk of upstream.body) {
+    if (!res.write(chunk)) {
+      await once(res, 'drain', { signal });
     }
-  } else {
-    const chunks: Uint8Array[] = [];
-    let bytes = 0;
-    for await (const chunk of upstream.body) {
-      bytes += chunk.length;
-      if (bytes > MAX_BYTES) {
-        throw new Error('Observed response exceeds 8 MiB');
-      }
-      chunks.push(chunk);
+    if (!observing) {
+      continue;
     }
-    const body = Buffer.concat(chunks);
-    observer.response(JSON.parse(body.toString('utf8')));
-    res.write(body);
+    try {
+      if (streamed) {
+        sse.push(chunk);
+      } else {
+        bytes += chunk.length;
+        observing = bytes <= MAX_BYTES;
+        chunks.push(chunk);
+      }
+    } catch {
+      observing = false;
+    }
+  }
+  if (observing && !streamed) {
+    try {
+      observer.response(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+    } catch {
+      // Observation is best effort.
+    }
   }
   res.end();
 }

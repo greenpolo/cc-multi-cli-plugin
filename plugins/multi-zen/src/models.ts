@@ -23,6 +23,17 @@ const GPT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const satisfies
 // github.com/anomalyco/opencode/blob/830d5eb5354874105cc31599635a80c1662609e8/packages/opencode/test/tool/fixtures/models-api.json
 // Zen's /models endpoint exposes IDs only, so capabilities stay explicit and conservative.
 export const ZEN_MODELS: readonly ZenModel[] = Object.freeze([
+  // Zen serves it; Codex refuses it on ChatGPT plans (2026-09-29), so it has no OpenAI row.
+  {
+    id: 'gpt-6.1-sol',
+    protocol: 'responses',
+    label: 'GPT-6.1 Sol',
+    description: 'OpenCode Zen · GPT Responses',
+    efforts: GPT_EFFORTS,
+    images: true,
+    documents: true,
+    maxOutputTokens: 128000,
+  },
   {
     id: 'gpt-6-luna',
     protocol: 'responses',

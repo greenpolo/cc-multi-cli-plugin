@@ -81,6 +81,11 @@ export const register = (
 ) => {
   /** The resolved model of each provider-worker spawn, by its Agent call's tool_use_id. */
   registerWorkerRows(on, agentModels, spawnModels);
+  /**
+   * Agent types the gateway classified as Claude-loop at offer. A definition may name a
+   * provider model the spawn event does not carry, so only such a type skips admission.
+   */
+  const claudeTypes = new Set<string>();
   on('tool.describe', { tool: 'Agent' }, async ($, event, next) => {
     const described = await next(event);
     if (!(await active($))) {
@@ -120,6 +125,11 @@ export const register = (
       },
       '/multi/mod/offer',
     );
+    if (response?.execution === 'claude') {
+      claudeTypes.add(event.agent);
+    } else {
+      claudeTypes.delete(event.agent);
+    }
     // Claude owns its own catalog. Only a positively identified harness worker
     // is subject to Multi's settings-translation compatibility filter.
     return response?.execution === 'harness' && response.isOffered === false
@@ -128,6 +138,14 @@ export const register = (
   });
   on('classic.SubagentStart', async ($, event, next) => {
     if (!(await active($))) {
+      return next(event);
+    }
+    // A native Claude subagent in a Claude session needs no gateway record.
+    if (
+      claudeTypes.has(event.agent_type) &&
+      !isProviderWorker(event.agent_type) &&
+      !isMultiModel(await $.session.model())
+    ) {
       return next(event);
     }
     const response = await request($, {
@@ -145,6 +163,10 @@ export const register = (
   });
   on('agent.spawn', async ($, event, next) => {
     if (!(await active($))) {
+      return next(event);
+    }
+    // A native Claude subagent runs on Claude Code's own path: no gateway call.
+    if (nativeClaudeSpawn(event, claudeTypes)) {
       return next(event);
     }
     const resolved = await providerSpawn($, event);
@@ -235,6 +257,23 @@ async function admit(
   return response?.accepted
     ? undefined
     : reportable(response?.error ?? 'Multi harness worker policy was not acknowledged.');
+}
+
+function isMultiModel(model: string | undefined): boolean {
+  return Boolean(model?.startsWith('multi/'));
+}
+
+/**
+ * A Claude subagent: not a `multi-*` worker type, offered as Claude-loop, and neither its
+ * model nor its parent's (which a fork or an inheriting subagent runs on) is a Multi model.
+ */
+function nativeClaudeSpawn(event: SpawnEvent, claudeTypes: ReadonlySet<string>): boolean {
+  return (
+    claudeTypes.has(event.subagentType) &&
+    !isProviderWorker(event.subagentType) &&
+    !isMultiModel(event.model) &&
+    !isMultiModel(event.parentModel)
+  );
 }
 
 function harnessSpawn(
