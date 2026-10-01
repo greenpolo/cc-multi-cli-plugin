@@ -9,6 +9,7 @@ import {
   antigravitySettingsFile,
   installAntigravityHook,
 } from '../../plugins/multi-antigravity/src/hooks.ts';
+import { removeAntigravityHook } from '../../plugins/multi-core/src/install/installation.ts';
 import { removeTemporary } from '../temporary.ts';
 
 interface InstalledPreToolUseHook {
@@ -106,4 +107,18 @@ test('Antigravity replaces an existing Windows destination', async (t) => {
   const installed = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   assert.equal(installed.old, true);
   assert.ok(installed['multi-cli-antigravity']);
+});
+
+test('uninstall removes only the Multi Antigravity hook entry and tolerates a missing file', async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'antigravity-uninstall-'));
+  t.after(() => removeTemporary(home));
+  assert.equal(await removeAntigravityHook({ platform: 'linux', homedir: home }), false);
+  const file = antigravityHookFile({ platform: 'linux', homedir: home });
+  await installAntigravityHook(file);
+  const other = { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'other' }] }] };
+  const installed = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  await writeFile(file, `${JSON.stringify({ ...installed, other })}\n`);
+  assert.equal(await removeAntigravityHook({ platform: 'linux', homedir: home }), true);
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), { other });
+  assert.equal(await removeAntigravityHook({ platform: 'linux', homedir: home }), false);
 });
