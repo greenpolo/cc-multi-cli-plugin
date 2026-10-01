@@ -6,6 +6,7 @@ import {
   NativeCliError,
   nativeEnvironment,
   promptArgumentLimitBytes,
+  promptArgvSafe,
   runNativeCli,
 } from '../../multi-core/src/gateway/harness-process.ts';
 
@@ -202,7 +203,16 @@ export async function runGrok(options: GrokRunOptions): Promise<GrokRunResult> {
     throw new GrokCliError('Grok resumes a session or creates one, never both', 'spawn');
   }
   const platform = options.platform ?? process.platform;
-  const oversized = Buffer.byteLength(options.prompt) >= promptArgumentLimitBytes(platform);
+  // A prompt too long for argv, or one a cmd.exe launcher cannot carry safely,
+  // travels in a private file instead.
+  const oversized =
+    Buffer.byteLength(options.prompt) >= promptArgumentLimitBytes(platform) ||
+    !promptArgvSafe(options.prompt, {
+      executable: 'grok',
+      configuredPath: options.executable,
+      platform,
+      env: grokEnvironment(options.env),
+    });
   const directory = oversized ? await mkdtemp(path.join(os.tmpdir(), 'multi-grok-')) : undefined;
   const promptFile = directory ? path.join(directory, 'prompt.txt') : undefined;
   if (promptFile) {

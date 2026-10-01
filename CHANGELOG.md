@@ -6,6 +6,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Windows `.cmd` launchers no longer receive unsafe prompts.** Grok and
+  Antigravity deliver prompts containing `"`, `%`, `&` and similar through a
+  file or stdin when the CLI is a non-shim `.cmd`/`.bat`, and both use the
+  shared failure classifier for request-versus-retryable status. The Codex
+  app-server flag no longer embeds quotes.
+
 - **Stop the gateway from altering native Claude requests.** Claude requests now
   reach Anthropic as Claude Code sent them, and Anthropic's answer or failure
   reaches Claude Code as it would natively. A tool call cut off by `max_tokens`

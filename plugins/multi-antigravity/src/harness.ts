@@ -11,6 +11,7 @@ import {
   type HarnessExchange,
   replayPersisted,
 } from '../../multi-core/src/gateway/harness-exchange.ts';
+import { classifyHarnessFailure } from '../../multi-core/src/gateway/harness-failure.ts';
 import {
   continuation,
   historyRewound,
@@ -20,7 +21,6 @@ import {
   terminalSuffix,
   writeNotices,
 } from '../../multi-core/src/gateway/harness-notices.ts';
-import { NativeCliError } from '../../multi-core/src/gateway/harness-process.ts';
 import {
   NativeActionTracker,
   type NativeProgressObserver,
@@ -31,7 +31,6 @@ import {
   type HarnessUsageFields,
 } from '../../multi-core/src/gateway/harness-response.ts';
 import {
-  HarnessBusyError,
   type HarnessSession,
   type HarnessSessionBase,
   HarnessSessionStore,
@@ -592,20 +591,6 @@ const missingPermissions: CheckAntigravityPermissions = async () => {
   throw new Error('Antigravity native permission policy is not configured');
 };
 
-/** A transient process shortage retries; a missing binary or a busy agent fails identically. */
-const TRANSIENT_SPAWN = new Set(['EAGAIN', 'EMFILE', 'ENFILE', 'ENOMEM', 'ETXTBSY']);
-
-function deterministicFailure(error: unknown): boolean {
-  if (error instanceof HarnessBusyError) {
-    return true;
-  }
-  return (
-    error instanceof NativeCliError &&
-    error.code === 'spawn' &&
-    !TRANSIENT_SPAWN.has(error.systemCode ?? '')
-  );
-}
-
 export class AntigravityProviderError extends Error {
   readonly failure: { status: number; message: string };
   constructor(error: unknown) {
@@ -616,8 +601,8 @@ export class AntigravityProviderError extends Error {
       .slice(0, 500);
     super(message, { cause: error });
     this.name = 'AntigravityProviderError';
-    // A busy agent is a deterministic conflict, not a transient fault: a
-    // retryable status turned one such refusal into ten paid attempts.
-    this.failure = { status: deterministicFailure(error) ? 400 : 502, message };
+    // Deterministic refusals are request errors: a retryable status turned one
+    // into ten paid attempts.
+    this.failure = { status: classifyHarnessFailure(error).status, message };
   }
 }

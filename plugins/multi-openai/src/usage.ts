@@ -43,7 +43,7 @@ export async function readCodexUsage(
       env: environment,
       configuredPath: options.executable,
     }),
-    ['app-server', '-c', 'cli_auth_credentials_store="file"'],
+    ['app-server', '-c', 'cli_auth_credentials_store=file'],
     platform,
     environment,
   );
