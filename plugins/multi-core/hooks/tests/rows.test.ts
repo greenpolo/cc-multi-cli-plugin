@@ -597,6 +597,7 @@ test('a failed display tool acknowledgement is retried while the catalog is unch
   });
   const client: RowsClient = {
     wire: {
+      keys: { read: async () => ({}), save: async () => undefined },
       url: async () => 'http://127.0.0.1:4000',
       token: async () => 'token',
       sleep: () => new Promise<void>(() => undefined),
