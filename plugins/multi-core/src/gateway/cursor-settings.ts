@@ -31,16 +31,44 @@ export interface CursorSettingsOptions {
 /** Every discovery option resolved to a value; not part of the public surface. */
 type SettingsDiscovery = Required<CursorSettingsOptions>;
 
+export const policyCommandTimeoutMs = 10_000;
+
+/**
+ * Policy probes run from fixed system directories: a bare name would let a
+ * Windows working directory (searched first) or a user PATH entry answer for
+ * the managed policy.
+ */
+export function systemCommandPath(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (platform === 'win32') {
+    const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? 'C:\\Windows';
+    const system32 = path.win32.join(root, 'System32');
+    if (command === 'powershell.exe') {
+      return path.win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    }
+    return path.win32.join(system32, command.endsWith('.exe') ? command : `${command}.exe`);
+  }
+  return command === 'defaults' ? '/usr/bin/defaults' : command;
+}
+
 const defaultRunCommand = (command: string, args: readonly string[]): Promise<string> =>
   new Promise((resolve, reject) => {
-    childProcess.execFile(command, [...args], { encoding: 'utf8' }, (error, stdout, stderr) => {
-      if (error) {
-        Object.assign(error, { stderr });
-        reject(error);
-        return;
-      }
-      resolve(stdout);
-    });
+    childProcess.execFile(
+      systemCommandPath(command),
+      [...args],
+      { encoding: 'utf8', timeout: policyCommandTimeoutMs, windowsHide: true, cwd: os.tmpdir() },
+      (error, stdout, stderr) => {
+        if (error) {
+          Object.assign(error, { stderr });
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      },
+    );
   });
 
 /** Re-read on each native dispatch; Claude-side rules cannot constrain SDK tools. */

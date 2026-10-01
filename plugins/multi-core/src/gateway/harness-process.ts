@@ -363,7 +363,10 @@ function consumeStdout<P extends NativeParser, E, R>(
 function failLineLimit<P extends NativeParser, E, R>(context: RunContext<P, E, R>): void {
   fail(
     context,
-    new NativeCliError(`${context.spec.name} stdout line exceeded its safety limit`, 'output_limit'),
+    new NativeCliError(
+      `${context.spec.name} stdout line exceeded its safety limit`,
+      'output_limit',
+    ),
   );
 }
 

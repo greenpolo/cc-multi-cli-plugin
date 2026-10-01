@@ -8,6 +8,8 @@ import { antigravityPermissionPolicy } from '../../plugins/multi-antigravity/src
 import {
   type CursorSettingsOptions,
   checkCursorSettings,
+  policyCommandTimeoutMs,
+  systemCommandPath,
 } from '../../plugins/multi-core/src/gateway/cursor-settings.ts';
 import type { PermissionContext } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { sharedAdmission } from '../../plugins/multi-core/src/launcher.ts';
@@ -562,4 +564,17 @@ test('native settings admission treats WSL as Linux managed file discovery', asy
     },
   );
   assert.deepEqual(policy.disallowedTools, ['Read']);
+});
+
+test('policy probes use absolute system paths and a bounded timeout', () => {
+  assert.equal(
+    systemCommandPath('reg', 'win32', { SystemRoot: 'D:\\Win' }),
+    'D:\\Win\\System32\\reg.exe',
+  );
+  assert.equal(
+    systemCommandPath('powershell.exe', 'win32', {}),
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  );
+  assert.equal(systemCommandPath('defaults', 'darwin'), '/usr/bin/defaults');
+  assert.ok(policyCommandTimeoutMs > 0 && policyCommandTimeoutMs <= 30_000);
 });
