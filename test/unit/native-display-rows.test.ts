@@ -45,7 +45,7 @@ test('rows are issued only for registered native tools, with bounded native inpu
     error: false,
   };
   assert.equal(rows.issue(scope, native), undefined, 'unregistered tools write no row');
-  rows.acknowledge(['run_command', 'never_offered']);
+  rows.acknowledge('session', ['run_command', 'never_offered']);
   const issued = rows.issue(scope, {
     ...native,
     input: { CommandLine: 'y'.repeat(5000), [ROW_TOKEN]: 'forged', nested: { a: 1 } },
@@ -116,7 +116,7 @@ test('captured agy steps mirror Read and Bash, the native parameters kept under 
   }
   const rows = new DisplayRows();
   rows.announce(['run_command']);
-  rows.acknowledge(['run_command']);
+  rows.acknowledge('session', ['run_command']);
   const failed = steps.find((step) => step.info.parameters.CommandLine === 'cat /nonexistent/file');
   assert.ok(failed);
   const issued = rows.issue(JSON.stringify(['session']), {
@@ -274,7 +274,7 @@ test('fields derived from a result take precedence, and may name another built-i
   assert.equal(String(long.new_string).length, 16 * 1024 + 1);
   const rows = new DisplayRows();
   rows.announce(['edit']);
-  rows.acknowledge(['edit']);
+  rows.acknowledge('s', ['edit']);
   const issued = rows.issue('["s"]', {
     tool: 'edit',
     input: created,
@@ -513,4 +513,44 @@ test('the gateway forwards Anthropic requests without display tools or rows', as
     role: 'user',
     content: [{ type: 'text', text: 'Now summarise.' }],
   });
+});
+
+test('a session registers its own display tools and ToolSearch references are stripped', () => {
+  const rows = new DisplayRows();
+  rows.announce(['run_command']);
+  rows.acknowledge('one', ['run_command']);
+  const native = { tool: 'run_command', input: {}, output: 'ok', error: false };
+  assert.ok(rows.issue('["one","main"]', native));
+  assert.equal(
+    rows.issue('["two","main"]', native),
+    undefined,
+    'another session registered nothing',
+  );
+  rows.forgetSession('one');
+  assert.equal(rows.issue('["one","main"]', native), undefined);
+  const search = withoutDisplayTools({
+    model: 'x',
+    messages: [
+      { role: 'user', content: 'find tools' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_search', name: 'ToolSearch', input: {} }],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_search',
+            content: [
+              { type: 'tool_reference', tool_name: 'mcp__multi-core__run_command' },
+              { type: 'tool_reference', tool_name: 'WebFetch' },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.doesNotMatch(JSON.stringify(search), /mcp__multi-core/);
+  assert.match(JSON.stringify(search), /WebFetch/);
 });

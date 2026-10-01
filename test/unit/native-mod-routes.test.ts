@@ -496,3 +496,19 @@ test('wrong tokens cannot update sessions, acknowledge workers, or authorize com
   assert.equal(rejectedCompaction.status, 401);
   assert.throws(() => modes.resolve('unauthorized'), /unavailable/);
 });
+
+test('snapshots beyond capacity evict the least recently used idle scope', () => {
+  const bridge = new ModBridge();
+  const effective = { permissionMode: 'default' };
+  for (let index = 0; index < 128; index++) {
+    bridge.recordSession(JSON.stringify([`s${index}`, 'main']), { effective });
+  }
+  const running = JSON.stringify(['s0', 'main']);
+  bridge.begin(running, 'multi/cursor/auto');
+  // Reading s1 makes it recent, so the next oldest idle scope (s2) is evicted.
+  assert.ok(bridge.mode(JSON.stringify(['s1', 'main'])));
+  assert.ok(bridge.recordSession(JSON.stringify(['fresh', 'main']), { effective }));
+  assert.ok(bridge.mode(running), 'a running scope keeps its snapshot');
+  assert.ok(bridge.mode(JSON.stringify(['s1', 'main'])));
+  assert.equal(bridge.mode(JSON.stringify(['s2', 'main'])), undefined);
+});

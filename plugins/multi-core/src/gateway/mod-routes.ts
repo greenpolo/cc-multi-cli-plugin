@@ -148,21 +148,7 @@ async function handlePostRoute(
   }
   switch (route) {
     case '/multi/mod/policy':
-      if (parsed.generation === undefined) {
-        if (parsed.sourceGeneration !== bridge.mode(key)?.generation) {
-          throw new Error('Policy source generation is stale');
-        }
-        compactions?.cancel(sessionId);
-      }
-      if (!permissionModes) {
-        throw new Error('Policy admission is unavailable');
-      }
-      return reply(
-        res,
-        parsed.generation === undefined
-          ? permissionModes.beginPolicy(sessionId, text(parsed.cwd, 'cwd'))
-          : permissionModes.policies.status(sessionId, text(parsed.generation, 'generation')),
-      );
+      return await policyRoute(res, parsed, key, bridge, permissionModes, compactions);
     case '/multi/mod/detach':
       compactions?.cancel(sessionId);
       bridge.forgetSession(sessionId);
@@ -196,6 +182,40 @@ async function handlePostRoute(
 }
 
 /**
+ * Starts a policy discovery for a prompt, or reports one: with `wait` the reply is held
+ * until discovery ends (bounded), so a hook asks once instead of polling.
+ */
+async function policyRoute(
+  res: ServerResponse,
+  parsed: Record<string, unknown>,
+  key: string,
+  bridge: ModBridge,
+  permissionModes?: PermissionModes,
+  compactions?: ModCompactions,
+) {
+  const sessionId = text(parsed.sessionId, 'sessionId');
+  if (parsed.generation === undefined) {
+    if (parsed.sourceGeneration !== bridge.mode(key)?.generation) {
+      throw new Error('Policy source generation is stale');
+    }
+    compactions?.cancel(sessionId);
+  }
+  if (!permissionModes) {
+    throw new Error('Policy admission is unavailable');
+  }
+  if (parsed.generation === undefined) {
+    return reply(res, permissionModes.beginPolicy(sessionId, text(parsed.cwd, 'cwd')));
+  }
+  const generation = text(parsed.generation, 'generation');
+  return reply(
+    res,
+    parsed.wait === true
+      ? await permissionModes.policies.wait(sessionId, generation)
+      : permissionModes.policies.status(sessionId, generation),
+  );
+}
+
+/**
  * Display rows: the mod acknowledges the display tools it registered, and
  * answers a row's call with the native output only for a token this gateway
  * issued for that session and call. Any other call is refused.
@@ -216,7 +236,7 @@ function displayRoute(
     throw new Error('Display rows are unavailable');
   }
   if (route === '/multi/mod/display-tools') {
-    return reply(res, rows.acknowledge(parsed.registered));
+    return reply(res, rows.acknowledge(sessionId, parsed.registered));
   }
   const row = rows.verify(sessionId, parsed.token, parsed.toolUseId);
   if (!row) {
