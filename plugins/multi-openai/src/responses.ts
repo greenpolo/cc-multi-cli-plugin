@@ -598,6 +598,8 @@ class ResponseStream {
   private message?: MessagesResponse;
   private cursor = 0;
   private stopped: string | null = null;
+  /** A stop sequence ended the content; the terminal event is awaited only for usage. */
+  stopPending = false;
   completed = false;
   private model: string;
   private emit: Emit;
@@ -633,11 +635,21 @@ class ResponseStream {
         if (!this.message) {
           throw new Error('OpenAI stream omitted response.created');
         }
+        if (this.stopPending) {
+          return;
+        }
         this.update(event);
         this.drain();
         if (this.stopped) {
-          this.finish('stop_sequence');
+          this.stopPending = true;
         }
+    }
+  }
+
+  /** The terminal event never came in time; the answer is complete but its usage is unknown. */
+  finishWithoutUsage() {
+    if (this.stopPending && !this.completed) {
+      this.finish('stop_sequence');
     }
   }
 
@@ -706,6 +718,11 @@ class ResponseStream {
       { type: 'response.completed' | 'response.incomplete' | 'response.done' }
     >,
   ) {
+    if (this.stopPending) {
+      this.start(event.response);
+      this.finish('stop_sequence', event.response.usage);
+      return;
+    }
     if (
       this.options.requireUsage &&
       (event.response.usage?.input_tokens === undefined ||
@@ -714,16 +731,7 @@ class ResponseStream {
       throw new Error('Provider completed without token usage; cost accounting is unavailable');
     }
     this.start(event.response);
-    if (event.response.status && !['completed', 'incomplete'].includes(event.response.status)) {
-      throw new Error(`OpenAI terminal response has status ${event.response.status}`);
-    }
-    const incomplete =
-      event.type === 'response.incomplete' || event.response.status === 'incomplete';
-    if (incomplete && event.response.incomplete_details?.reason !== 'max_output_tokens') {
-      throw new Error(
-        `OpenAI response incomplete: ${event.response.incomplete_details?.reason ?? 'unknown'}`,
-      );
-    }
+    const incomplete = this.terminalIncomplete(event);
     this.reconcile(event.response.output);
     if ([...this.slots.values()].some((slot) => !slot.done)) {
       throw new Error('OpenAI completed with an unfinished content block');
@@ -743,6 +751,26 @@ class ResponseStream {
       stopReason = 'max_tokens';
     }
     this.finish(stopReason, event.response.usage);
+  }
+
+  /** Whether the terminal event is a max-output cut-off; any other failed state throws. */
+  private terminalIncomplete(
+    event: Extract<
+      ResponseStreamEvent,
+      { type: 'response.completed' | 'response.incomplete' | 'response.done' }
+    >,
+  ): boolean {
+    if (event.response.status && !['completed', 'incomplete'].includes(event.response.status)) {
+      throw new Error(`OpenAI terminal response has status ${event.response.status}`);
+    }
+    const incomplete =
+      event.type === 'response.incomplete' || event.response.status === 'incomplete';
+    if (incomplete && event.response.incomplete_details?.reason !== 'max_output_tokens') {
+      throw new Error(
+        `OpenAI response incomplete: ${event.response.incomplete_details?.reason ?? 'unknown'}`,
+      );
+    }
+    return incomplete;
   }
 
   private reconcile(output?: ResponsesOutputItem[]) {
@@ -965,6 +993,9 @@ export function prefixSafeLength(text: string, stops: readonly string[]): number
   return limit;
 }
 
+/** How long a stream that already hit a stop sequence may take to report its usage. */
+const STOP_USAGE_WAIT_MS = 5000;
+
 export async function fromResponses(
   stream: AsyncIterable<Uint8Array>,
   model: string,
@@ -972,14 +1003,36 @@ export async function fromResponses(
   options: ResponseOptions = {},
 ): Promise<MessagesResponse> {
   const response = new ResponseStream(model, emit, options);
-  for await (const event of readSse(stream)) {
-    if (!isStreamEvent(event)) {
-      continue;
+  const events = readSse(stream)[Symbol.asyncIterator]();
+  let deadline: Promise<'late'> | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    while (!response.completed) {
+      const next = events.next();
+      const step = deadline ? await Promise.race([next, deadline]) : await next;
+      if (step === 'late') {
+        response.finishWithoutUsage();
+        break;
+      }
+      if (step.done) {
+        break;
+      }
+      if (!isStreamEvent(step.value)) {
+        continue;
+      }
+      response.accept(step.value);
+      if (response.stopPending && !deadline) {
+        // The text is final, but the provider bills the whole response: keep reading to its usage.
+        deadline = new Promise<'late'>((resolve) => {
+          timer = setTimeout(() => resolve('late'), STOP_USAGE_WAIT_MS);
+        });
+      }
     }
-    response.accept(event);
-    if (response.completed) {
-      break;
-    }
+  } finally {
+    clearTimeout(timer);
+    // A stream abandoned early is released without waiting on its next chunk.
+    events.return?.(undefined).catch(() => undefined);
   }
+  response.finishWithoutUsage();
   return response.result();
 }
