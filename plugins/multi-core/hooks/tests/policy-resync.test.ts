@@ -14,15 +14,18 @@ type Call = { url: string; body: Record<string, unknown> };
 function gateway(held: number | undefined, calls: Call[]): PolicyClient {
   return {
     model: 'multi/cursor/auto',
-    request: async (route, body) => {
+    get: async (route, query) => {
+      calls.push({ url: `${route}?${new URLSearchParams(query)}`, body: {} });
+      return held === undefined ? { refused: true, httpStatus: 409 } : { generation: held };
+    },
+    post: async (route, body) => {
       calls.push({ url: route, body });
-      if (route.startsWith('/multi/mod/mode?')) {
-        return held === undefined ? { refused: true, httpStatus: 409 } : { generation: held };
-      }
       if (route === '/multi/mod/session') {
         return { accepted: true, generation: 11 };
       }
       if (typeof body.generation === 'string') {
+        // One held request: the gateway answers once discovery has ended.
+        expect(body.wait).toBe(true);
         return { generation: body.generation, status: 'ready' };
       }
       if (body.sourceGeneration !== held) {
@@ -33,7 +36,11 @@ function gateway(held: number | undefined, calls: Call[]): PolicyClient {
   };
 }
 function unreachable(): PolicyClient {
-  return { model: 'multi/cursor/auto', request: async () => undefined };
+  return {
+    model: 'multi/cursor/auto',
+    get: async () => undefined,
+    post: async () => undefined,
+  };
 }
 
 test('concurrent harness helpers share admission and later helpers reuse it', async () => {
@@ -100,7 +107,15 @@ for (const model of ['claude-sonnet-5', 'multi/openai/gpt-6-astra', 'multi/zen/g
     const snapshot = { sessionId: 'session', cwd: '/workspace', permissionMode: 'plan' };
     expect(await recordPrompt(client, snapshot, 7)).toBe(11);
     expect(calls.map((call) => call.url)).toEqual(['/multi/mod/session']);
-    expect(calls[0].body.policyGeneration).toBe(undefined);
-    expect(calls[0].body.permissionMode).toBe('plan');
+    expect(calls[0]?.body.policyGeneration).toBe(undefined);
+    expect(calls[0]?.body.permissionMode).toBe('plan');
   });
 }
+
+test('policy readiness is one held request rather than a polling loop', async () => {
+  const calls: Call[] = [];
+  await preparePolicy(gateway(undefined, calls), 'session', '/workspace', undefined);
+  const waits = calls.filter((call) => call.body.wait === true);
+  expect(waits.length).toBe(1);
+  expect(waits[0]?.body.generation).toBe('policy-1');
+});

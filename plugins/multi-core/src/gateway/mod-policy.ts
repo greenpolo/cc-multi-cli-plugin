@@ -22,7 +22,7 @@ type Job = {
 const JOB_TTL_MS = 60_000;
 const MAX_SESSIONS = 128;
 /** The longest a hook's long poll holds its reply; the hook sends one request, not a loop. */
-export const POLICY_WAIT_MS = 8000;
+const POLICY_WAIT_MS = 8000;
 
 /** File discovery runs detached from the bounded hook requests. */
 export class ModPolicies {

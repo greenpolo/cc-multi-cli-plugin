@@ -1,40 +1,48 @@
 import type { EngineInterface, Register } from 'claude-code';
+import { atom, read, update } from 'claude-code';
+import type { MultiCoreUsagePane } from '../types/multi-core.d.ts';
+import { accepted, getJson, type Wire } from './gateway.ts';
 import { quotaAdvice } from './quota-advice.ts';
+import { withBounded } from './state.ts';
 import type { UsagePaneProps } from './usage-view.ts';
 
-const panes = new Map<string, UsagePaneProps>();
-const advisorySessions = new Set<string>();
+// State values are named where they are read: the engine's scan reads an atom's plugin and key
+// from this file's own source, not across an import.
+const advisorySessions = atom(
+  { plugin: 'multi-core', key: 'advisorySessions' } as const,
+  [] as string[],
+);
+const usagePanes = atom(
+  { plugin: 'multi-core', key: 'usagePanes' } as const,
+  {} as Record<string, MultiCoreUsagePane>,
+);
 
-export function forgetUsageSession(session: string) {
-  advisorySessions.delete(session);
-  panes.delete(session);
-}
+/** A provider dashboard can take a few seconds; the command's own budget is 10 s. */
+const usageTimeoutMs = 8500;
+const maximumPanes = 16;
 
-export const register = (
-  on: Parameters<Register>[0],
-  _options?: Parameters<Register>[1],
-  agentModels: ReadonlyMap<string, string> = new Map(),
-) => {
+const wire = ($: EngineInterface): Wire => ({
+  url: () => $.env.get('MULTI_MOD_GATEWAY_URL'),
+  token: () => $.env.get('MULTI_GATEWAY_TOKEN'),
+  fetch: (url, init) => $.http.fetch(url, init),
+  sleep: (ms, signal) => $.clock.sleep(ms, { signal }),
+});
+
+export const register = (on: Parameters<Register>[0], _options?: Parameters<Register>[1]) => {
   on('classic.PreToolUse', async ($, event, next) => {
-    await attributeToolCall($, event, agentModels);
-    // `Task` is the Agent tool's legacy name; a worker's own spawn carries its agentId.
+    // `Task` is the Agent tool's legacy name.
     const tool: string = event.tool;
-    if (
-      (tool !== 'Agent' && tool !== 'Task') ||
-      (event as { agentId?: string }).agentId !== undefined
-    ) {
+    if (tool !== 'Agent' && tool !== 'Task') {
       return next(event);
     }
     const session = await $.session.id();
-    if (!advisorySessions.has(session)) {
+    if (!(await read($, advisorySessions)).includes(session)) {
       return next(event);
     }
-    const snapshot = dashboard(
-      await request($, `/multi/mod/usage?sessionId=${encodeURIComponent(session)}&view=providers`),
-    );
+    const snapshot = dashboard(accepted(await fetchUsage($, session)));
     const result = await next(event);
     // Preserve all permission decisions and tool arguments, including on lookup failure.
-    if (!advisorySessions.has(session)) {
+    if (!(await read($, advisorySessions)).includes(session)) {
       return result;
     }
     return {
@@ -47,39 +55,46 @@ export const register = (
       return { text: 'Use /multi-usage without arguments.' };
     }
     const session = await $.session.id();
-    const response = dashboard(
-      await request($, `/multi/mod/usage?sessionId=${encodeURIComponent(session)}&view=providers`),
-    );
+    const response = dashboard(accepted(await fetchUsage($, session)));
     if (!response) {
       return { text: 'Multi usage is unavailable. Launch this session with claude-multi.' };
     }
-    if (panes.size >= 16) {
-      panes.clear();
-    }
-    panes.set(session, { ...response, quotaAdviceEnabled: advisorySessions.has(session) });
+    const quotaAdviceEnabled = (await read($, advisorySessions)).includes(session);
+    // The pane draws from this state: writing it redraws an open pane without an invalidate.
+    await update($, usagePanes, (held) =>
+      withBounded<MultiCoreUsagePane>(
+        held,
+        session,
+        { ...response, quotaAdviceEnabled },
+        maximumPanes,
+      ),
+    );
+    const summary = response.providers
+      .map((provider) => `${provider.name}: ${provider.summary}`)
+      .join('\n');
     try {
-      await $.ui.open({
+      const opened = await $.ui.open({
         id: 'multi-usage',
         title: 'Multi usage',
         focus: true,
         closeOnEscape: true,
         rows: 20,
       });
-      $.ui.invalidate('ui.render');
-      return {};
+      if (opened.isPlaced) {
+        return {};
+      }
+      // The pane waits undrawn (a surface that places no panes): say so, and show the numbers.
+      $.ui.toast(`Multi usage: ${opened.reason}`);
+      return { text: summary };
     } catch {
-      return {
-        text: response.providers
-          .map((provider) => `${provider.name}: ${provider.summary}`)
-          .join('\n'),
-      };
+      return { text: summary };
     }
   });
   on('ui.render', { component: 'Pane' }, async ($, event, next) => {
     if (event.requestId !== 'multi-usage' || event.surface !== 'terminal') {
       return next(event);
     }
-    const props = panes.get(await $.session.id());
+    const props = (await read($, usagePanes))[await $.session.id()];
     if (!props) {
       return next(event);
     }
@@ -95,31 +110,45 @@ export const register = (
       return next(event);
     }
     const session = await $.session.id();
-    const previous = panes.get(session);
+    const previous = (await read($, usagePanes))[session];
     if (!previous) {
       return next(event);
     }
     if (action === 'toggle-quota-advice') {
-      const enabled = !advisorySessions.has(session);
-      if (enabled) {
-        advisorySessions.add(session);
-      } else {
-        advisorySessions.delete(session);
-      }
+      const enabled = !(await read($, advisorySessions)).includes(session);
+      await update($, advisorySessions, (held) =>
+        enabled ? [...held, session] : held.filter((id) => id !== session),
+      );
       const props = { ...previous, quotaAdviceEnabled: enabled };
-      panes.set(session, props);
+      await update($, usagePanes, (held) =>
+        withBounded<MultiCoreUsagePane>(held, session, props, maximumPanes),
+      );
       return { props };
     }
-    const route =
+    const response =
       action === 'refresh'
-        ? `/multi/mod/usage?view=providers&refresh=true&sessionId=${encodeURIComponent(session)}`
-        : `/multi/mod/receipts?sessionId=${encodeURIComponent(session)}`;
-    const response = await request($, route);
-    const props = updatePane(previous, action, response);
-    panes.set(session, props);
+        ? await fetchUsage($, session, true)
+        : await getJson(
+            wire($),
+            '/multi/mod/receipts',
+            { sessionId: session },
+            { timeoutMs: usageTimeoutMs },
+          );
+    const props = updatePane(previous, action, accepted(response));
+    await update($, usagePanes, (held) =>
+      withBounded<MultiCoreUsagePane>(held, session, props, maximumPanes),
+    );
     return { props };
   });
 };
+
+function fetchUsage($: EngineInterface, session: string, refresh = false) {
+  const query: Record<string, string> = { sessionId: session, view: 'providers' };
+  if (refresh) {
+    query.refresh = 'true';
+  }
+  return getJson(wire($), '/multi/mod/usage', query, { timeoutMs: usageTimeoutMs });
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -203,72 +232,4 @@ function receiptEntry(value: unknown): string[] {
   return [
     `  ${String(value.provider)} · ${String(value.model ?? 'model unreported')} · effort ${String(value.effort ?? 'unreported')} · ${String(value.endpoint ?? 'endpoint unreported')} · ${String(value.source)}`,
   ];
-}
-
-async function request($: EngineInterface, route: string): Promise<unknown> {
-  const base = await $.env.get('MULTI_MOD_GATEWAY_URL');
-  const token = await $.env.get('MULTI_GATEWAY_TOKEN');
-  if (!base || !token) {
-    return undefined;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const result = await Promise.race([
-      $.http.fetch(`${base}${route}`, {
-        method: 'GET',
-        headers: { 'x-multi-gateway-token': token },
-      }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Usage timeout')), 8500);
-      }),
-    ]);
-    return result.ok ? JSON.parse(result.text) : undefined;
-  } catch {
-    return undefined;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Reviewer attribution for a provider's tool call: the gateway learns the session, call,
- * and workspace it needs to match the reviewer request to it. A Claude loop's tool call
- * is Claude's own and costs no gateway call. The reply never decides the call.
- */
-async function attributeToolCall(
-  $: EngineInterface,
-  event: { tool: string; tool_use_id: string },
-  agentModels: ReadonlyMap<string, string>,
-) {
-  const agentId = (event as { agentId?: string }).agentId;
-  const model = agentId === undefined ? await $.session.model() : agentModels.get(agentId);
-  const base = await $.env.get('MULTI_MOD_GATEWAY_URL');
-  const token = await $.env.get('MULTI_GATEWAY_TOKEN');
-  if (!model?.startsWith('multi/') || !base || !token) {
-    return;
-  }
-  const mode = (event as { permission_mode?: unknown }).permission_mode;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      $.http.fetch(`${base}/multi/permission`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-multi-gateway-token': token },
-        body: JSON.stringify({
-          session_id: await $.session.id(),
-          tool_use_id: event.tool_use_id,
-          tool_name: event.tool,
-          cwd: await $.session.cwd(),
-          ...(typeof mode === 'string' ? { permission_mode: mode } : {}),
-        }),
-      }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Attribution timeout')), 1500);
-      }),
-    ]);
-  } catch {
-    // Attribution is best effort; Claude's own checks decide the call.
-  } finally {
-    clearTimeout(timer);
-  }
 }

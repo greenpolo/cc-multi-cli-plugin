@@ -1,4 +1,6 @@
 import type { EngineInterface, Register, ToolSpec } from 'claude-code';
+import type { MultiCoreDisplayTools } from '../types/multi-core.d.ts';
+import { accepted, getJson, postJson, type Wire } from './gateway.ts';
 import {
   errorBody,
   headerSummary,
@@ -8,6 +10,7 @@ import {
   toolHeader,
   unconfirmedBody,
 } from './rows-view.ts';
+import { rememberBounded } from './state.ts';
 
 /**
  * Native harness actions as Claude Code tool rows.
@@ -21,14 +24,15 @@ import {
  * the gateway did not originate, answers the gateway's own with the native output,
  * and draws the row as Claude Code draws the built-in the action mirrors
  * (`rows-view.ts`), under the native tool's name.
- * `register.ts` syncs the names at session start and `lifecycle.ts` before each
- * harness step (a module hooks each event once), both through a `RowsClient`.
+ * The names are registered lazily, so a session that never runs a harness model lists
+ * none: `register.ts` syncs them at a harness prompt, `workers.ts` before a harness
+ * worker spawns, and `lifecycle.ts` before each harness step (a module hooks each
+ * event once). What is registered, and the catalog revision it answers, is `$.state`.
  */
 const prefix = 'mcp__multi-core__';
 const tokenKey = 'multi_row';
 const namePattern = /^[A-Za-z0-9_-]{1,47}$/;
 const maximumTools = 160;
-const maximumBody = 32000;
 const maximumRemembered = 512;
 const reminder = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 const description =
@@ -41,10 +45,38 @@ const refusal =
 type On = Parameters<Register>[0];
 type Row = { output: string; isError: boolean };
 
-const registered = new Set<string>();
-/** Row inputs by tool_use id: a `ToolResult` carries no input, and its drawing needs it. */
+const rowGateway = ($: EngineInterface): RowGateway => ({
+  wire: {
+    url: () => $.env.get('MULTI_MOD_GATEWAY_URL'),
+    token: () => $.env.get('MULTI_GATEWAY_TOKEN'),
+    fetch: (url, init) => $.http.fetch(url, init),
+    sleep: (ms, signal) => $.clock.sleep(ms, { signal }),
+  },
+  sessionId: () => $.session.id(),
+});
+
+/** What answering a display row needs: the gateway and this session's id. */
+export type RowGateway = { wire: Wire; sessionId: () => Promise<string> };
+
+/**
+ * What syncing needs of the engine. The engine follows `$` only into functions of the
+ * file that hooks, so each caller (`register.ts`, `lifecycle.ts`, `workers.ts`) builds
+ * this from its own `$`: the state calls are `read`/`update` on `displayTools`.
+ */
+export type RowsClient = RowGateway & {
+  held: () => Promise<MultiCoreDisplayTools>;
+  save: (
+    change: (held: MultiCoreDisplayTools) => MultiCoreDisplayTools,
+  ) => Promise<MultiCoreDisplayTools>;
+  register: (tool: ToolSpec) => Promise<unknown>;
+};
+
+/**
+ * Row inputs by tool_use id: a `ToolResult` carries no input, and its drawing needs it.
+ * A render memo (every draw of a row's `ToolUse` refills it), not state a reload loses,
+ * and never written from a render hook, which `$.state` refuses.
+ */
 const inputs = new Map<string, Record<string, unknown>>();
-let revision: number | undefined;
 
 export function isDisplayTool(tool: unknown): tool is string {
   return typeof tool === 'string' && tool.startsWith(prefix);
@@ -62,23 +94,10 @@ export const register = (on: On) => {
     if (!isDisplayTool(event.tool)) {
       return next(event);
     }
-    const row = await issuedRow($, event.input, event.tool_use_id);
+    const row = await issuedRow(rowGateway($), event.input, event.tool_use_id);
     return row
       ? { decision: 'allow' as const, reason: 'A row the Multi gateway issued for this call.' }
       : { decision: 'deny' as const, reason: refusal };
-  });
-  on('tool.call', async ($, event, next) => {
-    if (!isDisplayTool(event.tool)) {
-      return next(event);
-    }
-    const row = await issuedRow($, event, event.tool_use_id);
-    if (!row) {
-      return { deny: refusal };
-    }
-    remember(event.tool_use_id, event);
-    return row.isError
-      ? { isError: true as const, result: row.output }
-      : { result: [{ type: 'text', text: row.output }] };
   });
   on('ui.render', { component: 'ToolUse' }, async ($, event, next) => {
     if (!isDisplayTool(event.props.tool)) {
@@ -116,12 +135,24 @@ export const register = (on: On) => {
   });
 };
 
-function remember(toolUseId: string, input: Record<string, unknown>) {
-  inputs.delete(toolUseId);
-  inputs.set(toolUseId, input);
-  while (inputs.size > maximumRemembered) {
-    inputs.delete(inputs.keys().next().value as string);
+/**
+ * A display row's call, answered with the native output when the gateway issued its
+ * token for this call; any other call to a display name is refused. `register.ts`
+ * routes display tools here from the module's one `tool.call` hook.
+ */
+export async function callDisplayRow(client: RowGateway, event: { tool_use_id?: string }) {
+  const row = await issuedRow(client, event, event.tool_use_id);
+  if (!row) {
+    return { deny: refusal };
   }
+  remember(String(event.tool_use_id), event as Record<string, unknown>);
+  return row.isError
+    ? { isError: true as const, result: row.output }
+    : { result: [{ type: 'text', text: row.output }] };
+}
+
+function remember(toolUseId: string, input: Record<string, unknown>) {
+  rememberBounded(inputs, toolUseId, input, maximumRemembered);
 }
 
 async function sessionCwd($: EngineInterface) {
@@ -133,32 +164,19 @@ async function sessionCwd($: EngineInterface) {
 }
 
 /**
- * What syncing needs from the engine and the gateway. The engine passes `$` only
- * into functions of the module that hooks, so each caller builds this from its
- * own `$` (as `policy.ts` takes a `PolicyClient`).
- */
-export type RowsClient = {
-  sessionId: () => Promise<string>;
-  /** `GET /multi/mod/display-tools`: the gateway's offered names and their revision. */
-  catalog: () => Promise<unknown>;
-  register: (tool: ToolSpec) => Promise<unknown>;
-  /** `POST /multi/mod/display-tools`: the names now registered. */
-  acknowledge: (payload: Record<string, unknown>) => Promise<unknown>;
-};
-
-/**
  * Registers every display tool the gateway offers that is not registered yet,
  * then tells the gateway which are, since it only emits rows for those.
  */
 export async function syncDisplayTools(client: RowsClient) {
-  const catalog = record(await client.catalog());
-  if (!catalog || typeof catalog.revision !== 'number' || catalog.revision === revision) {
+  const catalog = record(accepted(await getJson(client.wire, '/multi/mod/display-tools')));
+  const known = await client.held();
+  if (!catalog || typeof catalog.revision !== 'number' || catalog.revision === known.revision) {
     return;
   }
   const names = (Array.isArray(catalog.names) ? catalog.names : [])
     .filter((name): name is string => typeof name === 'string' && namePattern.test(name))
     .slice(0, maximumTools)
-    .filter((name) => !registered.has(name));
+    .filter((name) => !known.registered.includes(name));
   const results = await Promise.allSettled(
     names.map((name) =>
       client.register({
@@ -168,50 +186,52 @@ export async function syncDisplayTools(client: RowsClient) {
       }),
     ),
   );
-  let complete = true;
-  for (const [index, result] of results.entries()) {
-    if (result.status === 'fulfilled') {
-      registered.add(names[index] as string);
-    } else {
-      // A toolless session cannot register tools; its gateway emits no rows.
-      complete = false;
-    }
-  }
+  // A toolless session cannot register tools; its gateway emits no rows.
+  const complete = results.every((result) => result.status === 'fulfilled');
+  const registered = [
+    ...known.registered,
+    ...names.filter((_name, index) => results[index]?.status === 'fulfilled'),
+  ];
   // The revision advances only once the gateway confirmed the registered set; a
   // timeout or an HTTP failure (which the client returns as no reply) is retried
   // on the next sync, with the names registered so far kept.
-  const confirmed = await acknowledged(client);
-  if (complete && confirmed) {
-    revision = catalog.revision;
-  }
+  const confirmed = await acknowledged(client, registered);
+  const revision = complete && confirmed ? (catalog.revision as number) : undefined;
+  await client.save((latest) =>
+    revision === undefined ? { ...latest, registered } : { registered, revision },
+  );
 }
 
 /** Tells the gateway which names are registered; true only for its validated reply. */
-async function acknowledged(client: RowsClient): Promise<boolean> {
-  if (!registered.size) {
+async function acknowledged(client: RowsClient, registered: readonly string[]): Promise<boolean> {
+  if (!registered.length) {
     return true;
   }
   const reply = record(
-    await client.acknowledge({
-      sessionId: await client.sessionId(),
-      registered: [...registered],
-    }),
+    accepted(
+      await postJson(client.wire, '/multi/mod/display-tools', {
+        sessionId: await client.sessionId(),
+        registered,
+      }),
+    ),
   );
   return typeof reply?.registered === 'number';
 }
 
 /** The native output of a row, only when the gateway issued its token for this call. */
-async function issuedRow($: EngineInterface, input: unknown, toolUseId: unknown) {
+async function issuedRow(client: RowGateway, input: unknown, toolUseId: unknown) {
   const token = record(input)?.[tokenKey];
   if (typeof token !== 'string' || typeof toolUseId !== 'string') {
     return undefined;
   }
   const reply = record(
-    await gateway($, '/multi/mod/display', {
-      sessionId: await $.session.id(),
-      token,
-      toolUseId,
-    }),
+    accepted(
+      await postJson(client.wire, '/multi/mod/display', {
+        sessionId: await client.sessionId(),
+        token,
+        toolUseId,
+      }),
+    ),
   );
   if (!reply || typeof reply.output !== 'string') {
     return undefined;
@@ -245,36 +265,4 @@ export function outputText(output: unknown): string {
       .join('\n');
   }
   return text.replaceAll(reminder, '').replaceAll('\r', '').trimEnd();
-}
-
-async function gateway($: EngineInterface, route: string, payload?: Record<string, unknown>) {
-  const base = await $.env.get('MULTI_MOD_GATEWAY_URL');
-  const token = await $.env.get('MULTI_GATEWAY_TOKEN');
-  if (!base || !token) {
-    return undefined;
-  }
-  const body = payload ? JSON.stringify(payload) : undefined;
-  if (body && body.length > maximumBody) {
-    return undefined;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const response = await Promise.race([
-      $.http.fetch(`${base}${route}`, {
-        method: body ? 'POST' : 'GET',
-        headers: { 'content-type': 'application/json', 'x-multi-gateway-token': token },
-        ...(body ? { body } : {}),
-      }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Gateway timeout')), 1500);
-      }),
-    ]);
-    return response.ok ? (JSON.parse(response.text) as unknown) : undefined;
-  } catch {
-    return undefined;
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
 }
