@@ -280,7 +280,7 @@ whose last turn holds only the rows' results, with it, without a native run. The
 harness's record of its reply includes that text, so the next turn's history still
 matches. The held text is bound to the session, worker and provider whose reply
 wrote the rows, and only that scope's request naming that reply's rows receives it;
-any other is refused, and a session's held texts are dropped when it detaches.
+any other is refused, and a session's held texts are dropped when it ends.
 After a restart or an eviction the gateway reads it back from the harness's session
 record (`recordedResponse`); when no record holds it, the request fails explicitly.
 An action whose completion never arrives is settled when the run ends as
