@@ -4,8 +4,8 @@ import {
   argvSafe,
   executableInvocation,
   isCmdSafeArgument,
-  UnsafeCommandArgumentError,
   resolveExecutable,
+  UnsafeCommandArgumentError,
 } from '../../plugins/multi-core/src/gateway/executable.ts';
 
 test('resolves Windows npm shims using PATHEXT order', () => {

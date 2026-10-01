@@ -1,3 +1,4 @@
+import { readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { HarnessExchange } from './harness-exchange.ts';
 import type { HarnessResponse } from './harness-response.ts';
@@ -65,6 +66,10 @@ export async function archiveHarnessReply<S extends HarnessSessionBase, R extend
   session: HarnessSession<S, R>;
   stateDirectory: string;
   platform: NodeJS.Platform;
+  /** Archives kept beyond the one just written; defaults to `archiveKeepCount`. */
+  keep?: number;
+  maxAgeMs?: number;
+  now?: number;
 }): Promise<void> {
   const { replay, response } = args.session.saved;
   if (!replay || !response) {
@@ -75,4 +80,43 @@ export async function archiveHarnessReply<S extends HarnessSessionBase, R extend
     { response, events: replay.events },
     args.platform,
   );
+  await pruneArchives(args.stateDirectory, {
+    keep: args.keep ?? archiveKeepCount,
+    maxAgeMs: args.maxAgeMs ?? archiveMaxAgeMs,
+    now: args.now ?? Date.now(),
+  });
+}
+
+/**
+ * Only a client retry of a just-superseded turn can ask for an archive, so a
+ * short window is enough; the files hold native tool output and must not
+ * accumulate without bound.
+ */
+export const archiveKeepCount = 32;
+export const archiveMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
+
+/** Best effort: a failure to prune never fails the turn that triggered it. */
+export async function pruneArchives(
+  directory: string,
+  limits: { keep: number; maxAgeMs: number; now: number },
+): Promise<void> {
+  try {
+    const names = (await readdir(directory)).filter((name) => name.endsWith('.response.json'));
+    const dated = await Promise.all(
+      names.map(async (name) => {
+        const file = path.join(directory, name);
+        const info = await stat(file).catch(() => undefined);
+        return info ? { file, time: info.mtimeMs } : undefined;
+      }),
+    );
+    const present = dated
+      .filter((entry): entry is { file: string; time: number } => entry !== undefined)
+      .sort((left, right) => right.time - left.time);
+    const doomed = present.filter(
+      (entry, index) => index >= limits.keep || limits.now - entry.time > limits.maxAgeMs,
+    );
+    await Promise.all(doomed.map((entry) => rm(entry.file, { force: true }).catch(() => {})));
+  } catch {
+    // Pruning is housekeeping only.
+  }
 }

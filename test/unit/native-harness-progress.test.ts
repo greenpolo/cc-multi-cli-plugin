@@ -16,6 +16,7 @@ import {
 } from '../../plugins/multi-antigravity/src/progress.ts';
 import { DisplayRows, ROW_TOKEN } from '../../plugins/multi-core/src/gateway/display-rows.ts';
 import {
+  maximumTracked,
   NativeActionTracker,
   type NativeObservation,
 } from '../../plugins/multi-core/src/gateway/harness-progress.ts';
@@ -888,4 +889,25 @@ test('an action whose completion never arrives is unconfirmed: no success row, n
   assert.doesNotMatch(summary, /Changed/);
   assert.match(summary, /\[Native\] 2 native actions: 1 read, 1 edit\.\n/);
   assert.match(summary, /\[Native\] Unconfirmed: 1 action ended without a reported outcome\.\n/);
+});
+
+test('actions past the tracking cap are counted and the summary says it truncated', () => {
+  const tracker = new NativeActionTracker('Test');
+  const total = maximumTracked + 3;
+  for (let index = 0; index < total; index += 1) {
+    tracker.start(`a${index}`, { kind: 'read', tool: 'Read', input: {}, description: 'file' });
+    tracker.finish(`a${index}`, { outcome: 'ok', error: false });
+  }
+  const text = tracker.text();
+  assert.match(text, new RegExp(`${maximumTracked} native actions: ${maximumTracked} read`));
+  assert.match(text, /Truncated: 3 further actions beyond the first 512/);
+});
+
+test('a summary with only untracked actions still reports truncation', () => {
+  const tracker = new NativeActionTracker('Test');
+  for (let index = 0; index < maximumTracked; index += 1) {
+    tracker.start(`a${index}`, { kind: 'read', tool: 'Read', input: {}, description: 'f' });
+  }
+  tracker.start('extra', { kind: 'edit', tool: 'Edit', input: {}, description: 'f' });
+  assert.match(tracker.text(), /Truncated: 1 further action beyond/);
 });
