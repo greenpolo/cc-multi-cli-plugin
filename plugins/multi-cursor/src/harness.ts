@@ -11,6 +11,7 @@ import type {
   TokenUsage,
 } from '@cursor/sdk';
 import type { WorkerPermissions } from '../../multi-core/src/gateway/agent-definitions.ts';
+import { boundedWait } from '../../multi-core/src/gateway/harness-cli.ts';
 import {
   archiveHarnessReply,
   commitHarnessResponse,
@@ -864,7 +865,10 @@ export class CursorHarness {
         exchange.controller.abort(new Error('Cursor gateway closed'));
       }
     }
-    await bounded(Promise.allSettled(this.registry.all().map((exchange) => exchange.result)));
+    await boundedWait(
+      Promise.allSettled(this.registry.all().map((exchange) => exchange.result)),
+      1000,
+    );
     for (const session of [...this.store.sessions()]) {
       this.closeAgent(session.runtime.agent);
     }
@@ -897,18 +901,4 @@ function savedAgentId(saved: unknown): string | undefined {
     return undefined;
   }
   return saved.agentId;
-}
-
-async function bounded(operation: Promise<unknown>) {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      operation,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, 1000);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }

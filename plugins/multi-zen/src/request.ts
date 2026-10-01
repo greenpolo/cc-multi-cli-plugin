@@ -1,8 +1,11 @@
 import type { MessagesRequest } from '../../multi-core/src/gateway/messages.ts';
+import type {
+  ResponsesInputContent,
+  ResponsesRequest,
+} from '../../multi-core/src/gateway/responses.ts';
+import { toResponses } from '../../multi-core/src/gateway/responses.ts';
 import { estimateInputTokens, estimateTextTokens } from '../../multi-core/src/gateway/tokens.ts';
-import type { ResponsesInputContent, ResponsesRequest } from '../../multi-openai/src/responses.ts';
-import { toResponses } from '../../multi-openai/src/responses.ts';
-import { toChat } from './chat.ts';
+import { toChat, ZEN_RESPONSES_SIGNATURE_PREFIX } from './chat.ts';
 import type { ZenModel } from './models.ts';
 import { zenModel } from './models.ts';
 
@@ -42,7 +45,7 @@ export function zenRequest(body: MessagesRequest, cacheKey: string) {
   ) {
     throw new Error(`Zen max_tokens must be between 1 and ${model.maxOutputTokens}`);
   }
-  const signaturePrefix = `multi-zen-responses:${model.id}:`;
+  const signaturePrefix = `${ZEN_RESPONSES_SIGNATURE_PREFIX}${model.id}:`;
   const normalized = toResponses(body, model.id, signaturePrefix);
   validateMedia(normalized, model);
   const effort = body.output_config?.effort;

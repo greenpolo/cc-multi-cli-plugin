@@ -18,6 +18,18 @@ import type {
 } from '../../plugins/multi-core/src/gateway/messages.ts';
 import { PermissionModes } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { ReceiptLedger } from '../../plugins/multi-core/src/gateway/receipts.ts';
+import type {
+  ResponsesInputContent,
+  ResponsesInputItem,
+  ResponsesRequest,
+} from '../../plugins/multi-core/src/gateway/responses.ts';
+import {
+  forAnthropic,
+  fromResponses,
+  OPENAI_SIGNATURE_PREFIX,
+  readSse,
+  toResponses,
+} from '../../plugins/multi-core/src/gateway/responses.ts';
 import type { GatewayEvent, GatewayOptions } from '../../plugins/multi-core/src/gateway/server.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import { estimateInputTokens } from '../../plugins/multi-core/src/gateway/tokens.ts';
@@ -29,18 +41,10 @@ import {
 import { readCodexAuth } from '../../plugins/multi-openai/src/auth.ts';
 import { openaiInstructions } from '../../plugins/multi-openai/src/instructions.ts';
 import { MODELS, OPENAI_WORKER_EFFORT } from '../../plugins/multi-openai/src/models.ts';
-import type {
-  ResponsesInputContent,
-  ResponsesInputItem,
-  ResponsesRequest,
-} from '../../plugins/multi-openai/src/responses.ts';
-import {
-  forAnthropic,
-  fromResponses,
-  readSse,
-  toResponses,
-} from '../../plugins/multi-openai/src/responses.ts';
+import { ZEN_SIGNATURE_PREFIXES } from '../../plugins/multi-zen/src/chat.ts';
 import { removeTemporary } from '../temporary.ts';
+
+const FOREIGN_PREFIXES = [OPENAI_SIGNATURE_PREFIX, ...ZEN_SIGNATURE_PREFIXES];
 
 /** A test double for one OpenAI Responses SSE event; sent as JSON, never typed upstream. */
 interface SseEvent {
@@ -262,7 +266,7 @@ test('images retain their order and tool-result association across provider swit
       { type: 'input_text', text: 'Capture timed out' },
     ],
   });
-  assert.equal(forAnthropic(request), request);
+  assert.equal(forAnthropic(request, FOREIGN_PREFIXES), request);
   assert.deepEqual(request, snapshot, 'Conversion must not rewrite the stored transcript');
 });
 
@@ -377,7 +381,7 @@ test('switching back to Claude removes OpenAI reasoning while preserving message
     },
   ];
   const mixed = { ...body, messages: stored };
-  const cleaned = forAnthropic(mixed).messages ?? [];
+  const cleaned = forAnthropic(mixed, FOREIGN_PREFIXES).messages ?? [];
   assert.equal(cleaned.length, 3);
   assert.deepEqual(cleaned[0], stored[0]);
   assert.deepEqual(cleaned[1].content, [tool]);
@@ -389,7 +393,11 @@ test('switching back to Claude removes OpenAI reasoning while preserving message
     2,
     'Stored transcript must not be mutated',
   );
-  assert.equal(forAnthropic(body), body, 'Unmixed Claude requests retain byte-exact passthrough');
+  assert.equal(
+    forAnthropic(body, FOREIGN_PREFIXES),
+    body,
+    'Unmixed Claude requests retain byte-exact passthrough',
+  );
 });
 
 test('fragmented SSE and truncated or failed responses never become successful completions', async () => {
