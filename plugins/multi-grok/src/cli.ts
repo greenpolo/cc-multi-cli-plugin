@@ -222,6 +222,8 @@ export async function runGrok(options: GrokRunOptions): Promise<GrokRunResult> {
 type ParserState = {
   response: string;
   forbidden?: readonly string[];
+  /** The allowlist this run requested; an announced tool outside it that is not MCP is a breach. */
+  granted?: readonly string[];
   tools?: readonly string[];
   terminal?: GrokResult;
   failure?: NativeCliError;
@@ -235,7 +237,11 @@ async function spawnGrok(
   platform: NodeJS.Platform,
   promptFile: string | undefined,
 ): Promise<GrokRunResult> {
-  const parser: ParserState = { response: '', forbidden: options.forbiddenTools };
+  const parser: ParserState = {
+    response: '',
+    forbidden: options.forbiddenTools,
+    granted: options.tools,
+  };
   const run = await runNativeCli<ParserState, GrokResult, GrokStreamEvent>({
     name: 'Grok',
     executable: 'grok',
@@ -343,6 +349,14 @@ function parseEvent(
 }
 
 /**
+ * MCP tools are announced as `server__tool`, and `search_tool`/`use_tool` are the CLI's own
+ * broker for them. MCP execution is denied by rule, so their exposure is tolerated.
+ */
+function isMcpTool(name: string): boolean {
+  return name.includes('__') || name === 'search_tool' || name === 'use_tool';
+}
+
+/**
  * The announced toolset is the only evidence that a removal took effect: the CLI
  * accepts unknown `--disallowed-tools` names and runs the tool anyway. Every
  * announcement is checked, because the set grows once MCP servers connect.
@@ -354,7 +368,11 @@ function parseTools(value: Record<string, unknown>, parser: ParserState, emit: E
     return;
   }
   const forbidden = new Set(parser.forbidden ?? []);
-  const breach = tools.filter((tool) => forbidden.has(tool));
+  const granted = parser.granted === undefined ? undefined : new Set(parser.granted);
+  // Fail closed: a name this build adds later is neither granted nor MCP, so it is refused.
+  const breach = tools.filter(
+    (tool) => forbidden.has(tool) || (granted && !granted.has(tool) && !isMcpTool(tool)),
+  );
   if (breach.length) {
     fail(
       new GrokCliError(

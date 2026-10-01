@@ -20,6 +20,7 @@ import {
   terminalSuffix,
   writeNotices,
 } from '../../multi-core/src/gateway/harness-notices.ts';
+import { NativeCliError } from '../../multi-core/src/gateway/harness-process.ts';
 import {
   NativeActionTracker,
   type NativeProgressObserver,
@@ -276,6 +277,8 @@ export class AntigravityHarness {
       return await this.execute(turn, session, exchange, emit);
     } finally {
       await lease.release();
+      // The durable record holds everything; an idle attachment only pins its lock and replay events.
+      await this.store.evictIdle(session);
     }
   }
 
@@ -348,7 +351,6 @@ export class AntigravityHarness {
       signal.throwIfAborted();
       let streamed = '';
       let initSave: Promise<void> | undefined;
-      const startedAt = performance.now();
       // Each finished tool step becomes a display row in this reply, named after
       // agy's own tool; the terse summary is written when the run commits.
       const actions = new NativeActionTracker(TAG, turn.observe, (block) =>
@@ -393,10 +395,13 @@ export class AntigravityHarness {
       );
       await initSave;
       const result = outcome.result;
-      appendDiagnostics(response, result, outcome.stderr, performance.now() - startedAt);
+      appendDiagnostics(response, result, outcome.stderr);
       if (result.status !== 'SUCCESS') {
         session.saved.conversationId = result.conversation_id;
-        session.saved.interrupted = false;
+        // A failed run may still have executed steps. Keep the interruption flag so a retry
+        // tells the native conversation what may already have happened.
+        session.saved.interrupted =
+          initConversationId !== undefined || streamed.length > 0 || calls.count > 0;
         await this.store.save(session);
         throw new AntigravityProviderError(result.error ?? `Antigravity run ${result.status}`);
       }
@@ -502,15 +507,7 @@ export class AntigravityHarness {
   }
 }
 
-function appendDiagnostics(
-  response: HarnessResponse,
-  result: AntigravityResult,
-  stderr: string,
-  elapsedMs: number,
-) {
-  if (Number.isFinite(elapsedMs)) {
-    response.text(`[${TAG}] completed in ${(Math.max(0, elapsedMs) / 1000).toFixed(1)}s\n`);
-  }
+function appendDiagnostics(response: HarnessResponse, result: AntigravityResult, stderr: string) {
   const denied = result.denied_actions;
   if (Array.isArray(denied) && denied.length) {
     const detail = denied
@@ -595,6 +592,20 @@ const missingPermissions: CheckAntigravityPermissions = async () => {
   throw new Error('Antigravity native permission policy is not configured');
 };
 
+/** A transient process shortage retries; a missing binary or a busy agent fails identically. */
+const TRANSIENT_SPAWN = new Set(['EAGAIN', 'EMFILE', 'ENFILE', 'ENOMEM', 'ETXTBSY']);
+
+function deterministicFailure(error: unknown): boolean {
+  if (error instanceof HarnessBusyError) {
+    return true;
+  }
+  return (
+    error instanceof NativeCliError &&
+    error.code === 'spawn' &&
+    !TRANSIENT_SPAWN.has(error.systemCode ?? '')
+  );
+}
+
 export class AntigravityProviderError extends Error {
   readonly failure: { status: number; message: string };
   constructor(error: unknown) {
@@ -607,6 +618,6 @@ export class AntigravityProviderError extends Error {
     this.name = 'AntigravityProviderError';
     // A busy agent is a deterministic conflict, not a transient fault: a
     // retryable status turned one such refusal into ten paid attempts.
-    this.failure = { status: error instanceof HarnessBusyError ? 400 : 502, message };
+    this.failure = { status: deterministicFailure(error) ? 400 : 502, message };
   }
 }

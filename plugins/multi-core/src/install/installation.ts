@@ -52,6 +52,7 @@ type DeferDeletion = (command: string, args: string[], options: SpawnOptions) =>
 
 export interface UninstallOptions {
   platform?: Platform;
+  homedir?: string;
   env?: NodeJS.ProcessEnv;
   deferDeletion?: DeferDeletion;
 }
@@ -396,6 +397,46 @@ export async function setup(
   return state;
 }
 
+/**
+ * Remove the `multi-cli-antigravity` entry from agy's global hooks file. This file is copied
+ * beside the installed shims and must run after the plugin is gone, so it cannot import the
+ * plugin's own path helpers; the location logic mirrors `antigravityHookFile`.
+ */
+export async function removeAntigravityHook(
+  options: { platform?: Platform; env?: NodeJS.ProcessEnv; homedir?: string } = {},
+): Promise<boolean> {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const home = options.homedir ?? os.homedir();
+  const lib = platform === 'win32' ? path.win32 : path.posix;
+  const root =
+    platform === 'win32'
+      ? lib.join(env.LOCALAPPDATA ?? env.APPDATA ?? lib.join(home, 'AppData', 'Local'), 'gemini')
+      : lib.join(home, '.gemini');
+  const file = lib.join(root, 'config', 'hooks.json');
+  let hooks: unknown;
+  try {
+    hooks = JSON.parse(await readFile(file, 'utf8'));
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+  if (
+    !hooks ||
+    typeof hooks !== 'object' ||
+    Array.isArray(hooks) ||
+    !('multi-cli-antigravity' in hooks)
+  ) {
+    return false;
+  }
+  const remaining = { ...hooks } as Record<string, unknown>;
+  delete remaining['multi-cli-antigravity'];
+  await writeFile(file, `${JSON.stringify(remaining, null, 2)}\n`, { mode: 0o600 });
+  return true;
+}
+
 export async function uninstall(
   directory = installationDirectory(),
   options: UninstallOptions = {},
@@ -404,6 +445,12 @@ export async function uninstall(
   const state = await readInstallation(directory);
   const source = await readFile(state.shellFile, 'utf8');
   await writeFile(state.shellFile, removeBlock(source, state.block));
+  try {
+    // The Antigravity permission hook is global to the machine and points into this plugin.
+    await removeAntigravityHook({ platform, env: options.env, homedir: options.homedir });
+  } catch (error) {
+    console.warn(`Could not remove the Antigravity hook: ${String(error)}`);
+  }
   const shimFiles = state.shims ?? [DEFAULT_COMMAND, MANAGEMENT_COMMAND];
   const shimPaths = shimFiles.map((file) => path.join(directory, 'bin', file));
   const deferred = platform === 'win32' ? shimPaths.filter((file) => /\.cmd$/i.test(file)) : [];

@@ -25,6 +25,12 @@ export class CursorWorkspaces {
     return this.harness(cwd).handle(...args);
   }
 
+  /** The scope's last reply, read from the workspace that `handle` would route it to. */
+  async recordedResponse(scope: string, context?: PermissionContext) {
+    const cwd = await realpath(context?.cwd ?? this.cwd);
+    return this.harness(cwd).recordedResponse(scope);
+  }
+
   async billedUsageForSession(sessionId: string) {
     const batches = await Promise.all(
       [...this.harnesses.values()].map((harness) => harness.billedUsageForSession(sessionId)),

@@ -57,3 +57,43 @@ test('worktree workers route to their canonical workspace and close all SDK harn
   assert.deepEqual(closed, created);
   await assert.rejects(workspaces.handle(body, 'main', signal), /closed/);
 });
+
+test('a recorded reply is read from the workspace that handled it, so a follow-up survives a restart', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'cursor-workspaces-recorded-'));
+  t.after(() => removeTemporary(root));
+  const worktree = path.join(root, 'worktree');
+  await mkdir(worktree);
+  await symlink(worktree, path.join(root, 'alias'));
+  const reply: MessagesResponse = {
+    id: 'msg',
+    type: 'message',
+    role: 'assistant',
+    model: 'test',
+    content: [{ type: 'text', text: 'recorded' }],
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  };
+  const asked: string[] = [];
+  const workspaces = new CursorWorkspaces(
+    (cwd) => {
+      const harness = new CursorHarness([], { cwd });
+      t.mock.method(harness, 'recordedResponse', async (scope: string) => {
+        asked.push(`${cwd}:${scope}`);
+        return cwd === (await realpath(worktree)) ? reply : undefined;
+      });
+      return harness;
+    },
+    await realpath(root),
+  );
+  t.after(() => workspaces.close());
+  assert.equal(
+    await workspaces.recordedResponse('worker', {
+      permissionMode: 'plan',
+      cwd: path.join(root, 'alias'),
+    }),
+    reply,
+  );
+  assert.equal(await workspaces.recordedResponse('worker'), undefined);
+  assert.deepEqual(asked, [`${await realpath(worktree)}:worker`, `${await realpath(root)}:worker`]);
+});
