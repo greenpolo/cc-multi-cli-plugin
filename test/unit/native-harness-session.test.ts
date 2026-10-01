@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -413,4 +413,26 @@ test('persisted state is validated before it is trusted', async (t) => {
   assert.deepEqual(await readJson(file), { hello: 'world' });
   await writeFile(file, '{oops', 'utf8');
   await assert.rejects(readJson(file));
+});
+
+test('an unsupported-version record is copied aside before the fresh record replaces it', async (t) => {
+  const { made, directory } = await store(t);
+  const file = made.sessionFile('worker-future');
+  const original = JSON.stringify({
+    version: 2,
+    provider: 'native',
+    identity: 'worker-future',
+    interrupted: false,
+    sessionId: 'native-from-the-future',
+  });
+  await writeFile(file, original);
+  const lease = await made.acquireLease('worker-future');
+  assert.equal(lease.session.saved.version, 1);
+  assert.equal(lease.session.saved.sessionId, undefined);
+  lease.session.saved.sessionId = 'fresh';
+  await made.save(lease.session);
+  await lease.release();
+  assert.equal(await readFile(`${file}.unsupported-v2`, 'utf8'), original);
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).sessionId, 'fresh');
+  assert.ok((await readdir(directory)).includes(path.basename(`${file}.unsupported-v2`)));
 });
