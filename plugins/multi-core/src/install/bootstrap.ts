@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Installation, readInstallation, uninstall } from './installation.ts';
 import { installedPlugins, settingsArguments } from './plugins.ts';
-import { run } from './process.ts';
+import { needsEnvProxy, run, withoutGateway } from './process.ts';
 
 async function dispatch(state: Installation, args: string[], management: boolean) {
   const { root, providers } = await installedPlugins(state.claude, settingsArguments(args));
@@ -12,13 +12,14 @@ async function dispatch(state: Installation, args: string[], management: boolean
     return 0;
   }
   if (!management && (!root || providers.length === 0)) {
-    return run(state.claude, args);
+    return run(state.claude, args, { env: withoutGateway(process.env) });
   }
   if (!management && state.command === 'claude' && process.env.MULTI_GATEWAY_TOKEN) {
     // A launch command named `claude` also catches Claude's own nested runs (agents
     // calling `claude -p`, SDK spawns, hooks). Inside a Multi session those must
-    // reach the real executable rather than start a second gateway.
-    return run(state.claude, args);
+    // reach the real executable rather than start a second gateway, and without this
+    // session's gateway URL and credentials: that gateway is not theirs.
+    return run(state.claude, args, { env: withoutGateway(process.env) });
   }
   if (!root) {
     throw new Error('Enable multi-core at user scope before using Multi commands.');
@@ -34,6 +35,8 @@ async function dispatch(state: Installation, args: string[], management: boolean
     ...(state.models !== undefined && process.env.MULTI_MODELS === undefined
       ? { MULTI_MODELS: state.models }
       : {}),
+    // Node reads this at startup only, so the launcher process has to be started with it.
+    ...(needsEnvProxy(process.env) ? { NODE_USE_ENV_PROXY: '1' } : {}),
     MULTI_REAL_CLAUDE: state.claude,
     MULTI_ENABLED_PROVIDERS: providers.join(','),
     MULTI_ANTIGRAVITY: providers.includes('antigravity') ? '1' : '0',

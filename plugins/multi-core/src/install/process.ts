@@ -40,3 +40,60 @@ export async function run(
     process.off('SIGINT', interrupt);
   }
 }
+
+/** What the session started with, kept so a nested run can be given it back. */
+const RESTORABLE = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'] as const;
+const ORIGINAL_PREFIX = 'MULTI_ORIG_';
+
+/** Remember the caller's own values before the launcher replaces them. */
+export function rememberOriginalEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const remembered: NodeJS.ProcessEnv = {};
+  for (const name of RESTORABLE) {
+    const value = env[name];
+    if (value !== undefined) {
+      remembered[`${ORIGINAL_PREFIX}${name}`] = value;
+    }
+  }
+  return remembered;
+}
+
+/**
+ * The environment for a Claude run that is not the Multi session: no gateway URL, no
+ * gateway token, no gateway credential, and the caller's own base URL and headers
+ * back. An environment that carries no gateway token is returned unchanged.
+ */
+export function withoutGateway(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const token = env.MULTI_GATEWAY_TOKEN;
+  if (token === undefined) {
+    return env;
+  }
+  const result: NodeJS.ProcessEnv = { ...env };
+  delete result.MULTI_GATEWAY_TOKEN;
+  delete result.MULTI_MOD_GATEWAY_URL;
+  if (result.ANTHROPIC_AUTH_TOKEN === token) {
+    delete result.ANTHROPIC_AUTH_TOKEN;
+  }
+  for (const name of RESTORABLE) {
+    const original = env[`${ORIGINAL_PREFIX}${name}`];
+    delete result[`${ORIGINAL_PREFIX}${name}`];
+    if (original === undefined) {
+      delete result[name];
+    } else {
+      result[name] = original;
+    }
+  }
+  return result;
+}
+
+/**
+ * Node's fetch ignores HTTP_PROXY and HTTPS_PROXY unless NODE_USE_ENV_PROXY=1 is set
+ * when the process starts; setting it later has no effect. A user who needs a proxy to
+ * reach Anthropic or a provider has it for Claude Code itself, so the gateway has to
+ * honor it too. True when the process is configured for a proxy but not yet using it.
+ */
+export function needsEnvProxy(env: NodeJS.ProcessEnv): boolean {
+  return (
+    env.NODE_USE_ENV_PROXY === undefined &&
+    ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'].some((name) => Boolean(env[name]))
+  );
+}

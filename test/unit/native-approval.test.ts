@@ -430,7 +430,10 @@ test('headerless classifier uses pending worker context and rejects ambiguous ac
   // The mode Claude reports with the pending action binds review mid-turn.
   assert.equal(contexts[0].planMode, true);
   await prepare('worker-b', 'node b.js', 'plan', 'cd /other-workspace && node b.js');
-  assert.equal((await send(request(1, session, 'node b.js'))).status, 400);
+  // No observed provider action matches, so this is not a provider action to review: it
+  // goes to Anthropic (the stub answers 200) and the GPT reviewer never sees it.
+  assert.equal((await send(request(1, session, 'node b.js'))).status, 200);
+  assert.equal(contexts.length, 1);
   await prepare(
     'worker-b',
     'node b.js',
@@ -438,7 +441,8 @@ test('headerless classifier uses pending worker context and rejects ambiguous ac
     `${process.execPath} -e ${JSON.stringify('process.stdout.write("unsafe")')}`,
     path.join(os.tmpdir(), 'unsafe').replaceAll('\\', '/'),
   );
-  assert.equal((await send(request(1, session, 'node b.js'))).status, 400);
+  assert.equal((await send(request(1, session, 'node b.js'))).status, 200);
+  assert.equal(contexts.length, 1);
   await prepare('worker-b', 'node b.js', 'plan', `cd ${classifierCwd} && node b.js`);
   assert.equal((await send(request(1, session, 'node b.js'))).status, 200);
   await prepare('worker-a', 'node b.js');
@@ -553,12 +557,18 @@ async function mixedReviewGateway(t: TestContext, reviewer = true, blockAnthropi
   });
   const address = server.address();
   assert(address && typeof address !== 'string');
-  const send = (body: unknown, endpoint = '/v1/messages', worker?: string) =>
+  const send = (
+    body: unknown,
+    endpoint = '/v1/messages',
+    worker?: string,
+    extra: Record<string, string> = {},
+  ) =>
     fetch(`http://127.0.0.1:${address.port}${endpoint}`, {
       method: 'POST',
       headers: {
         'x-multi-gateway-token': 'token',
         ...(worker ? { 'x-claude-code-agent-id': worker } : {}),
+        ...extra,
       },
       body: JSON.stringify(body),
     });
@@ -669,11 +679,11 @@ test('authenticated mixed-provider review follows main and headerless worker ori
   assert.equal((await gateway.classify('node zen.js')).status, 200);
   assert.equal(gateway.reviews.length, 2, 'Claude and Zen never borrow GPT review');
   assert.equal(gateway.nativeReviews.length, 3);
-  assert.equal(
-    (await gateway.classify('node main.js')).status,
-    400,
-    'A provider switch invalidates stale main actions',
-  );
+  // A provider switch invalidates the stale GPT action: nothing provider-owned matches
+  // any more, so the request is Claude's own classifier and goes to Anthropic.
+  assert.equal((await gateway.classify('node main.js')).status, 200);
+  assert.equal(gateway.reviews.length, 2, 'A stale GPT action is never reviewed again');
+  assert.equal(gateway.nativeReviews.length, 4);
 });
 
 test('Claude-only Auto passes native classifier formats and fallback models through unchanged', async (t) => {
@@ -729,17 +739,32 @@ test('mixed-provider review rejects missing, cross-session, ambiguous, and unava
   const guard = await gateway.prepare(gpt, 'node unavailable.js');
   assert.deepEqual(await guard.json(), {});
   assert.equal((await gateway.classify('node unavailable.js')).status, 400);
-  assert.equal((await gateway.classify('node missing.js')).status, 400);
+  // No observed provider action matches: Claude's own classifier, answered by Anthropic.
+  assert.equal((await gateway.classify('node missing.js')).status, 200);
+  assert.deepEqual(gateway.nativeReviews.length, 1);
+  // The session header disagrees with the metadata that selects the provider action.
+  const crossed = await gateway.send(
+    {
+      ...request(1, JSON.stringify({ session_id: 'mixed' }), 'node unavailable.js'),
+      model: 'claude-sonnet-5',
+    },
+    '/v1/messages',
+    undefined,
+    { 'x-claude-code-session-id': 'other' },
+  );
+  assert.equal(crossed.status, 400);
+  assert.match(await crossed.text(), /disagree/);
+  // Another session owns no provider action here, so its classifier is Claude's own.
   assert.equal(
     (await gateway.classify('node unavailable.js', 1, 'claude-sonnet-5', 'other')).status,
-    400,
+    200,
   );
   await gateway.prepare('claude-sonnet-5', 'node unavailable.js', 'claude-worker');
   assert.equal((await gateway.classify('node unavailable.js')).status, 400);
-  assert.deepEqual(
-    gateway.nativeReviews,
-    [],
-    'Never fall back to Claude for an unavailable or ambiguous GPT reviewer',
+  assert.equal(
+    gateway.nativeReviews.length,
+    2,
+    'An ambiguous GPT origin never falls back to Claude',
   );
 });
 

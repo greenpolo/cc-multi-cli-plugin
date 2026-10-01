@@ -44,7 +44,12 @@ function executionForModel(model: unknown): WorkerExecution {
 /** Prompt-time snapshots: the existing selector takes effect at the next prompt. */
 export class PermissionModes {
   readonly policies: ModPolicies;
-  private readonly compactions = new Map<string, { id: string; previous: PermissionContext }>();
+  /**
+   * Armed compaction boundaries, keyed by exactly one [session, 'main' | worker]. The
+   * main loop's boundary is applied by `resolve` and never written into its snapshot,
+   * so no worker inherits it; a worker's `previous` is what it ran under before.
+   */
+  private readonly compactions = new Map<string, { id: string; previous?: PermissionContext }>();
   private readonly parents = new Map<string, PermissionContext>();
   private readonly hostOnly = new Set<string>();
   /** The last admitted settings restrictions per session, retained across host snapshots. */
@@ -82,9 +87,9 @@ export class PermissionModes {
 
   beginPolicy(session: string, cwd: string) {
     this.parents.delete(session);
-    for (const key of this.compactions.keys()) {
+    for (const key of [...this.compactions.keys()]) {
       if (JSON.parse(key)[0] === session) {
-        this.compactions.delete(key);
+        this.clearCompaction(key);
       }
     }
     for (const key of this.pendingWorkers.keys()) {
@@ -344,14 +349,14 @@ export class PermissionModes {
   authorizeModCompaction(session: string, agent?: string): void {
     const current = this.resolveHarness(session, agent);
     const key = JSON.stringify([session, agent ?? 'main']);
-    const previous = this.compactions.get(key)?.previous ?? current;
-    const context = { ...current, tools: [], compaction: randomUUID() };
-    remember(this.compactions, key, { id: context.compaction, previous });
-    if (agent) {
-      this.recordModWorker(session, agent, context);
-    } else {
-      this.recordModSession(session, context);
+    const id = randomUUID();
+    if (!agent) {
+      remember(this.compactions, key, { id });
+      return;
     }
+    const previous = this.compactions.get(key)?.previous ?? current;
+    remember(this.compactions, key, { id, previous });
+    this.recordModWorker(session, agent, { ...current, tools: [], compaction: id });
   }
 
   /** Arm a tool-free boundary when SessionStart restored no prompt snapshot. */
@@ -364,58 +369,30 @@ export class PermissionModes {
     this.authorizeModCompaction(session);
   }
 
+  /** The compaction turn ended, successfully or not: the scope runs under its own policy again. */
   finishModCompaction(session: string, agent: string | undefined, id: string | undefined): void {
     const key = JSON.stringify([session, agent ?? 'main']);
+    if (!id || this.compactions.get(key)?.id !== id) {
+      return;
+    }
+    this.clearCompaction(key);
+  }
+
+  /** Disarm one scope's boundary without a result, for a cancelled or abandoned compaction. */
+  cancelModCompaction(session: string, agent?: string): void {
+    this.clearCompaction(JSON.stringify([session, agent ?? 'main']));
+  }
+
+  private clearCompaction(key: string): void {
     const saved = this.compactions.get(key);
-    if (!id || saved?.id !== id) {
+    if (!saved) {
       return;
     }
     this.compactions.delete(key);
-    if (this.resolve(session, agent).compaction !== id) {
-      return;
-    }
-    if (agent) {
+    const [session, agent] = JSON.parse(key) as [string, string];
+    if (agent !== 'main' && saved.previous && this.workers.has(key)) {
       this.recordModWorker(session, agent, saved.previous);
-    } else {
-      this.recordModSession(session, saved.previous);
     }
-  }
-
-  async record(input: Record<string, unknown>): Promise<void> {
-    const session = requiredString(input.session_id, 'session_id');
-    if (input.hook_event_name === 'UserPromptSubmit') {
-      // Clear first: a malformed new snapshot must not retain earlier permissions.
-      this.parents.delete(session);
-      remember(this.parents, session, { permissionMode: permissionMode(input.permission_mode) });
-      return;
-    }
-    if (input.hook_event_name !== 'SubagentStart') {
-      throw new Error('Unsupported mode hook event');
-    }
-    const agent = requiredString(input.agent_id, 'agent_id');
-    const key = JSON.stringify([session, agent]);
-    this.workers.delete(key);
-    const type = requiredString(input.agent_type, 'agent_type');
-    const cwd = requiredString(input.cwd, 'cwd');
-    const definitions = await this.definitions(cwd);
-    const definition = Object.hasOwn(definitions, type) ? definitions[type] : undefined;
-    if (!definition) {
-      throw new Error(`Cannot resolve permissions for Claude worker ${type}`);
-    }
-    remember(this.workers, key, {
-      cwd,
-      model:
-        definition.model === 'inherit'
-          ? this.parents.get(session)?.model
-          : (definition.model ?? this.parents.get(session)?.model),
-      // A definition without a mode inherits the parent's at resolve time.
-      permissionMode: definition.permissionMode,
-      tools: definition.tools?.slice(),
-      disallowedTools: definition.disallowedTools?.slice(),
-      ...(definition.nativePermissionError
-        ? { nativePermissionError: definition.nativePermissionError }
-        : {}),
-    });
   }
 
   forgetSession(session: string): void {
@@ -443,7 +420,9 @@ export class PermissionModes {
       throw new Error('Claude permission mode is unavailable; submit a new prompt');
     }
     if (!agent) {
-      return structuredClone(parent);
+      const armed = this.compactions.get(JSON.stringify([session, 'main']));
+      const context = structuredClone(parent);
+      return armed ? { ...context, tools: [], compaction: armed.id } : context;
     }
     const worker = this.workers.get(JSON.stringify([session, agent]));
     if (!worker) {
@@ -458,7 +437,6 @@ export class PermissionModes {
       {
         ...worker,
         nativePermissionError: worker.nativePermissionError ?? parent.nativePermissionError,
-        ...(parent.compaction ? { compaction: parent.compaction } : {}),
         permissionMode: inherited
           ? parent.permissionMode
           : permissionMode(worker.permissionMode ?? parent.permissionMode),
@@ -539,9 +517,14 @@ function validateWorkerRequest(
 }
 
 function remember<T>(entries: Map<string, T>, key: string, value: T): void {
-  // ponytail: cap lifetime identities; add lifecycle cleanup if long sessions reach this limit.
-  if (!entries.has(key) && entries.size >= 4096) {
-    throw new Error('Claude permission context limit reached; restart the gateway');
+  // A write refreshes the entry; at the cap the least recently written one makes room, so a
+  // long-lived gateway never refuses new work for the sake of identities long idle.
+  entries.delete(key);
+  if (entries.size >= 4096) {
+    const oldest = entries.keys().next();
+    if (!oldest.done) {
+      entries.delete(oldest.value);
+    }
   }
   entries.set(key, value);
 }
