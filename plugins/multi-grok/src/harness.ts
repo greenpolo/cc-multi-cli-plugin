@@ -229,6 +229,8 @@ export class GrokHarness {
       );
     } finally {
       await lease.release();
+      // The durable record holds everything; an idle attachment only pins its lock and replay events.
+      await this.store.evictIdle(session);
     }
   }
 
@@ -304,7 +306,6 @@ export class GrokHarness {
       signal.throwIfAborted();
       const sessionId = session.saved.sessionId ?? randomUUID();
       let startSave: Promise<void> | undefined;
-      const startedAt = performance.now();
       // Each finished tool call becomes a display row in this reply, named after
       // Grok's own tool; the terse summary is written when the run settles.
       const actions = new NativeActionTracker(PROVIDER, observe, (block) =>
@@ -347,10 +348,17 @@ export class GrokHarness {
         'Grok native run',
       );
       await startSave;
-      return await this.settle(
-        { session, response, outcome, selection, key, exchange, emit, actions, calls },
-        performance.now() - startedAt,
-      );
+      return await this.settle({
+        session,
+        response,
+        outcome,
+        selection,
+        key,
+        exchange,
+        emit,
+        actions,
+        calls,
+      });
     } catch (error) {
       // Traced before the rethrow: a failure that never reached the CLI left no
       // other evidence at all, which cost one diagnosis already.
@@ -369,20 +377,17 @@ export class GrokHarness {
     }
   }
 
-  private async settle(
-    run: {
-      session: GrokSession;
-      response: HarnessResponse;
-      outcome: GrokRunResult;
-      selection: ReturnType<typeof selectGrokModel>;
-      key: string;
-      exchange: HarnessExchange;
-      emit: Emit;
-      actions: NativeActionTracker;
-      calls: HarnessModelCalls;
-    },
-    elapsedMs: number,
-  ): Promise<MessagesResponse> {
+  private async settle(run: {
+    session: GrokSession;
+    response: HarnessResponse;
+    outcome: GrokRunResult;
+    selection: ReturnType<typeof selectGrokModel>;
+    key: string;
+    exchange: HarnessExchange;
+    emit: Emit;
+    actions: NativeActionTracker;
+    calls: HarnessModelCalls;
+  }): Promise<MessagesResponse> {
     const { session, response, outcome, selection, key, exchange, emit, actions, calls } = run;
     const result = outcome.result;
     // The CLI owns the identity it reports; a mismatch would silently fork history.
@@ -391,8 +396,17 @@ export class GrokHarness {
         `Grok answered on session ${result.sessionId} instead of ${session.saved.sessionId}`,
       );
     }
+    if (result.stopReason !== 'end_turn') {
+      // Only end_turn is a finished answer. Cancelled, refused or truncated turns may have
+      // run steps, so the next request resumes the session with the interruption notice.
+      session.saved.sessionId = result.sessionId;
+      session.saved.interrupted = true;
+      session.saved.cost = (session.saved.cost ?? 0) + (result.costUsd ?? 0);
+      await this.store.save(session);
+      throw new GrokProviderError(`Grok stopped before finishing its turn (${result.stopReason})`);
+    }
     response.text(actions.text(calls.count || result.turns));
-    appendDiagnostics(response, outcome, elapsedMs);
+    appendDiagnostics(response, outcome);
     const finished = response.finish(
       calls.turn(toHarnessUsage(result.usage), result.turns),
       selection.model.id,
@@ -471,18 +485,8 @@ function toHarnessUsage(usage: GrokUsage | undefined): HarnessUsageFields | unde
   };
 }
 
-/** The CLI reports cost per invocation, so it is shown as billed for this run. */
-function appendDiagnostics(response: HarnessResponse, outcome: GrokRunResult, elapsedMs: number) {
-  const parts = [];
-  if (Number.isFinite(elapsedMs)) {
-    parts.push(`completed in ${(Math.max(0, elapsedMs) / 1000).toFixed(1)}s`);
-  }
-  if (outcome.result.costUsd !== undefined) {
-    parts.push(`$${outcome.result.costUsd.toFixed(4)} billed`);
-  }
-  if (parts.length) {
-    response.text(`\n[Grok] ${parts.join(' · ')}\n`);
-  }
+/** Timing and cost reach the user through receipts; only warnings the model can act on stay. */
+function appendDiagnostics(response: HarnessResponse, outcome: GrokRunResult) {
   const diagnostics = stderrDiagnostics(outcome.stderr);
   if (diagnostics) {
     response.text(`[Grok] ${diagnostics}\n`);

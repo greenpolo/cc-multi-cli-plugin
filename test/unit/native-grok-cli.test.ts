@@ -180,6 +180,19 @@ test('tolerates the toolset growing as MCP servers connect', async (t) => {
   assert.equal(output.response, 'STORED');
 });
 
+test('fails closed on an announced tool that is neither granted nor MCP', async (t) => {
+  const cli = await fakeCli(t);
+  // A native tool this build adds later is not on the forbidden list, but it was never granted.
+  await assert.rejects(
+    replay(cli, 'text-only.jsonl', {
+      tools: ['read_file', 'list_dir', 'grep'],
+      forbiddenTools: [],
+    }),
+    (error: unknown) =>
+      isCliError(error) && error.code === 'policy' && /remains available/.test(error.message),
+  );
+});
+
 test('never infers a result when the stream stops without its terminal event', async (t) => {
   const cli = await fakeCli(t);
   await assert.rejects(
@@ -194,13 +207,14 @@ test('sends explicit flags and refuses to both create and resume a session', asy
   const mode: GrokPermissionMode = 'plan';
   await replay(
     cli,
-    'text-only.jsonl',
+    // The announced toolset must be the requested one, so the fixture's own tools are granted.
+    'session-create.jsonl',
     {
       model: 'grok-4.6',
       effort: 'high',
       mode,
       session: 'f6e4b375-8213-4b5e-993d-f546b91362e4',
-      tools: ['read_file', 'grep'],
+      tools: ['read_file', 'list_dir', 'grep'],
       disallowedTools: ['search_tool', 'use_tool'],
       allow: ['Read(**)'],
       deny: ['Bash(*)', 'MCPTool(*)'],
@@ -217,7 +231,7 @@ test('sends explicit flags and refuses to both create and resume a session', asy
   assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
   assert.equal(args[args.indexOf('--session-id') + 1], 'f6e4b375-8213-4b5e-993d-f546b91362e4');
   assert.equal(args.includes('--resume'), false);
-  assert.equal(args[args.indexOf('--tools') + 1], 'read_file,grep');
+  assert.equal(args[args.indexOf('--tools') + 1], 'read_file,list_dir,grep');
   assert.equal(args[args.indexOf('--disallowed-tools') + 1], 'search_tool,use_tool');
   assert.deepEqual(
     args.flatMap((value, index) => (args[index - 1] === '--deny' ? [value] : [])),
