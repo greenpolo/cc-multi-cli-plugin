@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
-import { AgentCatalog } from '../../plugins/multi-core/src/gateway/agent-catalog.ts';
 import {
   type ApprovalContext,
   NativeApprovalBridge,
@@ -673,43 +672,6 @@ test('Claude prompts remain unchanged after OpenAI main and worker requests, inc
   assert.equal(claudeCalls, 8);
 });
 
-test('catalog filtering reaches Claude and OpenAI without changing user text or native registration', async (t) => {
-  const row = '- hidden: Hidden worker (Tools: Read)';
-  const text = `<system-reminder>\nAvailable agent types for the Agent tool:\n${row}\n- custom: Keep this (Tools: Read)\n</system-reminder>`;
-  const seen: string[] = [];
-  const call = await gateway(
-    t,
-    async (url, options) => {
-      seen.push(String(options.body));
-      return url.includes('anthropic')
-        ? Response.json({ content: [] })
-        : new Response(sse(textEvents));
-    },
-    {
-      agentCatalog: new AgentCatalog(
-        { hidden: { model, description: 'Hidden worker', tools: ['Read'] } },
-        [],
-      ),
-    },
-  );
-  for (const choice of [model, 'claude-sonnet-5']) {
-    await (
-      await call({
-        model: choice,
-        messages: [
-          { role: 'user', content: text },
-          { role: 'user', content: row },
-        ],
-      })
-    ).text();
-  }
-  assert.equal(seen.length, 2);
-  for (const sent of seen) {
-    assert.equal(sent.split('Hidden worker').length - 1, 1);
-    assert(sent.includes('Keep this'));
-  }
-});
-
 test('external route isolates provider credentials and handles simultaneous worker identities', async (t) => {
   const ids: string[] = [];
   const models: string[] = [];
@@ -1323,12 +1285,7 @@ const harnessReply = (model: string, text = 'native'): MessagesResponse => ({
 
 async function harnessPermissionModes(session = 'routing-session') {
   const modes = new PermissionModes(async () => ({}));
-  await modes.record({
-    hook_event_name: 'UserPromptSubmit',
-    session_id: session,
-    permission_mode: 'auto',
-    prompt: 'route',
-  });
+  modes.recordModSession(session, { permissionMode: 'auto' });
   return modes;
 }
 
@@ -1558,12 +1515,7 @@ test('plan mode binds OpenAI review and denies planned edits without review', as
   const session = 'plan-review-session';
   const modes = new PermissionModes(async () => ({}));
   const prompt = (mode: string) =>
-    modes.record({
-      hook_event_name: 'UserPromptSubmit',
-      session_id: session,
-      permission_mode: mode,
-      prompt: 'review',
-    });
+    modes.recordModSession(session, { permissionMode: mode as 'default' });
   const contexts: (ApprovalContext | undefined)[] = [];
   const bridge = new NativeApprovalBridge(async (_input, _signal, context) => {
     contexts.push(context);
