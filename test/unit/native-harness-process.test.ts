@@ -182,7 +182,7 @@ test('an oversized stream stops the run instead of buffering it', async (t) => {
   await assert.rejects(run, (error: unknown) => {
     assert.ok(error instanceof NativeCliError);
     assert.equal(error.code, 'output_limit');
-    assert.match(error.message, /Native stdout exceeded its safety limit/);
+    assert.match(error.message, /Native stdout line exceeded its safety limit/);
     return true;
   });
 });
@@ -292,4 +292,34 @@ test('platform limits and a native environment keep other providers out', () => 
     ['aborted', 1, 'SIGTERM', 'why', 'EAGAIN'],
   );
   assert.equal(new NativeCliError('bare', 'parse').systemCode, undefined);
+});
+
+test('many small lines past the byte limit are not a failure', async () => {
+  const child = new FakeChild();
+  const { run, parser } = start(child, { maxOutputBytes: 256 });
+  await flush();
+  for (let index = 0; index < 50; index += 1) {
+    child.stdout.write('{"type":"text","id":"a"}\n');
+    child.stderr.write(`${'e'.repeat(100)}\n`);
+  }
+  child.stdout.write('{"type":"end","id":"long"}\n');
+  await flush();
+  child.emit('close', 0, null);
+  const outcome = await run;
+  assert.deepEqual(outcome.result, { id: 'long' });
+  assert.equal(parser.lines.length, 51);
+  assert.ok(outcome.stderr.length <= 256);
+});
+
+test('after the child closes only the process group is signaled, never the bare PID', async (t) => {
+  const targets: number[] = [];
+  t.mock.method(process, 'kill', (pid: number) => {
+    targets.push(pid);
+  });
+  const child = new FakeChild();
+  const { run } = start(child);
+  await flush();
+  child.emit('close', 0, null);
+  await run.catch(() => undefined);
+  assert.deepEqual(targets, [-4242]);
 });
