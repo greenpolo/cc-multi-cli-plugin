@@ -76,7 +76,7 @@ async function main() {
     );
   }
   if (provider === 'openai' && args.every((arg) => arg === '--device-auth')) {
-    return run('codex', ['-c', 'cli_auth_credentials_store="file"', 'login', ...args]);
+    return run('codex', ['-c', 'cli_auth_credentials_store=file', 'login', ...args]);
   }
   if (args.length) {
     throw new Error('Unsupported login arguments');
