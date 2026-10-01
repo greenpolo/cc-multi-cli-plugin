@@ -17,7 +17,6 @@ import {
   antigravityDefaultWorkerModel,
   antigravityPickerOptions,
   discoverAntigravityModels,
-  nativeSpelling,
 } from '../../multi-antigravity/src/models.ts';
 import { antigravityPermissionPolicy } from '../../multi-antigravity/src/permissions.ts';
 import { ANTIGRAVITY_TOOLS } from '../../multi-antigravity/src/progress.ts';
@@ -30,10 +29,7 @@ import {
   cursorModelOptions,
   cursorPickerOptions,
 } from '../../multi-cursor/src/models.ts';
-import {
-  cursorPermissionPolicy,
-  mergeCursorPermissions,
-} from '../../multi-cursor/src/permissions.ts';
+import { cursorPermissionPolicy } from '../../multi-cursor/src/permissions.ts';
 import { CURSOR_TOOLS } from '../../multi-cursor/src/progress.ts';
 import { cursorUsageReader } from '../../multi-cursor/src/usage-adapter.ts';
 import { CursorWorkspaces } from '../../multi-cursor/src/workspaces.ts';
@@ -68,12 +64,17 @@ import {
   type PluginPermissionInventory,
   pluginPermissions,
 } from './gateway/agent-definitions.ts';
-import { type CursorSettingsOptions, checkCursorSettings } from './gateway/cursor-settings.ts';
 import { DISPLAY_TOOL_SERVER } from './gateway/display-rows.ts';
 import { executableInvocation, resolveExecutable } from './gateway/executable.ts';
+import {
+  checkHarnessSettings,
+  type HarnessSettingsOptions,
+  mergePermissions,
+} from './gateway/harness-settings.ts';
 import { ModBridge } from './gateway/mod-bridge.ts';
 import { PermissionModes } from './gateway/mode-hook.ts';
 import { nestedClaudeShim, withPathPrefix } from './gateway/nested-env.ts';
+import { nativeSpelling } from './gateway/provider.ts';
 import type { ProviderUsageReader } from './gateway/provider-usage.ts';
 import { ReceiptLedger } from './gateway/receipts.ts';
 import type { GatewayEvent } from './gateway/server.ts';
@@ -409,7 +410,7 @@ function nativeSettingsCheck(
       return {};
     }
     try {
-      return await checkCursorSettings(cwd, args, callerSettings, sharedAdmission(harnesses));
+      return await checkHarnessSettings(cwd, args, callerSettings, sharedAdmission(harnesses));
     } catch (error) {
       return { nativePermissionError: String(error) };
     }
@@ -428,7 +429,7 @@ function nativeHarnesses(
         (cwd) =>
           new CursorHarness(cursorModels, {
             cwd,
-            checkPermissions: () => checkCursorSettings(cwd, args, callerSettings),
+            checkPermissions: () => checkHarnessSettings(cwd, args, callerSettings),
           }),
       )
     : undefined;
@@ -436,20 +437,20 @@ function nativeHarnesses(
     ? new AntigravityHarness(antigravityModels, {
         checkPermissions: async (cwd, context) => {
           await checkAntigravityHooks();
-          const restrictions = await checkCursorSettings(cwd, args, callerSettings, {
+          const restrictions = await checkHarnessSettings(cwd, args, callerSettings, {
             validate: antigravityPermissionPolicy,
           });
-          return antigravityPermissionPolicy(mergeCursorPermissions(context, restrictions));
+          return antigravityPermissionPolicy(mergePermissions(context, restrictions));
         },
       })
     : undefined;
   const grok = grokModels.length
     ? new GrokHarness(grokModels, {
         checkPermissions: async (cwd, context) => {
-          const restrictions = await checkCursorSettings(cwd, args, callerSettings, {
+          const restrictions = await checkHarnessSettings(cwd, args, callerSettings, {
             validate: grokPermissionPolicy,
           });
-          return grokPermissionPolicy(mergeCursorPermissions(context, restrictions));
+          return grokPermissionPolicy(mergePermissions(context, restrictions));
         },
       })
     : undefined;
@@ -701,7 +702,7 @@ export function sharedAdmission(harnesses: {
   cursor?: unknown;
   antigravity?: unknown;
   grok?: unknown;
-}): CursorSettingsOptions {
+}): HarnessSettingsOptions {
   if (harnesses.antigravity) {
     return { validate: antigravityPermissionPolicy, cursorToolRules: false };
   }

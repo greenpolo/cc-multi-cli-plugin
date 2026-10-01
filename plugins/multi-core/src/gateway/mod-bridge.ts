@@ -1,3 +1,4 @@
+import { setBounded } from './bounded.ts';
 import type { NativeObservation } from './harness-progress.ts';
 
 const MAX_LINE = 160;
@@ -55,10 +56,6 @@ export class ModBridge {
   private readonly lifecycle = new Map<string, Lifecycle>();
   private readonly telemetry = new Map<string, { model: string; effort?: string | number }>();
 
-  recordSession(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
-    return this.record(key, value);
-  }
-
   mode(key: string) {
     const snapshot = this.snapshots.get(key);
     if (snapshot) {
@@ -80,7 +77,7 @@ export class ModBridge {
     }
   }
 
-  private record(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
+  recordSession(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
     if (
       value.generation !== undefined &&
       value.generation !== this.snapshots.get(key)?.generation
@@ -197,10 +194,7 @@ export class ModBridge {
   }
 
   observeStep(key: string, value: { model: string; effort?: string | number }) {
-    if (!this.telemetry.has(key) && this.telemetry.size >= MAX_KEYS) {
-      this.telemetry.delete(this.telemetry.keys().next().value as string);
-    }
-    this.telemetry.set(key, value);
+    setBounded(this.telemetry, key, value, MAX_KEYS, 'insertion');
   }
 
   /**

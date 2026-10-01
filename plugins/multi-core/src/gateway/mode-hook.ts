@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { nativeSpelling } from '../../../multi-antigravity/src/models.ts';
-import { mergeCursorPermissions } from '../../../multi-cursor/src/permissions.ts';
 import type { WorkerPermissions } from './agent-definitions.ts';
+import { setBounded } from './bounded.ts';
+import { mergePermissions } from './harness-settings.ts';
 import { ModPolicies } from './mod-policy.ts';
+import { harnessProvider, nativeSpelling } from './provider.ts';
 import { type ResolvedWorker, resolveWorker, type WorkerCatalog } from './worker-catalog.ts';
 
 const MODES = ['default', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions', 'plan'] as const;
 type PermissionMode = (typeof MODES)[number];
 type WorkerExecution = 'claude' | 'harness';
+const MAX_ENTRIES = 4096;
 export interface PermissionContext extends WorkerPermissions {
   permissionMode: PermissionMode;
   cwd?: string;
@@ -31,14 +33,7 @@ function requiredString(value: unknown, name: string): string {
 }
 
 function executionForModel(model: unknown): WorkerExecution {
-  if (typeof model !== 'string') {
-    return 'claude';
-  }
-  return model.startsWith('multi/cursor/') ||
-    model.startsWith('multi/antigravity/') ||
-    model.startsWith('multi/grok/')
-    ? 'harness'
-    : 'claude';
+  return harnessProvider(model) ? 'harness' : 'claude';
 }
 
 /** Prompt-time snapshots: the existing selector takes effect at the next prompt. */
@@ -104,7 +99,7 @@ export class PermissionModes {
     const policy = this.policies.consume(session, generation, requiredString(context.cwd, 'cwd'));
     remember(this.catalogs, policy.cwd, policy.workers);
     this.recordModSession(session, {
-      ...mergeCursorPermissions(context, policy.restrictions),
+      ...mergePermissions(context, policy.restrictions),
       nativePermissionError: policy.restrictions.nativePermissionError,
     });
     remember(this.admitted, session, structuredClone(policy.restrictions));
@@ -165,7 +160,7 @@ export class PermissionModes {
   private withAdmittedPolicy(session: string, context: PermissionContext): PermissionContext {
     const restrictions = this.admitted.get(session) ?? {};
     return {
-      ...mergeCursorPermissions(context, restrictions),
+      ...mergePermissions(context, restrictions),
       nativePermissionError: context.nativePermissionError ?? restrictions.nativePermissionError,
     };
   }
@@ -212,7 +207,7 @@ export class PermissionModes {
     }
     this.prunePendingWorkers();
     const token = randomUUID();
-    const inherited = input.parentAgentId ? mergeCursorPermissions(parent, definition) : definition;
+    const inherited = input.parentAgentId ? mergePermissions(parent, definition) : definition;
     remember(this.pendingWorkers, JSON.stringify([session, token]), {
       ...inherited,
       cwd,
@@ -433,7 +428,7 @@ export class PermissionModes {
     const inherited = ['auto', 'acceptEdits', 'bypassPermissions', 'plan'].includes(
       parent.permissionMode,
     );
-    return mergeCursorPermissions(
+    return mergePermissions(
       {
         ...worker,
         nativePermissionError: worker.nativePermissionError ?? parent.nativePermissionError,
@@ -516,15 +511,10 @@ function validateWorkerRequest(
   }
 }
 
+/**
+ * A write refreshes the entry; at the cap the least recently written one makes room, so a
+ * long-lived gateway never refuses new work for the sake of identities long idle.
+ */
 function remember<T>(entries: Map<string, T>, key: string, value: T): void {
-  // A write refreshes the entry; at the cap the least recently written one makes room, so a
-  // long-lived gateway never refuses new work for the sake of identities long idle.
-  entries.delete(key);
-  if (entries.size >= 4096) {
-    const oldest = entries.keys().next();
-    if (!oldest.done) {
-      entries.delete(oldest.value);
-    }
-  }
-  entries.set(key, value);
+  setBounded(entries, key, value, MAX_ENTRIES, 'lru');
 }

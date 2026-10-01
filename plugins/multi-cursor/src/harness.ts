@@ -50,6 +50,7 @@ import {
   readJson,
   textContentBlock,
 } from '../../multi-core/src/gateway/harness-session.ts';
+import { mergePermissions } from '../../multi-core/src/gateway/harness-settings.ts';
 import type {
   Emit,
   MessagesRequest,
@@ -60,11 +61,7 @@ import { dangerousToolMode } from '../../multi-core/src/gateway/safeguards.ts';
 import { settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
 import { CursorProviderError, cursorRunError } from './errors.ts';
 import { type CursorModelOption, cursorSelection } from './models.ts';
-import {
-  cursorNativePermissions,
-  cursorPermissionPolicy,
-  mergeCursorPermissions,
-} from './permissions.ts';
+import { cursorNativePermissions, cursorPermissionPolicy } from './permissions.ts';
 import { cursorContextNotice, observeCursorUpdate } from './progress.ts';
 import { prepareCursorRequest } from './request.ts';
 import { legacyCursorSessionFile, restoreCursorSession } from './session-record.ts';
@@ -397,7 +394,7 @@ export class CursorHarness {
     if (!context) {
       throw new Error('Cursor requires an explicit Claude permission context');
     }
-    const permissions = mergeCursorPermissions(context, await this.checkPermissions());
+    const permissions = mergePermissions(context, await this.checkPermissions());
     this.validate(body, permissions);
     this.cwd = await realpath(this.cwd);
     const key = hash([

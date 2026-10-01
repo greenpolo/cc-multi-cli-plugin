@@ -144,22 +144,6 @@ export function assertCursorClaudeSettings(
   return { disallowedTools: denied };
 }
 
-/** Restriction layers intersect grants and accumulate denials; none can widen another. */
-export function mergeCursorPermissions(
-  context: PermissionContext,
-  rules: WorkerPermissions = {},
-): PermissionContext {
-  let tools = context.tools;
-  if (rules.tools !== undefined) {
-    tools = tools === undefined ? rules.tools : tools.filter((tool) => rules.tools?.includes(tool));
-  }
-  return {
-    ...context,
-    tools,
-    disallowedTools: [...(context.disallowedTools ?? []), ...(rules.disallowedTools ?? [])],
-  };
-}
-
 function settingsRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid Claude settings for native Cursor execution');
