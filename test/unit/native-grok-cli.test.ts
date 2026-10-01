@@ -293,6 +293,42 @@ test('passes an oversized prompt through a file and removes it afterwards', asyn
   await assert.rejects(stat(args[1]));
 });
 
+async function grokSpawnArguments(
+  launcher: string,
+  prompt: string,
+  platform: NodeJS.Platform,
+): Promise<readonly string[]> {
+  let spawned: readonly string[] = [];
+  await runGrok({
+    cwd: path.dirname(launcher),
+    executable: launcher,
+    prompt,
+    platform,
+    signal: AbortSignal.timeout(2000),
+    spawn: ((_command: string, args?: readonly string[]) => {
+      spawned = args ?? [];
+      throw Object.assign(new Error('stop'), { code: 'ENOENT' });
+    }) as unknown as GrokRunOptions['spawn'],
+  }).catch(() => undefined);
+  return spawned;
+}
+
+test('a prompt with cmd metacharacters goes through a file on a non-shim .cmd launcher on Windows', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'grok-cmd-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const launcher = path.join(directory, 'grok.cmd');
+  await writeFile(launcher, '@echo off\r\nrem not an npm shim\r\n');
+  for (const prompt of ['say "hi"', '100% done', 'a & b']) {
+    const spawned = await grokSpawnArguments(launcher, prompt, 'win32');
+    assert.equal(spawned.join(' ').includes('--prompt-file'), true);
+    assert.equal(spawned.join(' ').includes(prompt), false);
+  }
+  const plain = await grokSpawnArguments(launcher, 'plain', 'win32');
+  assert.equal(plain.join(' ').includes('-p plain'), true);
+  const posix = await grokSpawnArguments(launcher, 'say "hi"', 'linux');
+  assert.deepEqual(posix.slice(0, 2), ['-p', 'say "hi"']);
+});
+
 test('refuses unreadable output and bounds what it buffers', async (t) => {
   const cli = await fakeCli(t);
   await assert.rejects(

@@ -300,6 +300,28 @@ test('a mid-sized prompt takes the stdin path on Windows but stays an argument o
   assert.deepEqual(short.spawnArgs.slice(0, 2), ['-p', 'hello']);
 });
 
+test('a prompt with cmd metacharacters rides stdin through a non-shim .cmd launcher on Windows', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'agy-cmd-'));
+  t.after(() => removeTemporary(directory));
+  const launcher = path.join(directory, 'agy.cmd');
+  await writeFile(launcher, '@echo off\r\nrem not an npm shim\r\n');
+  for (const prompt of ['say "hi"', '100% done', 'a & b']) {
+    const child = fakeWindowsChild();
+    const run = await runAntigravity({
+      cwd: process.cwd(),
+      executable: launcher,
+      prompt,
+      platform: 'win32',
+      signal: AbortSignal.timeout(5000),
+      spawn: child.spawn,
+    });
+    assert.equal(run.result.status, 'SUCCESS');
+    assert.equal(child.spawnArgs.join(' ').includes(prompt), false);
+    assert.equal(child.spawnArgs.join(' ').includes('--input-format stream-json'), true);
+    assert.equal(child.stdin().includes(JSON.stringify(prompt).slice(1, -1)), true);
+  }
+});
+
 test('escalates cancellation and reports missing terminal evidence as aborted', async (t) => {
   const cli = await fakeCli(t);
   const controller = new AbortController();

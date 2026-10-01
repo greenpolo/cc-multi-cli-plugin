@@ -11,6 +11,7 @@ import {
   ExchangeRegistry,
   replayPersisted,
 } from '../../multi-core/src/gateway/harness-exchange.ts';
+import { classifyHarnessFailure } from '../../multi-core/src/gateway/harness-failure.ts';
 import {
   continuation,
   historyRewound,
@@ -29,10 +30,7 @@ import type {
   HarnessSession,
   HarnessSessionBase,
 } from '../../multi-core/src/gateway/harness-session.ts';
-import {
-  HarnessBusyError,
-  HarnessSessionStore,
-} from '../../multi-core/src/gateway/harness-session.ts';
+import { HarnessSessionStore } from '../../multi-core/src/gateway/harness-session.ts';
 import type {
   Emit,
   MessagesRequest,
@@ -41,7 +39,7 @@ import type {
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 import { abortGraceMs, settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
 import type { GrokRunOptions, GrokRunResult, GrokStreamEvent, GrokUsage } from './cli.ts';
-import { GrokCliError, runGrok } from './cli.ts';
+import { runGrok } from './cli.ts';
 import { grokFailureAdvice } from './errors.ts';
 import type { GrokModel } from './models.ts';
 import { selectGrokModel } from './models.ts';
@@ -515,29 +513,10 @@ const missingPermissions: CheckGrokPermissions = async () => {
   throw new Error('Grok native permission policy is not configured');
 };
 
-/**
- * A machine momentarily out of processes, file handles or memory starts the CLI on
- * the next attempt; a missing binary or a denied path never does. Only the second
- * kind is answered as a request error.
- */
-const TRANSIENT_SPAWN = new Set(['EAGAIN', 'EMFILE', 'ENFILE', 'ENOMEM', 'ETXTBSY']);
-
-function permanentFailure(error: GrokCliError): boolean {
-  if (error.code === 'policy') {
-    return true;
-  }
-  return error.code === 'spawn' && !TRANSIENT_SPAWN.has(error.systemCode ?? '');
-}
-
 export class GrokProviderError extends Error {
   readonly failure: { status: number; message: string };
   constructor(error: unknown) {
-    // A busy agent, a policy the CLI did not apply, or a CLI that will not start,
-    // fails the same way on every attempt. Reporting them as 502 had Claude retry a
-    // paid run ten times over one prompt, so they are answered as a request error.
-    const deterministic =
-      error instanceof HarnessBusyError ||
-      (error instanceof GrokCliError && permanentFailure(error));
+    // Deterministic failures are request errors; retrying them repeats a paid run.
     const detail = error && typeof error === 'object' && 'message' in error ? error.message : error;
     const reported = String(detail ?? 'unknown Grok failure');
     const advice = grokFailureAdvice(reported);
@@ -547,6 +526,6 @@ export class GrokProviderError extends Error {
       .slice(0, 500);
     super(message, { cause: error });
     this.name = 'GrokProviderError';
-    this.failure = { status: deterministic ? 400 : 502, message };
+    this.failure = { status: classifyHarnessFailure(error).status, message };
   }
 }
