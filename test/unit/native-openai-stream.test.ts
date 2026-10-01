@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Emit, StreamEventBody } from '../../plugins/multi-core/src/gateway/messages.ts';
+import { fromResponses, toResponses } from '../../plugins/multi-core/src/gateway/responses.ts';
 import { safeguardResults } from '../../plugins/multi-core/src/gateway/safeguards.ts';
-import { fromResponses, toResponses } from '../../plugins/multi-openai/src/responses.ts';
 
 const model = 'multi/openai/gpt-6-astra';
 const created = { type: 'response.created', response: { id: 'resp' } };

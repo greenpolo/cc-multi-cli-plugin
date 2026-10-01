@@ -7,11 +7,17 @@ import type {
   ResponseContentBlock,
   StopReason,
 } from '../../multi-core/src/gateway/messages.ts';
+import { prefixSafeLength, readSse } from '../../multi-core/src/gateway/responses.ts';
 import { safeguardResults } from '../../multi-core/src/gateway/safeguards.ts';
 import { callId, toolName } from '../../multi-core/src/gateway/tools.ts';
-import { prefixSafeLength, readSse } from '../../multi-openai/src/responses.ts';
 
 const SIGNATURE_PREFIX = 'multi-zen-chat:';
+export const ZEN_RESPONSES_SIGNATURE_PREFIX = 'multi-zen-responses:';
+/** Every opaque reasoning signature Zen emits, for stripping from Claude-bound history. */
+export const ZEN_SIGNATURE_PREFIXES: readonly string[] = [
+  ZEN_RESPONSES_SIGNATURE_PREFIX,
+  SIGNATURE_PREFIX,
+];
 const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 export interface ChatRequest {

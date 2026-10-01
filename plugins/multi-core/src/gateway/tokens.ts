@@ -1,8 +1,5 @@
 import { getEncoding } from 'js-tiktoken';
-import type {
-  ResponsesInputContent,
-  ResponsesRequest,
-} from '../../../multi-openai/src/responses.ts';
+import type { ResponsesInputContent, ResponsesRequest } from './responses.ts';
 
 let encoding: ReturnType<typeof getEncoding> | undefined;
 /** Shared local text estimate; providers may use different tokenizers. */

@@ -6,9 +6,9 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { MessagesResponse } from '../../plugins/multi-core/src/gateway/messages.ts';
+import type { ResponsesRequest } from '../../plugins/multi-core/src/gateway/responses.ts';
+import { readSse } from '../../plugins/multi-core/src/gateway/responses.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
-import type { ResponsesRequest } from '../../plugins/multi-openai/src/responses.ts';
-import { readSse } from '../../plugins/multi-openai/src/responses.ts';
 import { isolatedEnvironment } from './environment.ts';
 
 interface Sample {
