@@ -8,5 +8,6 @@
   "name": "multi-core",
   "description": "Shared Multi gateway, setup, status and reversible Claude startup integration.",
   "skills": "./plugins/multi-core/skills",
-  "hooks": "./plugins/multi-core/hooks/hooks.json"
+  "hooks": "./plugins/multi-core/hooks/hooks.json",
+  "types": "./plugins/multi-core/types/multi-core.d.ts"
 }

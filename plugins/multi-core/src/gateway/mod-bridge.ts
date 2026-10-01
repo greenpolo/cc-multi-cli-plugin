@@ -60,7 +60,24 @@ export class ModBridge {
   }
 
   mode(key: string) {
-    return this.snapshots.get(key);
+    const snapshot = this.snapshots.get(key);
+    if (snapshot) {
+      // A read counts as use: the map's order is the recency eviction reads.
+      this.snapshots.delete(key);
+      this.snapshots.set(key, snapshot);
+    }
+    return snapshot;
+  }
+
+  /** Drops the least recently used snapshot whose scope has no running native run. */
+  private evictSnapshot() {
+    const idle = [...this.snapshots.keys()].find(
+      (key) => this.lifecycle.get(key)?.state !== 'running',
+    );
+    const victim = idle ?? this.snapshots.keys().next().value;
+    if (victim !== undefined) {
+      this.snapshots.delete(victim);
+    }
   }
 
   private record(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
@@ -71,7 +88,7 @@ export class ModBridge {
       return undefined;
     }
     if (!this.snapshots.has(key) && this.snapshots.size >= MAX_KEYS) {
-      throw new Error('Mod session capacity reached; restart the gateway');
+      this.evictSnapshot();
     }
     const snapshot = {
       generation: ++this.generation,
@@ -82,6 +99,7 @@ export class ModBridge {
       },
       cwd: value.cwd,
     };
+    this.snapshots.delete(key);
     this.snapshots.set(key, snapshot);
     return snapshot;
   }

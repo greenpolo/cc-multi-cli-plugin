@@ -468,3 +468,55 @@ test('a planning parent binds every worker, whatever mode it was spawned or defi
   assert.equal(modes.resolve('s', 'explicit').permissionMode, 'bypassPermissions');
   assert.throws(() => modes.planning('s', 'unregistered'), /unavailable/);
 });
+
+test('a hook long-polls one request that returns when discovery ends', async () => {
+  let finish: ((value: PreparedPolicy) => void) | undefined;
+  const store = new ModPolicies(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const job = store.begin('s', '/workspace');
+  const waiting = store.wait('s', job.generation, 5000);
+  finish?.(policy);
+  assert.equal((await waiting).status, 'ready');
+  // A wait that outlasts its bound answers pending instead of blocking the hook.
+  const slow = store.begin('t', '/workspace');
+  assert.equal((await store.wait('t', slow.generation, 5)).status, 'pending');
+  await assert.rejects(store.wait('t', 'other', 5), /stale/);
+});
+
+test('an unconsumed policy job expires instead of being reused indefinitely', async () => {
+  let clock = 1000;
+  let discoveries = 0;
+  const store = new ModPolicies(
+    async () => {
+      discoveries++;
+      return policy;
+    },
+    () => clock,
+  );
+  const first = store.begin('s', '/workspace');
+  await setImmediate();
+  clock += 59_000;
+  assert.equal(store.begin('s', '/workspace').generation, first.generation);
+  clock += 2_000;
+  assert.notEqual(store.begin('s', '/workspace').generation, first.generation);
+  assert.equal(discoveries, 2);
+});
+
+test('policy sessions beyond capacity evict the least recent idle one', async () => {
+  const store = new ModPolicies(async () => policy);
+  const first = store.begin('session-0', '/workspace');
+  for (let index = 1; index < 128; index++) {
+    store.begin(`session-${index}`, '/workspace');
+    if (index % 32 === 0) {
+      await setImmediate();
+    }
+  }
+  await setImmediate();
+  const added = store.begin('session-new', '/workspace');
+  assert.equal(added.status, 'pending');
+  assert.throws(() => store.status('session-0', first.generation), /stale/);
+});

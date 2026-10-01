@@ -11,8 +11,10 @@ The authoritative starting point is Anthropic's [Mods proposal and September 9
 update](https://github.com/anthropics/claude-code/issues/91870). Anthropic calls
 the product feature **Claude Mods** and the implementation primitive **function
 hooks**: a Mod is a plugin whose behavior is implemented with function hooks.
-The update says the interface was still early access and rapidly iterating, but
-that core semantics had settled enough to publish built-in source.
+Mods are generally available and on by default as of Claude Code 2.1.287; no
+environment variable turns them on for a person. The engine's own declarations
+(`.claude-plugin/types/claude-code/index.d.ts`, written beside a mod it loads from a
+folder) are the API authority for this repository.
 
 The issue's [Function Hooks: Core Architecture
 PDF](https://github.com/user-attachments/files/31802150/EXTERNAL.Function.Hooks.Core.Architecture.pdf)
@@ -39,8 +41,8 @@ PDF](https://github.com/user-attachments/files/31802150/EXTERNAL.Function.Hooks.
 Anthropic's [built-in Mods source
 listings](https://github.com/anthropics/claude-code/tree/main/mods) are the best
 executable reference. The published README describes a hooks module as one
-`register(on, options)` entry, typing against declarations written by
-`/plugin-types`, and tests run with `claude plugin test`. As of the source tree
+`register(on, options)` entry, typed against the declarations the engine writes, with
+tests run by `claude plugin test`. As of the source tree
 inspected September 22, 2026 (latest `mods/` commit `7974a707` dated September
 20), it contains `diff`, `sec-default`, `telemetry`, and `agents-md`:
 
@@ -56,14 +58,34 @@ inspected September 22, 2026 (latest `mods/` commit `7974a707` dated September
   demonstrates instruction loading through engine hooks rather than prompt or
   filesystem side channels.
 
-The issue's September 9 cheat-sheet image covers v267/v268-era affordances and
-documents the opt-in command
-`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude`. Treat it as dated version evidence,
-not a permanent API promise. Multi's registration code records that Claude Code
-2.1.272 loads exactly one `hooks.json` module, so all Multi hook registrars are
-composed by `hooks/register.ts`. Regenerate current local declarations with
-`/plugin-types` and test the repository's supported Claude Code build when an
-event or result shape changes.
+The issue's September 9 cheat-sheet image covers v267/v268-era affordances; treat
+it as dated version evidence, not a permanent API promise. Multi's registration code
+records that Claude Code 2.1.272 loads exactly one `hooks.json` module, so all Multi
+hook registrars are composed by `hooks/register.ts`. The engine rewrites
+`.claude-plugin/types/` each time it loads the mod from this checkout (and
+`/plugin-types` writes the same declarations to a directory you name); test the
+repository's supported Claude Code build when an event or result shape changes.
+
+### Static rules the engine enforces
+
+`claude plugin validate .claude-plugin/plugin.json` reads the hooks source the way the
+engine will and refuses a module that breaks these rules, which shape the code:
+
+- `$` is passed only into functions declared in the same file, never across an import.
+  Each hooks file therefore builds its own small `wire($)` (four closures: the two
+  `$.env.get` names, `$.http.fetch`, `$.clock.sleep`) and hands that to the shared
+  gateway client in `gateway.ts`; cross-file helpers (`syncDisplayTools`, the policy
+  client) take such closures, never `$`.
+- `$.env.get` takes a literal name, and `$.noun.event(...)` is spelled at every call
+  site; `$.env` and the like are never passed as values.
+- A module hooks each event once without a matcher, so one `tool.call` hook (in
+  `register.ts`) answers display rows and attributes every other call.
+- State values are named where they are read: each file declares its own
+  `atom({ plugin: 'multi-core', key: ... } as const, initial)` for the keys it uses; the
+  value types come from `types/multi-core.d.ts`.
+- A hooks module has no timers. Every wait is `$.clock` (`sleep`, `after`, `every`),
+  which is also the only wait that counts against a hook's 10 s own-time budget; time
+  inside any other `$` call (a gateway fetch) does not count.
 
 ## Community field report
 
@@ -77,7 +99,8 @@ function-hook UI and reports these primitives and constraints:
   `Client` surface module.
 - `turn.complete` and `tool.call` let a Mod react to Claude lifecycle and tool
   activity without spending model tokens.
-- `$.store` persists Mod-owned state.
+- `$.store` persists Mod-owned state between sessions; `$.state` holds session state
+  that survives a hot reload and redraws any drawing that read it (Multi uses `$.state`).
 - A `Client` module path must be a string literal so the engine can discover it.
 - A JSX surface module must not bind a local variable named `h`, because JSX is
   compiled into calls to that identifier.
@@ -87,22 +110,24 @@ function-hook UI and reports these primitives and constraints:
 
 The linked project's [README, especially **How it works**, **Limits**, and
 **Develop**](https://github.com/sezaakgun/cc-arcade#develop), is the practical
-upstream reference behind those findings. Function hooks are early access, so
-validate behavior against the Claude Code version supported by this repository
+upstream reference behind those findings. It was written before general
+availability, so validate behavior against the Claude Code version supported by this repository
 instead of treating the example as a stable public specification.
 
 ## API map used by Multi
 
 | Concern | Function-hook API used here | Multi behavior |
 | --- | --- | --- |
-| Startup and registration | `session.start`, `$.command.register`, `$.tool.register` | Registers `/multi-usage`, the initial authenticated Mod session, and the display tools for native harness actions (see below). Multi registers no model-callable tools. |
-| Model and permission boundary | `classic.SessionStart`, `classic.UserPromptSubmit`, `$.session.model/cwd/id` | Records the effective Claude permission snapshot at prompt boundaries; it does not redesign provider permissions. |
-| Workers | `tool.call` (Agent), `tool.describe` (Agent), `agent.offer`, `agent.spawn`, `classic.SubagentStart`, `ui.render` (ToolUse, UserMessage) | Takes the Agent tool's `model` out before Claude's Agent schema check, resolves it against the provider worker catalog at spawn (labelling the task's description, which the running-agents list and its notification show), admits harness children against the current policy generation, and labels the Agent row with the resolved provider and model. The engine's compact line for parallel Agent calls reads the stored call, whose provider model its schema rejects, and draws those calls as a bare `Agent`; ctrl+o shows the labelled rows. |
-| Native action rows | `$.tool.register`, `turn.step`, `tool.describe`, `tool.check`, `tool.call`, `ui.render` for `ToolUse` and `ToolResult` | Registers a display tool per native tool name the gateway offers (again before a harness step when a harness announced new ones), defers them behind ToolSearch, allows only calls carrying a gateway-issued token, answers those with the native output from `POST /multi/mod/display`, and draws each row as Claude Code draws the built-in the native tool mirrors (Read, Bash, Grep, Glob, LS, Edit, Write), under the native tool's name. `ToolGroup` folding stays the engine's. |
-| Usage UI | `command.run`, `$.ui.open`, `$.ui.invalidate`, `ui.render` for `Pane`, `ui.message` | Opens the interactive usage pane, renders its literal `Client` module, and handles bounded refresh/receipt/toggle messages. |
-| Lifecycle | `turn.step`, `turn.complete`, `session.detach`, `$.ui.status` | Updates telemetry, the status line and receipts, completes/cancels runs, and forgets session-scoped state. |
+| Startup and registration | `session.start`, `$.command.register`, `$.state`, `$.tool.register` | Registers `/multi-usage` and greets the gateway with the session (which also tells the launcher the Mod is live). The first prompt after a `/clear`, which fires no `session.start`, greets again. Multi registers no model-callable tools, and no display tool at start (see below). |
+| Model and permission boundary | `classic.SessionStart`, `classic.UserPromptSubmit`, `$.session.model/cwd/id`, `$.state` | Records the effective Claude permission snapshot at prompt boundaries; it does not redesign provider permissions. A harness prompt always admits its settings policy; any other model's snapshot is posted only when the mode, workspace or model changed, and always kept in `$.state` so a harness worker spawned later admits against it. |
+| Workers | `tool.call` (Agent), `tool.describe` (Agent), `agent.offer`, `agent.spawn`, `classic.SubagentStart`, `$.ui.invalidate('tool.describe')`, `ui.render` (ToolUse, UserMessage) | Takes the Agent tool's `model` out before Claude's Agent schema check, resolves it against the provider worker catalog at spawn (labelling the task's description, which the running-agents list and its notification show), admits harness children against the current policy generation, and labels the Agent row with the resolved provider and model, read from `$.state` so a resolved spawn redraws it. The Agent description names provider models only while a provider worker type is offered. An agent type skips gateway registration only when it is natively Claude: a built-in on a Claude session is classified locally, any other type by the gateway's offer (its model must not be a Multi model, so a definition pinned to `multi/openai/...` keeps registration), and `classic.SubagentStart` keeps the record while any loop of the session runs a Multi model. |
+| Native action rows | `$.tool.register`, `turn.step`, `tool.describe`, `tool.check`, `tool.call`, `ui.render` for `ToolUse` and `ToolResult` | Registers a display tool per native tool name the gateway offers, lazily: at a harness prompt, before a harness worker spawns, and before a harness step when the catalog changed. A session that never runs a harness lists none. It defers them behind ToolSearch, allows only calls carrying a gateway-issued token, answers those with the native output from `POST /multi/mod/display`, and draws each row as Claude Code draws the built-in the native tool mirrors (Read, Bash, Grep, Glob, LS, Edit, Write), under the native tool's name. `ToolGroup` folding stays the engine's. |
+| Usage UI | `command.run`, `$.ui.open` (`isPlaced`), `$.ui.toast`, `$.state`, `ui.render` for `Pane`, `ui.message` | Opens the interactive usage pane, renders its literal `Client` module from `$.state` (a write redraws it; nothing invalidates), and handles bounded refresh/receipt/toggle messages. A pane that waits undrawn is announced with a toast and its numbers are returned as text. |
+| Lifecycle | `turn.step`, `turn.complete`, `session.end`, `$.clock.every`, `$.ui.status` | Records each loop's model, sends telemetry for a Multi step only, polls a harness run's status on a `$.clock` timer cancelled at `turn.complete` and `session.end`, completes/cancels runs, and forgets session-scoped state when the session ends (exit, `/clear` and resume alike). `session.detach` fires when any client leaves the roster, a session still running, so it is not hooked. |
+| Reviewer attribution | `tool.call` | A provider loop's tool call (its `agentId` names the worker) is attributed to the gateway's reviewer with the session's snapshot mode; a Claude loop's call costs the gateway nothing. `classic.PreToolUse` carries neither the agent id nor a mode. |
 | Compaction | `session.compact` | Keeps native-harness compaction provider-owned and generation-bound. |
-| Local control plane | `$.http.fetch`, `$.env.get` | Calls authenticated loopback `/multi/mod/*` routes with bounded bodies and timeouts. |
+| Local control plane | `$.http.fetch`, `$.env.get`, `$.clock.sleep` | `gateway.ts` calls authenticated loopback `/multi/mod/*` routes with an explicit method, a body bounded in bytes, and a `$.clock` deadline (1.5 s, 8.5 s for usage). Policy readiness is one request the gateway holds until discovery ends (bounded at 8 s), so no hook loops. |
+| Hook state | `$.state` (`atom`, `read`, `update`), `types/multi-core.d.ts` | The policy snapshot, loop and spawn models, offer classification, display tools and usage panes live in `$.state`, declared by the `types` file `.claude-plugin/plugin.json` names, so a hot reload keeps them and a drawing that reads one is redrawn when it changes. Only per-call memos (the Agent model between `tool.call` and `agent.spawn`, a row's input between draws) and timers stay in module memory. |
 
 The `classic.*` events are compatibility bridges for Claude Code's classic hook
 payloads. New UI and extensibility still belongs in Mods; classic events do not
@@ -114,7 +139,8 @@ The implementation is deliberately split:
 
 | Layer | Responsibility |
 | --- | --- |
-| `plugins/multi-core/hooks/*.ts` | Register function hooks, react to Claude events, open/invalidate surfaces, and exchange UI messages. |
+| `plugins/multi-core/hooks/*.ts` | Register function hooks, react to Claude events, open surfaces, and exchange UI messages. `gateway.ts` is the one gateway client, `state.ts` the bounded-record helpers, `policy.ts` the prompt-boundary admission. |
+| `plugins/multi-core/types/multi-core.d.ts` | The `$.state` values the hooks keep (`PluginState`), named by `.claude-plugin/plugin.json` `types`. |
 | `plugins/multi-core/hooks/*-view.ts` | Render `Client` surfaces (the usage pane); module paths at call sites stay literal. |
 | `plugins/multi-core/hooks/rows.ts` | Register, gate, answer and draw the display rows of native harness actions. |
 | `plugins/multi-core/hooks/rows-view.ts` | Draw a display row as the Claude Code built-in it mirrors. |
@@ -158,10 +184,15 @@ harness reports it: Cursor's SDK tool-call type (`shell`, `read`, `edit`, `grep`
 `mcp__multi-core__<name>`; that is engine naming, not an MCP server. The gateway
 offers the static sets of the harnesses it runs (`GET /multi/mod/display-tools`),
 adds any name a harness announces at run time, and bounds them (160 names,
-`[A-Za-z0-9_-]`, 47 characters). The mod registers them at `session.start` and
-again before a harness `turn.step` when the catalog changed, then acknowledges the
-registered set (`POST /multi/mod/display-tools`); the gateway emits rows only for
-acknowledged names, so a session without the mod gets the closing summary alone.
+`[A-Za-z0-9_-]`, 47 characters). The mod registers them lazily, so a
+pure Claude session lists none (ToolSearch could otherwise surface them): at a harness
+prompt, before a harness worker spawns, and before a harness `turn.step` when the
+catalog changed (a registration takes effect from the next prompt, so the prompt hook
+is what lets the first harness run's rows anchor). It then acknowledges the registered
+set per session (`POST /multi/mod/display-tools`); the gateway emits rows only for names
+the requesting session acknowledged, so a session without the mod gets the closing
+summary alone. A session's end clears what it registered, and the next session
+registers and acknowledges again.
 Each harness worker definition lists `mcp__multi-core` in its tools, because the
 engine dispatches a subagent's tool_use only for a tool its definition admits; the
 Cursor, Antigravity, and Grok permission mappers drop that entry, so it grants no
@@ -233,7 +264,8 @@ would be folded, and is counted in no parent's line.
 **No fake tools for any model.** The gateway removes every display tool from each
 forwarded `tools` list, every display tool_use and its tool_result from each
 forwarded history (closing up the turns), and the display names from Claude Code's
-ToolSearch catalogue and worker tool lists, for every provider, Anthropic included.
+ToolSearch catalogue, ToolSearch `tool_reference` results and worker tool lists, for
+every provider, Anthropic included.
 `tool.describe` returns `isDeferred: true`, so no prompt lists them. `tool.check`
 allows a call only when `POST /multi/mod/display` confirms its token for that
 session and tool_use id, and `tool.call` refuses the rest, so a model-originated call
@@ -271,6 +303,24 @@ permission snapshots, model and worker selection, progress/lifecycle,
 compaction, session cleanup, and quota advice through the same authenticated
 Mods control plane.
 
+The gateway bounds what the Mod can make it hold: a session's snapshot and policy
+tables evict the least recently used idle session instead of refusing a new one, an
+unconsumed policy job is reused for a minute at most, and a policy request may carry
+`wait: true` to be held until discovery ends.
+
+## Testing the hooks
+
+`npm run test:mod` type-checks the hooks and their tests against the engine's own
+declarations (`.claude-plugin/types/`, written when the mod loads from this checkout;
+`/plugin-types` writes the same files elsewhere) and runs `claude plugin test` with the
+installed Claude executable, without provider inference. Mods are on by default in
+Claude Code 2.1.287, but `claude plugin test` follows the server rollout flag, which is
+served off for some accounts; the script therefore sets
+`CLAUDE_INTERNAL_FC_OVERRIDES={"tengu_plugin_hooks_modules":true}` for that process
+only (no `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is involved). A test that reaches the
+gateway client installs `mock.clock(on)`, because each request is bounded by
+`$.clock`; a test of a timer advances that clock.
+
 ## Rules for changes
 
 Any Claude Code harness UI or extensibility change must use function-hook Mods,
@@ -290,6 +340,7 @@ When adding a surface:
    as a literal string.
 3. Avoid a local `h` binding in JSX surface modules.
 4. Preserve `next(event)` behavior for events the Mod does not own.
-5. Bound retained state, payload size, refresh rate, and gateway latency.
+5. Bound retained state (keep it in `$.state`, not module memory), payload size,
+   refresh rate, and gateway latency (wait on `$.clock`, never a timer).
 6. Add hook tests and gateway route tests for session isolation, stale state,
    authentication, and failure fallback.

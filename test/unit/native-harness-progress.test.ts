@@ -398,12 +398,12 @@ async function gateway(t: test.TestContext, options: Parameters<typeof createNat
         headers,
       }).then((response) => response.json())) as Record<string, unknown>,
     /** What the mod does at session start: read the catalog, register, acknowledge. */
-    register: async () => {
+    register: async (sessionId = 'progress-session') => {
       const catalog = (await fetch(`${base}/multi/mod/display-tools`, { headers }).then(
         (response) => response.json(),
       )) as { names: string[] };
       await post('/multi/mod/display-tools', {
-        sessionId: 'progress-session',
+        sessionId,
         registered: catalog.names,
       });
       return catalog.names;
@@ -767,7 +767,8 @@ test('a follow-up is answered only to the session and worker whose reply wrote t
     displayTools: { antigravity: ANTIGRAVITY_TOOLS },
     antigravity: admitted(harness),
   });
-  await register();
+  await register('session-a');
+  await register('session-b');
   const answer = (await (
     await send(agyModel.model, 'agy-worker', undefined, 'session-a')
   ).json()) as MessagesResponse;
@@ -826,7 +827,8 @@ test('a follow-up is recovered from the harness record after a restart, and fail
     displayTools: { antigravity: ANTIGRAVITY_TOOLS },
     antigravity: admitted(first),
   });
-  await before.register();
+  await before.register('session-a');
+  await before.register('session-b');
   const answer = (await (
     await before.send(agyModel.model, 'agy-worker', undefined, 'session-a')
   ).json()) as MessagesResponse;

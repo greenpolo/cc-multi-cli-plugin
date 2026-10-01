@@ -1,7 +1,9 @@
-import { expect, test } from 'claude-code/testing';
+import type { On as EngineOn } from 'claude-code';
+import type { Engine as TestEngine } from 'claude-code/testing';
+import { expect, mock, test } from 'claude-code/testing';
 
-type On = Parameters<Parameters<typeof test>[1]>[1];
-type Engine = Parameters<Parameters<typeof test>[1]>[0];
+type On = EngineOn;
+type Engine = TestEngine;
 
 const surfaces = ['terminal', 'desktop'] as const;
 
@@ -92,6 +94,7 @@ const input = {
 };
 
 test('a running provider worker row shows its provider and resolved model', async ($, on) => {
+  mock.clock(on);
   gateway(on);
   const drawn = engine(on);
   await $.agent.spawn({
@@ -113,6 +116,7 @@ test('a running provider worker row shows its provider and resolved model', asyn
 });
 
 test('a completed worker row reads the model from its result after a reload', async ($, on) => {
+  mock.clock(on);
   gateway(on);
   const drawn = engine(on);
   for (const surface of surfaces) {
@@ -127,6 +131,7 @@ test('a completed worker row reads the model from its result after a reload', as
 });
 
 test('Claude agents and other tools keep their rows unlabelled', async ($, on) => {
+  mock.clock(on);
   gateway(on);
   const drawn = engine(on);
   await agentRow($, 'terminal', {
@@ -146,6 +151,7 @@ test('Claude agents and other tools keep their rows unlabelled', async ($, on) =
 });
 
 test('a worker notification shows its provider and model, and ctrl+o keeps the full row', async ($, on) => {
+  mock.clock(on);
   gateway(on);
   const drawn = engine(on);
   await $.agent.spawn({
@@ -174,118 +180,20 @@ test('a worker notification shows its provider and model, and ctrl+o keeps the f
   }
 });
 
-test('turn.step rewrites complete Agent tool inputs with provider and model while preserving other chunks', async ($, on) => {
+test("turn.step leaves an Agent call's streamed input exactly as the model wrote it", async ($, on) => {
+  mock.clock(on);
   gateway(on);
-  on('turn.step', async function* (_$, event) {
-    yield { kind: 'text', index: 0, text: 'launching workers' };
-    yield { kind: 'tool', index: 1, id: 'toolu_cursor', name: 'Agent' };
-    yield {
-      kind: 'input',
-      index: 1,
-      json: JSON.stringify({
-        description: 'Fix tests',
-        prompt: 'task 1',
-        subagent_type: 'multi-cursor',
-        model: 'composer-2.5',
-      }),
-    };
-    yield { kind: 'tool', index: 2, id: 'toolu_agy', name: 'Agent' };
-    yield {
-      kind: 'input',
-      index: 2,
-      json: JSON.stringify({
-        description: 'Review code',
-        prompt: 'task 2',
-        subagent_type: 'multi-antigravity',
-        model: 'gemini-3.8-flash[1m]',
-      }),
-    };
-    yield { kind: 'tool', index: 3, id: 'toolu_builtin', name: 'Agent' };
-    yield {
-      kind: 'input',
-      index: 3,
-      json: JSON.stringify({
-        description: 'Search repo',
-        prompt: 'search',
-        subagent_type: 'Explore',
-      }),
-    };
-    yield { kind: 'tool', index: 4, id: 'toolu_read', name: 'Read' };
-    yield {
-      kind: 'input',
-      index: 4,
-      json: JSON.stringify({
-        file_path: '/workspace/src/index.ts',
-      }),
-    };
-    yield { kind: 'input', index: 1, json: '{"partial' };
-    return {
-      turnId: event.turnId,
-      index: event.index,
-      answer: 'launching workers',
-      toolUses: [],
-      stopReason: 'end_turn',
-      usage: null,
-    };
+  const written = JSON.stringify({
+    description: 'Fix tests',
+    prompt: 'task 1',
+    subagent_type: 'multi-cursor',
+    model: 'composer-2.5',
   });
-
-  const chunks: Array<Record<string, unknown>> = [];
-  for await (const chunk of $.turn.step({
-    turnId: 't1',
-    index: 0,
-    model: 'claude-sonnet-5',
-    messageCount: 1,
-  })) {
-    chunks.push(chunk as Record<string, unknown>);
-  }
-
-  expect(chunks[0]).toEqual({ kind: 'text', index: 0, text: 'launching workers' });
-  expect(chunks[1]).toEqual({ kind: 'tool', index: 1, id: 'toolu_cursor', name: 'Agent' });
-
-  const cursorInput = JSON.parse(String(chunks[2]?.json)) as Record<string, unknown>;
-  expect(cursorInput.description).toBe('Fix tests · Cursor · composer-2.5');
-  expect(cursorInput.prompt).toBe('task 1');
-  expect(cursorInput.subagent_type).toBe('multi-cursor');
-  expect(cursorInput.model).toBe('composer-2.5');
-
-  expect(chunks[3]).toEqual({ kind: 'tool', index: 2, id: 'toolu_agy', name: 'Agent' });
-
-  const agyInput = JSON.parse(String(chunks[4]?.json)) as Record<string, unknown>;
-  expect(agyInput.description).toBe('Review code · Antigravity · gemini-3.8-flash');
-  expect(agyInput.prompt).toBe('task 2');
-  expect(agyInput.subagent_type).toBe('multi-antigravity');
-
-  expect(chunks[5]).toEqual({ kind: 'tool', index: 3, id: 'toolu_builtin', name: 'Agent' });
-  const exploreInput = JSON.parse(String(chunks[6]?.json)) as Record<string, unknown>;
-  expect(exploreInput.description).toBe('Search repo');
-  expect(exploreInput.prompt).toBe('search');
-
-  expect(chunks[7]).toEqual({ kind: 'tool', index: 4, id: 'toolu_read', name: 'Read' });
-  expect(JSON.parse(String(chunks[8]?.json))).toEqual({ file_path: '/workspace/src/index.ts' });
-
-  expect(chunks[9]?.json).toBe('{"partial');
-});
-
-test('turn.step uses provider name only when the worker model is unresolvable', async ($, on) => {
-  on('env.get', (_$, event) => ({
-    value: event.name === 'MULTI_GATEWAY_TOKEN' ? 'token' : 'http://127.0.0.1:4000',
-  }));
-  on('session.id', () => ({ value: 's' }));
-  on('session.cwd', () => ({ value: '/workspace' }));
-  on('http.fetch', () => ({
-    value: { ok: false, status: 503, headers: {}, text: 'Gateway unavailable' },
-  }));
   on('turn.step', async function* (_$, event) {
-    yield { kind: 'tool', index: 0, id: 'toolu_grok', name: 'Agent' };
-    yield {
-      kind: 'input',
-      index: 0,
-      json: JSON.stringify({
-        description: 'Audit codebase',
-        prompt: 'audit',
-        subagent_type: 'multi-grok',
-      }),
-    };
+    yield { kind: 'tool', index: 1, id: 'toolu_cursor', name: 'Agent' };
+    // Partial JSON, as a stream delivers it: nothing parses or rewrites it.
+    yield { kind: 'input', index: 1, json: written.slice(0, 20) };
+    yield { kind: 'input', index: 1, json: written.slice(20) };
     return {
       turnId: event.turnId,
       index: event.index,
@@ -295,18 +203,16 @@ test('turn.step uses provider name only when the worker model is unresolvable', 
       usage: null,
     };
   });
-
-  const chunks: Array<Record<string, unknown>> = [];
+  const json: string[] = [];
   for await (const chunk of $.turn.step({
-    turnId: 't2',
+    turnId: 't1',
     index: 0,
     model: 'claude-sonnet-5',
     messageCount: 1,
   })) {
-    chunks.push(chunk as Record<string, unknown>);
+    if (chunk.kind === 'input') {
+      json.push(chunk.json);
+    }
   }
-
-  const grokInput = JSON.parse(String(chunks[1]?.json)) as Record<string, unknown>;
-  expect(grokInput.description).toBe('Audit codebase · Grok');
-  expect(grokInput.prompt).toBe('audit');
+  expect(json.join('')).toBe(written);
 });

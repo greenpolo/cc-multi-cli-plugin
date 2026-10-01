@@ -238,7 +238,7 @@ test('an edit row takes its two sides from the diff, a created file becomes a Wr
   });
   const rows = new DisplayRows();
   rows.announce(['edit']);
-  rows.acknowledge(['edit']);
+  rows.acknowledge('s', ['edit']);
   const issued: Array<Record<string, unknown>> = [];
   const tracker = new NativeActionTracker(
     'Cursor',
@@ -401,7 +401,7 @@ test('a Cursor action becomes a display row under its native name; later text is
   });
   const rows = new DisplayRows();
   rows.announce(CURSOR_TOOLS);
-  rows.acknowledge(['read']);
+  rows.acknowledge('session', ['read']);
   const scope = JSON.stringify(['session', 'worker']);
   const events: Array<[string, unknown]> = [];
   const emit: Emit = (name, value) => {
