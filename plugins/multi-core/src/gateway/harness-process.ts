@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { executableInvocation, resolveExecutable } from './executable.ts';
+import { argvSafe, executableInvocation, resolveExecutable } from './executable.ts';
 import { terminateProcessTree } from './process-tree.ts';
 
 export const defaultMaxOutputBytes = 8 * 1024 * 1024;
@@ -15,6 +15,36 @@ const posixPromptArgumentLimitBytes = 128 * 1024;
 
 export function promptArgumentLimitBytes(platform: NodeJS.Platform): number {
   return platform === 'win32' ? windowsPromptArgumentLimitBytes : posixPromptArgumentLimitBytes;
+}
+
+/**
+ * Whether prompt text may ride in argv to the resolved CLI. A non-shim
+ * `.cmd`/`.bat` launcher is parsed by cmd.exe, which expands `%VAR%` and has no
+ * safe escape for quotes, so such prompts must go through stdin. An unresolved
+ * binary reports true; the spawn itself then fails with a clear ENOENT.
+ */
+export function promptArgvSafe(
+  prompt: string,
+  options: {
+    executable: string;
+    configuredPath?: string;
+    platform: NodeJS.Platform;
+    env: NodeJS.ProcessEnv;
+  },
+): boolean {
+  if (options.platform !== 'win32') {
+    return true;
+  }
+  try {
+    const resolved = resolveExecutable(options.executable, {
+      platform: options.platform,
+      env: options.env,
+      configuredPath: options.configuredPath,
+    });
+    return argvSafe(resolved, prompt, options.platform);
+  } catch {
+    return true;
+  }
 }
 
 /**

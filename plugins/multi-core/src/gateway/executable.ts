@@ -71,6 +71,39 @@ function missingExecutable(message: string): NodeJS.ErrnoException {
   return error;
 }
 
+const CMD_UNSAFE = /["%!^&|<>\r\n\0]/;
+
+/** True when text can pass through `cmd.exe /d /s /c` as one literal argument. */
+export function isCmdSafeArgument(value: string): boolean {
+  return !CMD_UNSAFE.test(value);
+}
+
+export class UnsafeCommandArgumentError extends Error {
+  readonly code = 'EUNSAFEARG';
+  constructor() {
+    super(
+      'Refusing to pass an argument containing cmd.exe metacharacters through a .cmd/.bat launcher; deliver it on stdin instead',
+    );
+    this.name = 'UnsafeCommandArgumentError';
+  }
+}
+
+/**
+ * Whether `value` may travel as a command-line argument to this executable on
+ * this platform. Only a non-shim `.cmd`/`.bat` launcher restricts arguments.
+ */
+export function argvSafe(
+  executable: string,
+  value: string,
+  platform = process.platform,
+  shimOptions: ExecutableInvocationOptions = {},
+): boolean {
+  if (platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(executable)) {
+    return true;
+  }
+  return resolveNpmShimTarget(executable, shimOptions) !== undefined || isCmdSafeArgument(value);
+}
+
 /** Invoke Windows command shims without shell:true, preserving argument boundaries. */
 export function executableInvocation(
   executable: string,
@@ -89,6 +122,14 @@ export function executableInvocation(
       args: [shimTarget, ...args],
       viaComSpec: false,
     };
+  }
+  // cmd.exe re-parses the line: it expands %VAR% and does not honor the
+  // backslash-quote escape the child's runtime uses. No quoting is provably
+  // safe for such text, so refuse it and let callers use stdin or a file.
+  for (const value of [executable, ...args]) {
+    if (!isCmdSafeArgument(value)) {
+      throw new UnsafeCommandArgumentError();
+    }
   }
   const command = environmentValue(env, 'ComSpec') ?? process.env.ComSpec ?? 'cmd.exe';
   const commandLine = [quoteWindows(executable), ...args.map(quoteWindows)].join(' ');
