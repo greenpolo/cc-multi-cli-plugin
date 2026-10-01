@@ -4,10 +4,16 @@ import http from 'node:http';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { prepareOpenAIRequest } from '../../../multi-openai/src/gateway-request.ts';
-import { forAnthropic } from '../../../multi-openai/src/responses.ts';
+import {
+  openaiSignaturePrefixes,
+  prepareOpenAIRequest,
+} from '../../../multi-openai/src/gateway-request.ts';
 import { validateZenKey } from '../../../multi-zen/src/auth.ts';
-import { prepareZenRequest, zenUnavailable } from '../../../multi-zen/src/gateway-request.ts';
+import {
+  prepareZenRequest,
+  zenSignaturePrefixes,
+  zenUnavailable,
+} from '../../../multi-zen/src/gateway-request.ts';
 import type { ApprovalContext, NativeApprovalBridge } from './approval.ts';
 import { approvalCwdForComparison, isApprovalRequest, parseApprovalRequest } from './approval.ts';
 import { setBounded } from './bounded.ts';
@@ -46,9 +52,12 @@ import { ProviderAuthError, UpstreamFailure } from './provider-request.ts';
 import { ProviderUsageDashboard, type ProviderUsageReader } from './provider-usage.ts';
 import { ReceiptLedger } from './receipts.ts';
 import { isRecord } from './record.ts';
+import { forAnthropic } from './responses.ts';
 import { dangerousToolMode, safeguardResults } from './safeguards.ts';
 import { forwardObservedTools, ToolObserver } from './tool-observer.ts';
 
+/** Other providers' reasoning signatures mean nothing to Anthropic and are stripped. */
+const FOREIGN_SIGNATURE_PREFIXES = [...openaiSignaturePrefixes, ...zenSignaturePrefixes];
 const DEFAULT_ANTHROPIC_URL = 'https://api.anthropic.com';
 // Anthropic's own Messages API limit is 32 MB; the gateway buffers up to it and leaves
 // the verdict to the provider, so a request Claude Code could send natively still goes.
@@ -623,7 +632,7 @@ export function createNativeGateway({
   async function handleAnthropic(exchange: ProviderRequest) {
     const { req, res, body, url, raw, signal } = exchange;
     const headers = anthropicHeaders(req);
-    const cleaned = forAnthropic(body);
+    const cleaned = forAnthropic(body, FOREIGN_SIGNATURE_PREFIXES);
     let forwarded: Buffer | undefined;
     if (req.method === 'POST') {
       forwarded = cleaned === body ? raw : Buffer.from(JSON.stringify(cleaned));
@@ -941,6 +950,7 @@ export function createNativeGateway({
       billedUsage,
       dashboard,
       rows: displayRows,
+      keys: modKeys,
     });
   }
   return http.createServer(async (req, res) => {

@@ -5,15 +5,22 @@ import type {
   ProviderRequestInput,
 } from '../../multi-core/src/gateway/provider-request.ts';
 import { ProviderAuthError } from '../../multi-core/src/gateway/provider-request.ts';
+import {
+  fromResponses,
+  OPENAI_SIGNATURE_PREFIX,
+  toResponses,
+} from '../../multi-core/src/gateway/responses.ts';
 import { estimateInputTokens } from '../../multi-core/src/gateway/tokens.ts';
 import { originalToolNames } from '../../multi-core/src/gateway/tools.ts';
 import { CodexAuthError, codexRequest } from './auth.ts';
 import { openaiInstructions } from './instructions.ts';
 import { MODELS } from './models.ts';
-import { fromResponses, toResponses } from './responses.ts';
 
 const OPENAI_URL = 'https://chatgpt.com/backend-api/codex/responses';
 const MESSAGES_PATHS = ['/v1/messages', '/v1/messages/count_tokens'];
+
+/** The prefixes of the reasoning signatures this provider writes into Claude's history. */
+export const openaiSignaturePrefixes: readonly string[] = [OPENAI_SIGNATURE_PREFIX];
 
 const openaiAuthHelp = ' Renew the Codex login.';
 

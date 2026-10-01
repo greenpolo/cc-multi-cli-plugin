@@ -4,9 +4,9 @@ import type {
   PreparedRequest,
   ProviderRequestInput,
 } from '../../multi-core/src/gateway/provider-request.ts';
+import { fromResponses } from '../../multi-core/src/gateway/responses.ts';
 import { originalToolNames } from '../../multi-core/src/gateway/tools.ts';
-import { fromResponses } from '../../multi-openai/src/responses.ts';
-import { fromChat } from './chat.ts';
+import { fromChat, ZEN_SIGNATURE_PREFIXES } from './chat.ts';
 import { zenRequest } from './request.ts';
 
 const ZEN_URL = 'https://opencode.ai/zen/v1';
@@ -14,6 +14,9 @@ const MESSAGES_PATHS = ['/v1/messages', '/v1/messages/count_tokens'];
 
 export const zenUnavailable =
   'Zen is not configured. Set OPENCODE_API_KEY or connect OpenCode Zen.';
+
+/** The prefixes of the reasoning signatures this provider writes into Claude's history. */
+export const zenSignaturePrefixes: readonly string[] = ZEN_SIGNATURE_PREFIXES;
 
 const zenAuthHelp = ' Check the Zen API key.';
 

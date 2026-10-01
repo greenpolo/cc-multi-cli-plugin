@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DisplayRows } from './display-rows.ts';
 import type { ModBridge } from './mod-bridge.ts';
 import type { ModCompactions } from './mod-compaction.ts';
+import type { ModSessionKeys } from './mod-keys.ts';
 import { usageRoute } from './mod-usage.ts';
 import type { PermissionContext, PermissionModes } from './mode-hook.ts';
 import type { ProviderUsageDashboard } from './provider-usage.ts';
@@ -39,6 +40,8 @@ export interface ModRouteContext {
   billedUsage?: (session: string) => Promise<unknown>;
   dashboard?: ProviderUsageDashboard;
   rows?: DisplayRows;
+  /** The per-session keys; a detached session's key is dropped with the session. */
+  keys?: ModSessionKeys;
 }
 
 export async function handleModRoute(
@@ -120,7 +123,7 @@ async function handlePostRoute(
   parsed: unknown,
   context: ModRouteContext,
 ) {
-  const { bridge, permissionModes, compactions, rows } = context;
+  const { bridge, permissionModes, compactions, rows, keys } = context;
   method(req, 'POST');
   if (!isRecord(parsed)) {
     throw new Error('Expected an object');
@@ -138,6 +141,7 @@ async function handlePostRoute(
       bridge.forgetSession(sessionId);
       rows?.forgetSession(sessionId);
       permissionModes?.forgetSession(sessionId);
+      keys?.forget(sessionId);
       return reply(res, { accepted: true });
     case '/multi/mod/telemetry':
       bridge.observeStep(key, {

@@ -41,12 +41,34 @@ export class ModSessionKeys {
     return { refused: false };
   }
 
+  /** The mod forgot this session (detach), so a later start under the same ID mints afresh. */
+  forget(session: string): void {
+    this.entries.delete(session);
+  }
+
+  /**
+   * Makes room for a new session. An unconfirmed entry goes first: anyone holding the
+   * gateway token can mint entries for sessions that do not exist, and they must not be
+   * able to push a confirmed session's key out. A confirmed entry goes only when every
+   * entry is confirmed.
+   */
+  private evict(): void {
+    let victim: string | undefined;
+    for (const [session, entry] of this.entries) {
+      victim ??= session;
+      if (!entry.confirmed) {
+        victim = session;
+        break;
+      }
+    }
+    if (victim !== undefined) {
+      this.entries.delete(victim);
+    }
+  }
+
   private mint(session: string): Entry {
     if (this.entries.size >= MAX_SESSIONS) {
-      const oldest = this.entries.keys().next();
-      if (!oldest.done) {
-        this.entries.delete(oldest.value);
-      }
+      this.evict();
     }
     const entry = { key: randomBytes(24).toString('hex'), confirmed: false };
     this.entries.set(session, entry);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
+import { ModSessionKeys } from '../../plugins/multi-core/src/gateway/mod-keys.ts';
 import {
   nestedClaudeShim,
   withPathPrefix,
@@ -81,8 +82,8 @@ async function listen(t: TestContext) {
   });
   const address = server.address();
   assert(address && typeof address !== 'string');
-  return (session: string, key?: string) =>
-    fetch(`http://127.0.0.1:${address.port}/multi/mod/session`, {
+  return (session: string, key?: string, route = 'session') =>
+    fetch(`http://127.0.0.1:${address.port}/multi/mod/${route}`, {
       method: 'POST',
       headers: { 'x-multi-gateway-token': 'tok', ...(key ? { 'x-multi-mod-key': key } : {}) },
       body: JSON.stringify({ sessionId: session, permissionMode: 'default' }),
@@ -105,4 +106,40 @@ test('once the mod presents its session key, the token alone cannot change that 
   assert.notEqual((await post('s1', key)).status, 403);
   // Another session has its own key.
   assert.notEqual((await post('s2')).status, 403);
+});
+
+test('detaching a session drops its key so a reused session ID is issued a fresh one', async (t) => {
+  const post = await listen(t);
+  const key = (await post('s1')).headers.get('x-multi-mod-key');
+  assert(key);
+  assert.notEqual((await post('s1', key)).status, 403);
+  assert.equal((await post('s1')).status, 403);
+  assert.equal((await post('s1', key, 'detach')).status, 200);
+  const reused = await post('s1');
+  assert.notEqual(reused.status, 403);
+  assert.notEqual(reused.headers.get('x-multi-mod-key'), null);
+});
+
+test('minting fake sessions cannot evict a confirmed session key', () => {
+  const keys = new ModSessionKeys();
+  const real = keys.check('real', undefined);
+  assert(!real.refused && real.issue);
+  assert.deepEqual(keys.check('real', real.issue), { refused: false });
+  for (let index = 0; index < 2048; index++) {
+    keys.check(`fake-${index}`, undefined);
+  }
+  assert.deepEqual(keys.check('real', undefined), { refused: true });
+  assert.deepEqual(keys.check('real', real.issue), { refused: false });
+});
+
+test('a full table of confirmed sessions still admits a new one by evicting the oldest', () => {
+  const keys = new ModSessionKeys();
+  for (let index = 0; index < 1024; index++) {
+    const verdict = keys.check(`s-${index}`, undefined);
+    assert(!verdict.refused && verdict.issue);
+    keys.check(`s-${index}`, verdict.issue);
+  }
+  assert(!keys.check('new', undefined).refused);
+  assert.equal(keys.check('s-0', undefined).refused, false);
+  assert.equal(keys.check('s-2', undefined).refused, true);
 });
