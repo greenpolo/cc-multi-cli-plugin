@@ -46,6 +46,8 @@ declare module 'claude-code' {
       displayTools: MultiCoreDisplayTools;
       /** The usage pane's props, by session id. */
       usagePanes: Record<string, MultiCoreUsagePane>;
+      /** The gateway's per-session mod key, by session id. Never logged or drawn. */
+      modKeys: Record<string, string>;
       /** Sessions whose Agent calls carry the quota advice. */
       advisorySessions: string[];
     };

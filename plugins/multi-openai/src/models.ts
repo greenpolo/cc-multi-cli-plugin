@@ -1,4 +1,4 @@
-import type { Effort } from './responses.ts';
+import type { Effort } from '../../multi-core/src/gateway/responses.ts';
 
 export const MODELS = {
   'openai-native': 'gpt-6-astra',

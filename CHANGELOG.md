@@ -6,6 +6,98 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Leave Claude sessions alone until a harness runs.** Multi registered about
+  70 hidden display tools (named after Cursor, Antigravity, and Grok tools, such
+  as `web_search`) at every session start, so ToolSearch could surface them to
+  Claude and the gateway rewrote every native request to hide them. They now
+  register only when a harness prompt, worker, or step needs them,
+  acknowledgement is per session, and display `tool_reference` blocks are
+  stripped from forwarded history. The Agent tool's provider-model paragraph
+  appears only while a provider worker is offered, and Claude's recorded Agent
+  input is no longer rewritten.
+- **Stop rejecting Claude's own auto-mode checks in mixed sessions.** A
+  classifier request for a Claude action that the gateway had not observed
+  returned "Missing or ambiguous pending review action" once the session had run
+  a provider. It now goes to Anthropic unless a provider-owned action positively
+  matches; a request routed to provider review keeps the session mismatch check.
+- **Fix provider workers in Claude sessions.** A custom agent pinned to a
+  `multi/openai` or `multi/zen` model, or a worker inheriting a provider model,
+  was treated as a native Claude subagent, skipped gateway registration, and had
+  every tool call denied in auto mode. Worker tool calls are now attributed
+  through the `tool.call` hook (the classic `PreToolUse` event carries no agent
+  id), with the session's permission mode.
+- **Forget session state when the session ends, not when a client detaches.**
+  Multi treated `session.detach`, which fires when any client such as the phone
+  or desktop app leaves, as the end of the session and dropped its policy,
+  worker models, and held follow-up text mid-run. Cleanup now runs on
+  `session.end`.
+- **Use the engine's state and clock in the Mod.** Hook state lives in
+  `$.state`, so it survives a hot reload; timeouts, the status poll, and the
+  policy wait use `$.clock` instead of timers the hooks environment does not
+  provide; one gateway client replaces eight request helpers; the policy wait is
+  one long-poll request instead of a sleep loop inside the hook's budget. The
+  usage pane shows a toast when the terminal cannot place it. `npm run test:mod`
+  forces the Mods rollout flag that `claude plugin test` follows, and Mods are
+  no longer described as opt-in.
+- **Cut gateway round trips on Claude turns.** Unchanged Claude prompt
+  snapshots, Claude step telemetry, and offers of built-in agents no longer call
+  the gateway.
+- **Keep slow non-streamed provider replies alive.** A non-streamed harness
+  request sent nothing until the run finished, so Claude Code could time out and
+  re-run native actions. After 30 s the gateway sends headers and JSON whitespace
+  keepalives.
+- **Honor proxies, custom base URLs, and every Anthropic path.** The gateway
+  respects `HTTPS_PROXY` (the bootstrap starts Node with
+  `NODE_USE_ENV_PROXY=1`), forwards to a caller-set `ANTHROPIC_BASE_URL`
+  instead of refusing to launch, forwards every path other than `/multi/*` and
+  Messages raw, keeps bodyless requests bodyless, and passes the client's
+  compression preference upstream.
+- **Keep nested `claude` runs native.** A `claude` started by a Bash command or
+  script inherited the gateway URL and token and broke when the parent exited. A
+  PATH shim and the bootstrap now restore the session-start environment for
+  nested plain runs.
+- **Bind the Mod control plane to the Mod.** The gateway mints a per-session key
+  on the Mod's first request and, once the Mod echoes it, refuses requests that
+  carry only the environment token, so a shell command cannot loosen a session's
+  permissions.
+- **Launch more robustly.** A failing `claude plugin list` no longer aborts
+  launch, provider discovery runs in parallel, and a Claude that exits early ends
+  the launch with its own exit code instead of a 30-second wait and a misleading
+  version error. Agent view is disabled through one setting instead of a setting
+  and an environment variable.
+- **Scope compaction to the main loop.** Arming a main-session compaction turned
+  every worker resolved meanwhile into a toolless compaction turn, and a failed
+  compaction stayed armed. Workers are now unaffected and failure or cancel
+  clears it. Mod session and permission tables evict idle entries instead of
+  asking for a gateway restart, and unused policy jobs expire.
+- **Enforce Antigravity tool grants in every mode.** Outside plan mode only
+  mapped tools were denied, so a Read-only worker could still drive the browser,
+  schedule tasks, or send messages. agy now runs an allowlist built from the
+  Claude grant; scheduling, messaging, inbox, task, resource, image, and
+  knowledge-deletion tools are always denied; write tools cannot touch agy's own
+  hook or config files; and `multi uninstall` removes the global agy hook.
+- **Fail closed on Grok tools and stops.** Grok's toolset check now refuses any
+  announced tool that is neither granted nor MCP-namespaced, and a cancelled,
+  refused, or truncated turn is an error instead of a cached success. Grok and
+  Antigravity keep their interruption notice after a failed run so a retry does
+  not silently repeat side effects, and a missing CLI is a 400 on both.
+- **Recover provider state across restarts and long sessions.** Cursor follow-up
+  rows survive a gateway restart, idle Antigravity and Grok session records are
+  evicted, reply archives are pruned, unsupported-version session records are
+  kept aside instead of overwritten, and native action summaries report actions
+  past the 512-row cap. Long Grok and Antigravity runs are no longer killed at
+  8 MiB of total output.
+- **Keep provider bookkeeping out of the model's context.** Grok and Antigravity
+  no longer append timing and billing lines to model-visible text; receipts and
+  the status line already show them. Zen Chat emits its content blocks in order
+  and joins text blocks with newlines, and OpenAI replies that end on a stop
+  sequence record their billed usage.
+- **Harden Windows process handling and state files.** Arguments containing
+  cmd.exe metacharacters are refused for non-shim `.cmd`/`.bat` launchers,
+  cancellation asks the process tree to close before forcing it and never kills
+  a reused PID, policy probes run `reg`, `powershell`, and `defaults` from system
+  paths with a timeout, state locks survive hostname changes and recheck racing
+  takeovers, and atomic writes are fsynced.
 - **Windows `.cmd` launchers no longer receive unsafe prompts.** Grok and
   Antigravity deliver prompts containing `"`, `%`, `&` and similar through a
   file or stdin when the CLI is a non-shim `.cmd`/`.bat`, and both use the

@@ -303,6 +303,18 @@ permission snapshots, model and worker selection, progress/lifecycle,
 compaction, session cleanup, and quota advice through the same authenticated
 Mods control plane.
 
+The gateway token is in the environment of every Bash command, so a token alone does
+not admit a session's `/multi/mod/*` POSTs. The gateway mints a per-session key on the
+first POST it sees for a `sessionId` and returns it in an `x-multi-mod-key` response
+header. `gateway.ts` captures it from any reply, keeps it by session id in the host-held
+`$.state` value `multi-core.modKeys` (so a hot reload keeps it; a key held only in module
+memory would lock the Mod out, since the gateway never re-issues one after the first echo),
+and sends it as `x-multi-mod-key` on every later request that names that session. After the
+first echo the gateway refuses token-only POSTs for that session with 403. The key is
+never put in the environment, a log, or a Client surface payload; other plugins could read
+the state value, but they already run in the engine with the same environment. `session.end`
+sends `/multi/mod/detach` with the key, then forgets it.
+
 The gateway bounds what the Mod can make it hold: a session's snapshot and policy
 tables evict the least recently used idle session instead of refusing a new one, an
 unconsumed policy job is reused for a minute at most, and a policy request may carry

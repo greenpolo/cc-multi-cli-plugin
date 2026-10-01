@@ -9,8 +9,8 @@ import type {
 } from '../../multi-core/src/gateway/approval.ts';
 import { NativeApprovalBridge } from '../../multi-core/src/gateway/approval.ts';
 import type { GatewayFetch } from '../../multi-core/src/gateway/fetch.ts';
+import { readSse } from '../../multi-core/src/gateway/responses.ts';
 import { codexRequest } from './auth.ts';
-import { readSse } from './responses.ts';
 
 const REVIEW_FAILURE_EVENTS: readonly unknown[] = [
   'response.failed',

@@ -21,11 +21,17 @@ const usagePanes = atom(
 const usageTimeoutMs = 8500;
 const maximumPanes = 16;
 
+const modKeys = atom(
+  { plugin: 'multi-core', key: 'modKeys' } as const,
+  {} as Record<string, string>,
+);
+
 const wire = ($: EngineInterface): Wire => ({
   url: () => $.env.get('MULTI_MOD_GATEWAY_URL'),
   token: () => $.env.get('MULTI_GATEWAY_TOKEN'),
   fetch: (url, init) => $.http.fetch(url, init),
   sleep: (ms, signal) => $.clock.sleep(ms, { signal }),
+  keys: { read: () => read($, modKeys), save: (change) => update($, modKeys, change) },
 });
 
 export const register = (on: Parameters<Register>[0], _options?: Parameters<Register>[1]) => {

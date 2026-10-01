@@ -21,6 +21,7 @@ import {
 import { antigravityPermissionPolicy } from '../../multi-antigravity/src/permissions.ts';
 import { ANTIGRAVITY_TOOLS } from '../../multi-antigravity/src/progress.ts';
 import { antigravityUsageReader } from '../../multi-antigravity/src/usage-adapter.ts';
+import type { Effort } from '../../multi-core/src/gateway/responses.ts';
 import { CursorHarness } from '../../multi-cursor/src/harness.ts';
 import type { CursorModelOption } from '../../multi-cursor/src/models.ts';
 import {
@@ -48,7 +49,6 @@ import {
   OPENAI_DEFAULT_WORKER_MODEL,
   OPENAI_WORKER_EFFORT,
 } from '../../multi-openai/src/models.ts';
-import type { Effort } from '../../multi-openai/src/responses.ts';
 import { openAIUsageReader } from '../../multi-openai/src/usage-adapter.ts';
 import { readZenKey } from '../../multi-zen/src/auth.ts';
 import {

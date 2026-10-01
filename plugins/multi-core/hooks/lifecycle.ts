@@ -5,7 +5,7 @@ import type {
   MultiCorePolicy,
   MultiCoreUsagePane,
 } from '../types/multi-core.d.ts';
-import { getJson, isActive, postJson, type Wire } from './gateway.ts';
+import { forgetKey, getJson, isActive, postJson, type Wire } from './gateway.ts';
 import { isHarnessModel, isMultiModel } from './provider.ts';
 import { type RowsClient, syncDisplayTools } from './rows.ts';
 import { withBounded } from './state.ts';
@@ -47,11 +47,17 @@ const rowsClient = ($: EngineInterface): RowsClient => ({
   register: (tool) => $.tool.register(tool),
 });
 
+const modKeys = atom(
+  { plugin: 'multi-core', key: 'modKeys' } as const,
+  {} as Record<string, string>,
+);
+
 const wire = ($: EngineInterface): Wire => ({
   url: () => $.env.get('MULTI_MOD_GATEWAY_URL'),
   token: () => $.env.get('MULTI_GATEWAY_TOKEN'),
   fetch: (url, init) => $.http.fetch(url, init),
   sleep: (ms, signal) => $.clock.sleep(ms, { signal }),
+  keys: { read: () => read($, modKeys), save: (change) => update($, modKeys, change) },
 });
 
 type Status = {
@@ -208,6 +214,8 @@ async function forgetSession($: EngineInterface, sessionId: string, signal: Abor
   if (await isActive(wire($))) {
     await postJson(wire($), '/multi/mod/detach', { sessionId }, { timeoutMs: 1000, signal });
   }
+  // After the detach, which the gateway admits only with the key.
+  await forgetKey(wire($), sessionId);
 }
 
 function statusText(status: Status, agentId: string | undefined) {

@@ -1,4 +1,5 @@
 import type { EngineInterface, Register, ToolSpec } from 'claude-code';
+import { atom, read, update } from 'claude-code';
 import type { MultiCoreDisplayTools } from '../types/multi-core.d.ts';
 import { accepted, getJson, postJson, type Wire } from './gateway.ts';
 import {
@@ -45,12 +46,19 @@ const refusal =
 type On = Parameters<Register>[0];
 type Row = { output: string; isError: boolean };
 
+// Named where it is read: the engine's scan reads an atom's plugin and key from this file.
+const modKeys = atom(
+  { plugin: 'multi-core', key: 'modKeys' } as const,
+  {} as Record<string, string>,
+);
+
 const rowGateway = ($: EngineInterface): RowGateway => ({
   wire: {
     url: () => $.env.get('MULTI_MOD_GATEWAY_URL'),
     token: () => $.env.get('MULTI_GATEWAY_TOKEN'),
     fetch: (url, init) => $.http.fetch(url, init),
     sleep: (ms, signal) => $.clock.sleep(ms, { signal }),
+    keys: { read: () => read($, modKeys), save: (change) => update($, modKeys, change) },
   },
   sessionId: () => $.session.id(),
 });
