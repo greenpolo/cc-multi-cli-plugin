@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
@@ -11,6 +13,7 @@ import {
   NativeCliError,
   nativeEnvironment,
   promptArgumentLimitBytes,
+  promptArgvSafe,
   redactStderr,
   runNativeCli,
   terminateGraceMs,
@@ -322,4 +325,24 @@ test('after the child closes only the process group is signaled, never the bare 
   child.emit('close', 0, null);
   await run.catch(() => undefined);
   assert.deepEqual(targets, [-4242]);
+});
+
+test('promptArgvSafe routes unsafe prompts away from cmd launchers only', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'argv-safe-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const launcher = path.join(directory, 'agy.cmd');
+  await writeFile(launcher, '@echo off\r\nrem not an npm shim\r\n');
+  const shim = path.join(directory, 'shim.cmd');
+  await writeFile(shim, '"%dp0%\\cli.js" %*\r\n');
+  await writeFile(path.join(directory, 'cli.js'), '');
+  const unsafe = '100% "quoted" & more';
+  const win = { executable: 'agy', platform: 'win32' as const, env: {} };
+  assert.equal(promptArgvSafe(unsafe, { ...win, configuredPath: launcher }), false);
+  assert.equal(promptArgvSafe('plain words', { ...win, configuredPath: launcher }), true);
+  assert.equal(promptArgvSafe(unsafe, { ...win, configuredPath: process.execPath }), true);
+  assert.equal(promptArgvSafe(unsafe, { ...win, env: { PATH: '' } }), true);
+  assert.equal(
+    promptArgvSafe(unsafe, { ...win, platform: 'linux', configuredPath: launcher }),
+    true,
+  );
 });

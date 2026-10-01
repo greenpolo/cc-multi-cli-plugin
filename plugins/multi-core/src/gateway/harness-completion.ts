@@ -88,12 +88,12 @@ export async function archiveHarnessReply<S extends HarnessSessionBase, R extend
 }
 
 /**
- * Only a client retry of a just-superseded turn can ask for an archive, so a
- * short window is enough; the files hold native tool output and must not
+ * An archive answers a retry of a turn whose exchange left memory (the registries hold 256), so keep more than that; a
+ * bounded window is enough; the files hold native tool output and must not
  * accumulate without bound.
  */
-export const archiveKeepCount = 32;
-export const archiveMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
+const archiveKeepCount = 512;
+const archiveMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
 
 /** Best effort: a failure to prune never fails the turn that triggered it. */
 export async function pruneArchives(
