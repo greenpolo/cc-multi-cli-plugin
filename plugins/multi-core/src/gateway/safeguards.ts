@@ -1,4 +1,5 @@
 import type { ResponseContentBlock } from './messages.ts';
+import { isRecord } from './record.ts';
 
 type ToolVerdict =
   | { type: 'unavailable'; reason: 'error' }
@@ -22,13 +23,9 @@ const zenUnreviewedModes = new Set([
   'bypassPermissions',
 ]);
 
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** A malformed request cannot authorize a synthetic verdict. */
 export function dangerousToolMode(safeguards: unknown): string | undefined {
-  if (!Array.isArray(safeguards) || !safeguards.every(record)) {
+  if (!Array.isArray(safeguards) || !safeguards.every(isRecord)) {
     return undefined;
   }
   const entry = safeguards.find((item) => item.type === 'dangerous_tool_use');
@@ -36,7 +33,7 @@ export function dangerousToolMode(safeguards: unknown): string | undefined {
     return undefined;
   }
   const context = entry.classifier_context;
-  return record(context) && typeof context.permission_mode === 'string'
+  return isRecord(context) && typeof context.permission_mode === 'string'
     ? context.permission_mode
     : '';
 }

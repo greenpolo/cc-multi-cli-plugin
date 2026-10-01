@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import type { ServerResponse } from 'node:http';
+import { isRecord } from './record.ts';
 
 interface Tool {
   id: string;
@@ -8,8 +9,6 @@ interface Tool {
 }
 
 const MAX_BYTES = 8 * 1024 * 1024;
-const record = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** Observe provider output for attribution, never for permission grants. */
 export class ToolObserver {
@@ -21,7 +20,7 @@ export class ToolObserver {
   }
 
   response(value: unknown) {
-    if (record(value) && Array.isArray(value.content)) {
+    if (isRecord(value) && Array.isArray(value.content)) {
       for (const block of value.content) {
         const tool = this.tool(block);
         if (tool) {
@@ -32,7 +31,7 @@ export class ToolObserver {
   }
 
   event(value: unknown) {
-    if (!record(value) || typeof value.index !== 'number') {
+    if (!isRecord(value) || typeof value.index !== 'number') {
       return;
     }
     if (value.type === 'content_block_start') {
@@ -46,7 +45,7 @@ export class ToolObserver {
     if (!tool) {
       return;
     }
-    if (value.type === 'content_block_delta' && record(value.delta)) {
+    if (value.type === 'content_block_delta' && isRecord(value.delta)) {
       this.append(tool, value.delta.partial_json);
     }
     if (value.type === 'content_block_stop') {
@@ -66,7 +65,7 @@ export class ToolObserver {
 
   private tool(value: unknown): Tool | undefined {
     if (
-      record(value) &&
+      isRecord(value) &&
       value.type === 'tool_use' &&
       typeof value.id === 'string' &&
       typeof value.name === 'string'

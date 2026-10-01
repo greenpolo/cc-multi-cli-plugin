@@ -6,10 +6,8 @@ import { usageRoute } from './mod-usage.ts';
 import type { PermissionContext, PermissionModes } from './mode-hook.ts';
 import type { ProviderUsageDashboard } from './provider-usage.ts';
 import type { ReceiptLedger } from './receipts.ts';
+import { isRecord } from './record.ts';
 
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 function text(value: unknown, name: string) {
   if (typeof value !== 'string' || value.length === 0 || value.length > 512) {
     throw new Error(`Invalid ${name}`);
@@ -32,19 +30,25 @@ function method(req: IncomingMessage, expected: string) {
   }
 }
 
+/** The gateway state the mod control plane reads and acts on. */
+export interface ModRouteContext {
+  bridge: ModBridge;
+  permissionModes?: PermissionModes;
+  compactions?: ModCompactions;
+  receipts?: ReceiptLedger;
+  billedUsage?: (session: string) => Promise<unknown>;
+  dashboard?: ProviderUsageDashboard;
+  rows?: DisplayRows;
+}
+
 export async function handleModRoute(
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
   parsed: unknown,
-  bridge: ModBridge,
-  permissionModes?: PermissionModes,
-  compactions?: ModCompactions,
-  receipts?: ReceiptLedger,
-  billedUsage?: (session: string) => Promise<unknown>,
-  dashboard?: ProviderUsageDashboard,
-  rows?: DisplayRows,
+  context: ModRouteContext,
 ) {
+  const { bridge, receipts, billedUsage, dashboard, rows } = context;
   try {
     if (
       ['/multi/mod/usage', '/multi/mod/receipts', '/multi/mod/usage/complete'].includes(
@@ -59,16 +63,7 @@ export async function handleModRoute(
     switch (url.pathname) {
       case '/multi/mod/telemetry':
         if (req.method === 'POST') {
-          return handlePostRoute(
-            req,
-            res,
-            url.pathname,
-            parsed,
-            bridge,
-            permissionModes,
-            compactions,
-            rows,
-          );
+          return handlePostRoute(req, res, url.pathname, parsed, context);
         }
         method(req, 'GET');
         return reply(
@@ -107,16 +102,7 @@ export async function handleModRoute(
           bridge,
         );
       default:
-        return await handlePostRoute(
-          req,
-          res,
-          url.pathname,
-          parsed,
-          bridge,
-          permissionModes,
-          compactions,
-          rows,
-        );
+        return await handlePostRoute(req, res, url.pathname, parsed, context);
     }
   } catch (error) {
     return reply(
@@ -132,19 +118,17 @@ async function handlePostRoute(
   res: ServerResponse,
   route: string,
   parsed: unknown,
-  bridge: ModBridge,
-  permissionModes?: PermissionModes,
-  compactions?: ModCompactions,
-  rows?: DisplayRows,
+  context: ModRouteContext,
 ) {
+  const { bridge, permissionModes, compactions, rows } = context;
   method(req, 'POST');
-  if (!record(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error('Expected an object');
   }
   const sessionId = text(parsed.sessionId, 'sessionId');
   const key = sessionKey(sessionId, parsed.agentId);
   if (route.startsWith('/multi/mod/compact/')) {
-    return compactRoute(res, route, parsed, bridge, permissionModes, compactions);
+    return compactRoute(res, route, parsed, context);
   }
   switch (route) {
     case '/multi/mod/policy':
@@ -228,7 +212,7 @@ function displayRoute(
   rows: DisplayRows | undefined,
 ) {
   method(req, 'POST');
-  if (!record(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error('Expected an object');
   }
   const sessionId = text(parsed.sessionId, 'sessionId');
@@ -387,16 +371,14 @@ function compactRoute(
   res: ServerResponse,
   route: string,
   value: Record<string, unknown>,
-  bridge: ModBridge,
-  modes?: PermissionModes,
-  compactions?: ModCompactions,
+  { bridge, permissionModes: modes, compactions }: ModRouteContext,
 ) {
   const session = text(value.sessionId, 'sessionId');
   if (route === '/multi/mod/compact/cancel') {
-    compactions?.cancelScope(
-      session,
-      value.agentId === undefined ? undefined : text(value.agentId, 'agentId'),
-    );
+    const agentId = value.agentId === undefined ? undefined : text(value.agentId, 'agentId');
+    compactions?.cancelScope(session, agentId);
+    // A cancelled compaction also disarms its permission boundary, the main loop's included.
+    modes?.cancelModCompaction(session, agentId);
     return reply(res, { accepted: true });
   }
   const generation = optionalGeneration(value);
@@ -445,7 +427,7 @@ function transcript(value: unknown): Record<string, unknown>[] {
     !Array.isArray(value) ||
     value.length === 0 ||
     value.length > 256 ||
-    value.some((item) => !record(item))
+    value.some((item) => !isRecord(item))
   ) {
     throw new Error('Invalid bounded compaction transcript');
   }

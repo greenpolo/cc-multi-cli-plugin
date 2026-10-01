@@ -6,11 +6,11 @@ import path from 'node:path';
 import test, { mock } from 'node:test';
 import { antigravityPermissionPolicy } from '../../plugins/multi-antigravity/src/permissions.ts';
 import {
-  type CursorSettingsOptions,
-  checkCursorSettings,
+  checkHarnessSettings,
+  type HarnessSettingsOptions,
   policyCommandTimeoutMs,
   systemCommandPath,
-} from '../../plugins/multi-core/src/gateway/cursor-settings.ts';
+} from '../../plugins/multi-core/src/gateway/harness-settings.ts';
 import type { PermissionContext } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { sharedAdmission } from '../../plugins/multi-core/src/launcher.ts';
 import {
@@ -26,9 +26,9 @@ async function checkSettings(
   cwd: string,
   args: readonly string[],
   inlineSettings: Record<string, unknown>,
-  options: CursorSettingsOptions = {},
+  options: HarnessSettingsOptions = {},
 ) {
-  return checkCursorSettings(cwd, args, inlineSettings, {
+  return checkHarnessSettings(cwd, args, inlineSettings, {
     platform: 'linux',
     osRelease: 'test-linux',
     runCommand: absentManagedPolicy,
@@ -296,7 +296,7 @@ function commandError(
   return error;
 }
 
-function absentManagedFiles(): Pick<CursorSettingsOptions, 'readDir' | 'readFile'> {
+function absentManagedFiles(): Pick<HarnessSettingsOptions, 'readDir' | 'readFile'> {
   return {
     readDir: async () => {
       throw commandError('ENOENT', 'missing');

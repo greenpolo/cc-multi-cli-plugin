@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { setBounded } from './bounded.ts';
 import type { MessagesRequest } from './messages.ts';
+import { isRecord } from './record.ts';
 
 /** Normalize a workspace path for the classifier's omitted-cd comparison. */
 export function approvalCwdForComparison(
@@ -42,20 +44,17 @@ export interface ApprovalVerdict {
   outcome: 'allow' | 'deny';
 }
 
-const record = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
 /** Claude can retry classification using the working model's ID. */
 export function isApprovalRequest(body: unknown): boolean {
-  if (!record(body) || !Array.isArray(body.messages)) {
+  if (!isRecord(body) || !Array.isArray(body.messages)) {
     return false;
   }
   return body.messages.some(
     (message) =>
-      record(message) &&
+      isRecord(message) &&
       Array.isArray(message.content) &&
       message.content.some(
-        (block) => record(block) && block.type === 'text' && block.text === '<transcript>\n',
+        (block) => isRecord(block) && block.type === 'text' && block.text === '<transcript>\n',
       ),
   );
 }
@@ -63,7 +62,7 @@ export function isApprovalRequest(body: unknown): boolean {
 /** Strict, version-sensitive Claude 2.1.263 classifier envelope. Unknown formats fail closed. */
 function approvalEnvelope(body: unknown) {
   if (
-    !record(body) ||
+    !isRecord(body) ||
     body.stream ||
     (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.length)) ||
     !Array.isArray(body.messages) ||
@@ -72,17 +71,17 @@ function approvalEnvelope(body: unknown) {
     throw new Error('Unsupported approval request');
   }
   const message = body.messages[0];
-  if (!record(message) || message.role !== 'user' || !Array.isArray(message.content)) {
+  if (!isRecord(message) || message.role !== 'user' || !Array.isArray(message.content)) {
     throw new Error('Unsupported approval message');
   }
   const text = message.content.map((block) => {
-    if (!record(block) || block.type !== 'text' || typeof block.text !== 'string') {
+    if (!isRecord(block) || block.type !== 'text' || typeof block.text !== 'string') {
       throw new Error('Unsupported approval content');
     }
     return block.text;
   });
   if (
-    !record(body.metadata) ||
+    !isRecord(body.metadata) ||
     typeof body.metadata.user_id !== 'string' ||
     !body.metadata.user_id
   ) {
@@ -109,7 +108,7 @@ function approvalPolicy(value: unknown): string | undefined {
     !Array.isArray(value) ||
     value.some(
       (block) =>
-        !record(block) ||
+        !isRecord(block) ||
         block.type !== 'text' ||
         typeof block.text !== 'string' ||
         block.text.length > 131072,
@@ -151,7 +150,7 @@ export function parseApprovalRequest(body: unknown): ApprovalAction & { key: str
       .filter(Boolean)
       .map((line) => {
         const entry: unknown = JSON.parse(line);
-        if (!record(entry)) {
+        if (!isRecord(entry)) {
           throw new Error('Unsupported approval transcript entry');
         }
         return entry;
@@ -263,10 +262,12 @@ export class NativeApprovalBridge {
       return;
     }
     // Only denials cross stages; the oldest one is evicted at the fixed cache limit.
-    const oldest = this.denied.keys().next();
-    if (this.denied.size >= 64 && !oldest.done) {
-      this.denied.delete(oldest.value);
-    }
-    this.denied.set(key, { verdict: { ...verdict }, expires: Date.now() + 60000 });
+    setBounded(
+      this.denied,
+      key,
+      { verdict: { ...verdict }, expires: Date.now() + 60000 },
+      64,
+      'insertion',
+    );
   }
 }

@@ -265,6 +265,22 @@ test('compaction core fallback authenticates generation and removes all native c
   assert.equal(typeof modes.resolve('s').compaction, 'string');
 });
 
+test('cancelling a main compaction clears its permission boundary', async (t) => {
+  const modes = new PermissionModes(async () => ({}));
+  const base = await start(t, modes);
+  const generation = await admit(base);
+  const accepted = await request(base, '/multi/mod/compact/authorize', {
+    sessionId: 's',
+    generation,
+  });
+  assert.equal(accepted.body.allow, true);
+  assert.equal(typeof modes.resolve('s').compaction, 'string');
+  const cancelled = await request(base, '/multi/mod/compact/cancel', { sessionId: 's' });
+  assert.equal(cancelled.body.accepted, true);
+  assert.equal(modes.resolve('s').compaction, undefined);
+  assert.notDeepEqual(modes.resolve('s').tools, []);
+});
+
 test('worker route authenticates catalog and generation before child-start acknowledgement', async (t) => {
   const modes = new PermissionModes(async () => ({
     worker: { model: 'multi/cursor/auto', tools: ['Read'] },

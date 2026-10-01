@@ -1,4 +1,5 @@
 import type { ContentBlock, RequestMessage } from './messages.ts';
+import { isRecord } from './record.ts';
 import { callId, toolName } from './tools.ts';
 
 const IMAGE_MEDIA_TYPES: readonly unknown[] = [
@@ -20,10 +21,6 @@ export type NormalizedConversationItem<R = never> =
   | R;
 
 export type AssistantReasoningDecoder<R> = (block: ContentBlock) => R | undefined;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function contentBlocks(value: unknown): ContentBlock[] {
   if (typeof value === 'string') {

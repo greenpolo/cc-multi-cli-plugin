@@ -1,10 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { setBounded } from './bounded.ts';
 import type {
   ContentBlock,
   MessagesRequest,
   MessagesResponse,
   RequestMessage,
 } from './messages.ts';
+import { isRecord } from './record.ts';
 
 /**
  * Native harness actions drawn as Claude Code tool rows.
@@ -341,14 +343,6 @@ function boundedInput(input: unknown): Record<string, unknown> {
   return output;
 }
 
-function remember<T>(map: Map<string, T>, key: string, value: T, capacity: number) {
-  map.delete(key);
-  map.set(key, value);
-  while (map.size > capacity) {
-    map.delete(map.keys().next().value as string);
-  }
-}
-
 /**
  * The gateway's side of display rows: the native tool names offered to the mod,
  * the names it acknowledged registering, the tokens it issued, and the text each
@@ -390,7 +384,7 @@ export class DisplayRows {
         own.add(name);
       }
     }
-    remember(this.registered, session, own, maximumSessions);
+    setBounded(this.registered, session, own, maximumSessions, 'lru');
     return { registered: own.size };
   }
 
@@ -407,11 +401,12 @@ export class DisplayRows {
     }
     const id = `toolu_multi_${randomUUID().replaceAll('-', '')}`;
     const token = randomBytes(16).toString('hex');
-    remember(
+    setBounded(
       this.rows,
       token,
       { session, id, output: bounded(row.output, maximumOutput), isError: row.error },
       maximumRows,
+      'lru',
     );
     return {
       type: 'tool_use',
@@ -545,10 +540,6 @@ export function recordedFollowUp(
   return { text: response.multi_followup, usage: response.usage };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /**
  * Only a well-formed request is rewritten or answered here; anything else passes
  * unchanged to the validation that refuses it with the provider's own error.
@@ -557,15 +548,15 @@ function wellFormed(body: MessagesRequest): boolean {
   const tools: unknown = body.tools;
   const messages: unknown = body.messages;
   return (
-    (tools === undefined || (Array.isArray(tools) && tools.every(isObject))) &&
+    (tools === undefined || (Array.isArray(tools) && tools.every(isRecord))) &&
     (messages === undefined ||
       (Array.isArray(messages) &&
         messages.every(
           (message) =>
-            isObject(message) &&
+            isRecord(message) &&
             typeof message.role === 'string' &&
             (typeof message.content === 'string' ||
-              (Array.isArray(message.content) && message.content.every(isObject))),
+              (Array.isArray(message.content) && message.content.every(isRecord))),
         )))
   );
 }
@@ -668,7 +659,7 @@ function withoutReferences(block: ContentBlock): ContentBlock {
 }
 
 function isReferenceToDisplay(item: unknown): boolean {
-  return isObject(item) && item.type === 'tool_reference' && isDisplayTool(item.tool_name);
+  return isRecord(item) && item.type === 'tool_reference' && isDisplayTool(item.tool_name);
 }
 
 function withoutRows(message: RequestMessage, rows: ReadonlySet<string>): RequestMessage {
