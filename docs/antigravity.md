@@ -68,8 +68,12 @@ Claude's window governs when the session compacts. It is separate from the nativ
 
 Claude's permission mode and tool rules take precedence. `agy` runs with native
 permissions skipped. The namespaced global hook reads `MULTI_ANTIGRAVITY_DENY`
-and denies Claude-excluded native tools. Native children and MCP tools are always
-denied. Each finished tool step is a row under agy's own tool name (`view_file`,
+and `MULTI_ANTIGRAVITY_ALLOW`. Every mode is an allowlist: only the native tools Claude's
+rules grant, plus the `finish` and `wait` control tools, run, so a tool `agy` announces
+that no Claude tool maps to (for example `schedule`, `send_message`, `generate_image`)
+stays denied. Browser tools follow the `WebFetch` grant. Native children, MCP-like
+resource tools, scheduling and messaging are always denied, and write tools can never
+target `agy`'s own config tree (`~/.gemini`), where the hook lives. Each finished tool step is a row under agy's own tool name (`view_file`,
 `run_command`, ...) with its native parameters and `tool_info.output`, in the
 `/model` Antigravity session or inside the Antigravity worker's transcript; the
 names come from agy's `init` toolset. Rows are never replayed as executable Claude
@@ -77,7 +81,8 @@ tools. `agy` does not distinguish a failed tool step: a failing command such as
 `cat /nonexistent/file` ends `DONE` with the error only in its output and no exit
 code, so the row shows as done and its output carries the error; Multi does not
 guess failure from the text. The transcript keeps streamed text, run diagnostics,
-and one closing summary of action counts, changed files, and failed steps. Claude and OpenAI parents can spawn Antigravity
+and one closing summary of action counts, changed files, and failed steps; timing and
+billing are shown by receipts, not written into the text. Claude and OpenAI parents can spawn Antigravity
 workers.
 
 Every run selects its native workspace explicitly with `--add-dir`; subprocess
@@ -137,7 +142,9 @@ refuse the same way.
 | Windows | `%LOCALAPPDATA%\gemini\config\hooks.json` (or `%APPDATA%`) | `%LOCALAPPDATA%\gemini\antigravity-cli\settings.json` (or `%APPDATA%`) |
 
 The installed hook is named `multi-cli-antigravity`. Setup preserves other hook
-entries. Run setup again after moving the checkout or changing the Node install.
+entries. Every launch with Antigravity enabled rewrites the entry, so it follows a plugin
+update; run setup again after moving the checkout or changing the Node install.
+`multi uninstall` removes the entry.
 
 ## Limits
 

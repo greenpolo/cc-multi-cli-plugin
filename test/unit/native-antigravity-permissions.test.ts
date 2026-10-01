@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   antigravityPermissionPolicy,
+  antigravityProtectedRoots,
   antigravityToolDecision,
 } from '../../plugins/multi-antigravity/src/permissions.ts';
 
@@ -12,6 +13,14 @@ const ALWAYS_DENIED = [
   'browser_subagent',
   'call_mcp_tool',
   'notebook_execution',
+  'schedule',
+  'manage_task',
+  'send_message',
+  'manage_inbox',
+  'list_resources',
+  'read_resource',
+  'generate_image',
+  'delete_knowledge',
 ];
 
 test('Antigravity Auto denies excluded Claude tools and always denies delegation/MCP', () => {
@@ -33,6 +42,7 @@ test('Bypass carries the same denylist shape as Auto', () => {
   assert.match(bypass.notice, /Claude Code rules take precedence/);
   assert.deepEqual(bypass.denied, ALWAYS_DENIED);
   assert.deepEqual(bypass.denied, auto.denied);
+  assert.deepEqual(bypass.allowed, auto.allowed);
   assert.equal(bypass.notice, auto.notice);
 });
 
@@ -68,6 +78,79 @@ test('an explicit tools allowlist denies natives for mapped tools left out of it
   assert(policy.denied.includes('read_url_content'));
   assert(policy.denied.includes('search_web'));
   assert(policy.denied.includes('notebook_edit'));
+});
+
+test('outside Plan the policy is an allowlist, so unmapped announced tools stay denied', () => {
+  const policy = antigravityPermissionPolicy({
+    permissionMode: 'auto',
+    tools: ['Read', 'Grep', 'Glob'],
+  });
+  const allowed = new Set(policy.allowed);
+  for (const name of ['view_file', 'list_dir', 'grep_search', 'find_by_name', 'finish', 'wait']) {
+    assert(allowed.has(name), `expected ${name} to be allowed`);
+  }
+  for (const name of [
+    'execute_browser_javascript',
+    'open_browser_url',
+    'read_browser_page',
+    'schedule',
+    'send_message',
+    'manage_inbox',
+    'manage_task',
+    'delete_knowledge',
+    'generate_image',
+    'list_resources',
+    'read_resource',
+    'run_command',
+    'write_to_file',
+    'a_tool_agy_adds_later',
+  ]) {
+    assert(!allowed.has(name), `expected ${name} outside the allowlist`);
+  }
+  const decision = antigravityToolDecision(
+    { toolCall: { name: 'a_tool_agy_adds_later' } },
+    JSON.stringify(policy.denied),
+    JSON.stringify(policy.allowed),
+  );
+  assert.equal(decision?.decision, 'deny');
+});
+
+test('browser tools follow the WebFetch grant', () => {
+  const withWeb = antigravityPermissionPolicy({
+    permissionMode: 'auto',
+    tools: ['Read', 'WebFetch'],
+  });
+  assert(withWeb.allowed?.includes('open_browser_url'));
+  assert(withWeb.allowed?.includes('execute_browser_javascript'));
+  const without = antigravityPermissionPolicy({
+    permissionMode: 'auto',
+    disallowedTools: ['WebFetch'],
+  });
+  assert(without.denied.includes('open_browser_url'));
+});
+
+test('write tools never target the agy hook and settings tree', () => {
+  const roots = antigravityProtectedRoots({ platform: 'linux', homedir: '/home/u' });
+  const policyJson = JSON.stringify([]);
+  const deny = (name: string, parameters: unknown) =>
+    antigravityToolDecision(
+      { toolCall: { name, parameters } },
+      policyJson,
+      JSON.stringify([name]),
+      { protectedRoots: roots },
+    );
+  for (const [name, parameters] of [
+    ['write_to_file', { TargetFile: '/home/u/.gemini/config/hooks.json' }],
+    [
+      'replace_file_content',
+      { TargetFile: '/home/u/.gemini/../.gemini/antigravity-cli/settings.json' },
+    ],
+    ['sed_file', { AbsolutePath: '/work/../home/u/.gemini/config/x' }],
+  ] as const) {
+    assert.equal(deny(name, parameters)?.decision, 'deny', name);
+  }
+  assert.equal(deny('write_to_file', { TargetFile: '/work/project/a.txt' }), undefined);
+  assert.equal(deny('view_file', { AbsolutePath: '/home/u/.gemini/config/hooks.json' }), undefined);
 });
 
 test('rejects unsupported permission modes and rule shapes', () => {
