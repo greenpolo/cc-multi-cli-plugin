@@ -1,7 +1,7 @@
 // Runs the real Claude Code without the enclosing Multi session's gateway
 // environment. The launcher puts a `claude` shim that calls this first on the
 // session's PATH, so a `claude` started by Claude's own tools is an ordinary run.
-import { run, withoutGateway } from './process.ts';
+import { describeRunError, run, withoutGateway } from './process.ts';
 
 const [claude, ...args] = process.argv.slice(2);
 if (!claude) {
@@ -13,7 +13,7 @@ if (!claude) {
       process.exitCode = code;
     },
     (error: unknown) => {
-      console.error(`Multi: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`Multi: ${describeRunError(error)}`);
       process.exitCode = 1;
     },
   );

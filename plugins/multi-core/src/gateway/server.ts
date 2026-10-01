@@ -152,6 +152,7 @@ export interface GatewayOptions {
 
 /** Rejected before any provider call; answered as HTTP 400 rather than 502. */
 class BadRequest extends Error {}
+class ForbiddenHost extends Error {}
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 function authenticated(actual: string | string[] | undefined, expected: string): boolean {
@@ -991,6 +992,7 @@ export function createNativeGateway({
       return res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...value })}\n\n`);
     };
     try {
+      assertLoopbackHost(req);
       const url = new URL(req.url ?? '', 'http://localhost');
       if (isRawAnthropicPath(url.pathname)) {
         return await handleRawAnthropic(req, res, url, abort);
@@ -1042,7 +1044,7 @@ export function createNativeGateway({
       await dispatch(exchange, metadata, external);
     } catch (error) {
       abort.abort();
-      failResponse(res, emit, error, replies.jsonStarted);
+      failResponse(res, emit, error, replies.jsonStarted, sourceModel);
     } finally {
       replies.stop();
     }
@@ -1140,6 +1142,20 @@ function isRawAnthropicPath(pathName: string) {
   );
 }
 
+/**
+ * Only the gateway's own loopback name and port are accepted as the `Host`. A web page
+ * that rebinds its DNS name to 127.0.0.1 reaches the port with its own name in `Host`,
+ * which is what keeps it from using the unauthenticated raw passthrough as a relay.
+ */
+function assertLoopbackHost(req: http.IncomingMessage) {
+  const host = req.headers.host?.toLowerCase();
+  const port = req.socket.localPort;
+  const allowed = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+  if (!host || !allowed.includes(host)) {
+    throw new ForbiddenHost('Forbidden host');
+  }
+}
+
 /** A request body is present when the client declared one, whatever the method. */
 function requestHasBody(req: http.IncomingMessage) {
   if (req.method === 'GET' || req.method === 'HEAD') {
@@ -1219,7 +1235,7 @@ function errorStatus(error: unknown): number {
   if (error instanceof BadRequest) {
     return 400;
   }
-  if (error instanceof FollowUpRefused) {
+  if (error instanceof FollowUpRefused || error instanceof ForbiddenHost) {
     return 403;
   }
   if (error instanceof FollowUpUnavailable) {
@@ -1374,6 +1390,7 @@ function failResponse(
   emit: Emit,
   error: unknown,
   jsonKeepAlive: boolean,
+  model = '',
 ) {
   if (res.destroyed) {
     return;
@@ -1412,8 +1429,9 @@ function failResponse(
     res.setHeader('retry-after', error.retryAfter);
   }
   if (res.headersSent && jsonKeepAlive) {
-    // The 200 and its headers are already out; a status can no longer carry the failure.
-    res.end(JSON.stringify(failure));
+    // The 200 and its headers are already out, so the failure has to be a valid message
+    // for Claude Code to show; an error body under a 200 is read as a malformed reply.
+    res.end(JSON.stringify(failureMessage(error, model)));
   } else if (res.headersSent) {
     emit('error', { error: failure.error });
     res.end();
@@ -1421,6 +1439,22 @@ function failResponse(
     res.writeHead(status, { 'content-type': 'application/json' });
     res.end(JSON.stringify(failure));
   }
+}
+
+/** The failure as an ordinary assistant message: it states the failure and claims no work. */
+export function failureMessage(error: unknown, model: string): MessagesResponse {
+  const provider = providerRoute(model);
+  const detail = reason(error).replace(/\s+/g, ' ').trim().slice(0, 500);
+  return {
+    id: `msg_${randomUUID()}`,
+    type: 'message',
+    role: 'assistant',
+    model,
+    content: [{ type: 'text', text: `Multi: ${provider} failed: ${detail}` }],
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    usage: { input_tokens: 0, output_tokens: 0 },
+  };
 }
 
 function assertProviderEnabled(model: string | null, enabled: readonly string[] | undefined) {

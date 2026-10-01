@@ -9,25 +9,37 @@
 // has to carry it without the rest of the gateway).
 // ---------------------------------------------------------------------------
 
-/** The `claude` launcher a session puts first on PATH for the processes it starts. */
+export interface NestedShimFile {
+  file: string;
+  content: string;
+}
+
+/**
+ * The `claude` launchers a session puts first on PATH for the processes it starts. On
+ * Windows that is `claude.cmd` for cmd.exe and PowerShell, plus an extensionless sh
+ * script: Claude Code's Bash tool there is Git Bash, which does not apply PATHEXT and
+ * would otherwise find npm's own extensionless `claude`.
+ */
 export function nestedClaudeShim(options: {
   platform?: NodeJS.Platform;
   node: string;
   script: string;
   claude: string;
-}): { file: string; content: string } {
+}): NestedShimFile & { files: NestedShimFile[] } {
   const { node, script, claude } = options;
-  if ((options.platform ?? process.platform) === 'win32') {
-    return {
-      file: 'claude.cmd',
-      content: `@echo off\r\n"${node}" "${script}" "${claude}" %*\r\n`,
-    };
-  }
   const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-  return {
+  const sh: NestedShimFile = {
     file: 'claude',
     content: `#!/bin/sh\nexec ${quote(node)} ${quote(script)} ${quote(claude)} "$@"\n`,
   };
+  if ((options.platform ?? process.platform) === 'win32') {
+    const cmd: NestedShimFile = {
+      file: 'claude.cmd',
+      content: `@echo off\r\n"${node}" "${script}" "${claude}" %*\r\n`,
+    };
+    return { ...cmd, files: [cmd, sh] };
+  }
+  return { ...sh, files: [sh] };
 }
 
 /** `directory` first on PATH, whatever case the platform spells the variable in. */

@@ -209,3 +209,35 @@ test('a non-streamed provider reply that outlasts the delay sends headers and ke
   assert(timing.text.startsWith(' '), 'leading JSON whitespace');
   assert.equal(JSON.parse(timing.text).content[0].text, 'Done');
 });
+
+test('a provider failure after the keepalive started is a valid assistant message', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'keepalive-fail-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const authFile = path.join(dir, 'auth.json');
+  await writeFile(
+    authFile,
+    JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'fake', account_id: 'fake' } }),
+  );
+  const fetchImpl: GatewayFetch = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    throw new Error('provider exploded');
+  };
+  const port = await listen(t, { fetchImpl, authFile, jsonKeepAliveMs: 50 });
+  const response = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+    method: 'POST',
+    headers: { 'x-multi-gateway-token': TOKEN },
+    body: JSON.stringify({
+      model: 'multi/openai/gpt-6-luna',
+      max_tokens: 10,
+      messages: [{ role: 'user', content: 'hi' }],
+    }),
+  });
+  assert.equal(response.status, 200);
+  const message = JSON.parse(await response.text());
+  assert.equal(message.type, 'message');
+  assert.equal(message.role, 'assistant');
+  assert.equal(message.stop_reason, 'end_turn');
+  assert.deepEqual(message.usage, { input_tokens: 0, output_tokens: 0 });
+  assert.equal(message.content.length, 1);
+  assert.match(message.content[0].text, /^Multi: openai failed: .*provider exploded/);
+});

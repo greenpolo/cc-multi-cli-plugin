@@ -87,7 +87,7 @@ import {
 } from './gateway/worker-catalog.ts';
 
 import { providerSelection } from './install/plugins.ts';
-import { needsEnvProxy, rememberOriginalEnvironment } from './install/process.ts';
+import { needsEnvProxy, rememberOriginalEnvironment, withoutGateway } from './install/process.ts';
 
 const enabledProviders = providerSelection(process.env.MULTI_ENABLED_PROVIDERS);
 const providerEnabled = (provider: string) =>
@@ -254,7 +254,8 @@ async function main() {
     usageReaders,
     permissionModes,
     approvalBridge,
-    anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL || undefined,
+    // A launch inside another Multi session forwards to the user's own upstream, not the outer gateway.
+    anthropicBaseUrl: withoutGateway(process.env).ANTHROPIC_BASE_URL || undefined,
     blockAnthropic: !anthropic,
     guardAuto: true,
     onEvent: traceEvent,
@@ -1210,28 +1211,27 @@ function translateTrafficPolicy(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 function gatewayEnvironment(port: number, token: string, anthropic: boolean) {
-  const env = translateTrafficPolicy({ ...process.env });
+  // A launch inside another Multi session starts from the user's own environment.
+  const origin = withoutGateway(process.env);
+  const env = translateTrafficPolicy({ ...origin });
   delete env.OPENCODE_API_KEY;
   return {
     ...env,
     // What nested Claude runs get back in place of the gateway (see nested-env.ts).
-    ...rememberOriginalEnvironment(process.env),
+    ...rememberOriginalEnvironment(origin),
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
     // A custom base URL makes Claude Code skip on-demand tool loading unless it is told
     // otherwise, and a gateway base URL is always custom. Claude's own default against
     // Anthropic is to defer tools always, which is what 'true' says; the user's own
     // setting is kept. 'auto' would instead load every tool once a 1M window makes them
     // under 10%.
-    ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH ?? 'true',
+    ENABLE_TOOL_SEARCH: origin.ENABLE_TOOL_SEARCH ?? 'true',
     MULTI_GATEWAY_TOKEN: token,
     // Claude Code 2.1.287 and newer has Mods on by default; 2.1.272 to 2.1.286 need this.
     CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1',
     MULTI_MOD_GATEWAY_URL: `http://127.0.0.1:${port}`,
     ...(!anthropic ? { ANTHROPIC_AUTH_TOKEN: token } : {}),
-    ANTHROPIC_CUSTOM_HEADERS: [
-      process.env.ANTHROPIC_CUSTOM_HEADERS,
-      `x-multi-gateway-token: ${token}`,
-    ]
+    ANTHROPIC_CUSTOM_HEADERS: [origin.ANTHROPIC_CUSTOM_HEADERS, `x-multi-gateway-token: ${token}`]
       .filter(Boolean)
       .join('\n'),
   };
@@ -1254,7 +1254,9 @@ async function withNestedClaudeShim(
     claude,
   });
   await mkdir(directory, { recursive: true });
-  await writeFile(path.join(directory, shim.file), shim.content, { mode: 0o755 });
+  for (const file of shim.files) {
+    await writeFile(path.join(directory, file.file), file.content, { mode: 0o755 });
+  }
   return withPathPrefix(env, directory);
 }
 

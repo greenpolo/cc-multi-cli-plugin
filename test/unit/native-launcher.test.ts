@@ -667,3 +667,46 @@ test('the Zen model listing is available without authentication', async () => {
   const models = JSON.parse(stdout);
   assert(models.some((model: { id: string }) => model.id === 'minimax-m2.7'));
 });
+
+test('a launch inside another Multi session starts from the user original environment', {
+  skip: process.platform === 'win32',
+}, async (t) => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'launcher-nested-test-'));
+  t.after(() => removeTemporary(cwd));
+  await mkdir(path.join(cwd, 'bin'));
+  await writeClaudeFixture(
+    path.join(cwd, 'bin'),
+    `#!/usr/bin/env node
+const args=process.argv.slice(2);
+if(args.includes('plugin')&&args.includes('list')){console.log('[]');process.exit(0)}
+if(args[0]==='--version'){console.log('2.1.272');process.exit(0)}
+if(args[0]==='auth'){process.stdout.write(JSON.stringify({loggedIn:true}));process.exit(0)}
+console.log(JSON.stringify({headers:process.env.ANTHROPIC_CUSTOM_HEADERS,orig:process.env.MULTI_ORIG_ANTHROPIC_BASE_URL,origHeaders:process.env.MULTI_ORIG_ANTHROPIC_CUSTOM_HEADERS,base:process.env.ANTHROPIC_BASE_URL}));
+`,
+  );
+  const launcher = fileURLToPath(
+    new URL('../../plugins/multi-core/src/launcher.ts', import.meta.url),
+  );
+  const { stdout } = await promisify(execFile)(process.execPath, [launcher], {
+    cwd,
+    timeout: 20000,
+    env: {
+      PATH: path.join(cwd, 'bin') + path.delimiter + process.env.PATH,
+      HOME: cwd,
+      CLAUDE_CONFIG_DIR: path.join(cwd, 'claude'),
+      CODEX_HOME: cwd,
+      // What the outer Multi session left in this process.
+      MULTI_GATEWAY_TOKEN: 'outer-token',
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:1',
+      ANTHROPIC_CUSTOM_HEADERS: 'x-team: a\nx-multi-gateway-token: outer-token',
+      MULTI_ORIG_ANTHROPIC_BASE_URL: 'https://corp.example',
+      MULTI_ORIG_ANTHROPIC_CUSTOM_HEADERS: 'x-team: a',
+    },
+  });
+  const seen = JSON.parse(stdout);
+  assert.match(seen.base, /^http:\/\/127\.0\.0\.1:(?!1$)\d+$/);
+  assert.equal(seen.orig, 'https://corp.example');
+  assert.equal(seen.origHeaders, 'x-team: a');
+  assert(seen.headers.startsWith('x-team: a\nx-multi-gateway-token: '));
+  assert(!seen.headers.includes('outer-token'));
+});

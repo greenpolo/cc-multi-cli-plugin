@@ -140,3 +140,31 @@ test('/v1 routes the gateway does not own are forwarded as raw bytes without its
   const gated = await fetch(`http://127.0.0.1:${port}/multi/mod/session`, { method: 'POST' });
   assert.equal(gated.status, 401);
 });
+
+test('a request whose Host is not the gateway loopback name is refused before any relay', async (t) => {
+  let relayed = 0;
+  const port = await listen(t, async () => {
+    relayed += 1;
+    return new Response('ok');
+  });
+  const send = (host: string) =>
+    new Promise<number | undefined>((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port, path: '/v1/files', method: 'GET', headers: { host } },
+        (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  assert.equal(await send('evil.example'), 403);
+  assert.equal(await send(`evil.example:${port}`), 403);
+  assert.equal(await send('127.0.0.1'), 403);
+  assert.equal(relayed, 0);
+  assert.equal(await send(`localhost:${port}`), 200);
+  assert.equal(await send(`[::1]:${port}`), 200);
+  assert.equal(await send(`127.0.0.1:${port}`), 200);
+  assert.equal(relayed, 3);
+});

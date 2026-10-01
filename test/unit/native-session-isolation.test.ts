@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
+import { UnsafeCommandArgumentError } from '../../plugins/multi-core/src/gateway/executable.ts';
 import { ModSessionKeys } from '../../plugins/multi-core/src/gateway/mod-keys.ts';
 import {
   nestedClaudeShim,
@@ -8,8 +9,10 @@ import {
 } from '../../plugins/multi-core/src/gateway/nested-env.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import {
+  describeRunError,
   needsEnvProxy,
   rememberOriginalEnvironment,
+  withLoopbackNoProxy,
   withoutGateway,
 } from '../../plugins/multi-core/src/install/process.ts';
 
@@ -59,8 +62,34 @@ test('the nested claude shim quotes its paths and goes first on PATH', () => {
     nestedClaudeShim({ platform: 'win32', node: 'n', script: 's', claude: 'c' }).file,
     'claude.cmd',
   );
+  const windows = nestedClaudeShim({ platform: 'win32', node: 'n', script: 's', claude: 'c' });
+  assert.deepEqual(
+    windows.files.map((entry) => entry.file),
+    ['claude.cmd', 'claude'],
+  );
+  assert.equal(windows.files[1].content, `#!/bin/sh\nexec 'n' 's' 'c' "$@"\n`);
+  assert(!windows.files[1].content.includes('\r'));
+  assert.deepEqual(posix.files, [{ file: posix.file, content: posix.content }]);
   assert.equal(withPathPrefix({ PATH: '/a' }, '/s', 'linux').PATH, '/s:/a');
   assert.equal(withPathPrefix({ Path: 'C:\\a' }, 'C:\\s', 'win32').Path, 'C:\\s;C:\\a');
+});
+
+test('loopback joins NO_PROXY and no_proxy once when a proxy is configured', () => {
+  assert.deepEqual(withLoopbackNoProxy({ A: '1' }), { A: '1' });
+  const added = withLoopbackNoProxy({
+    HTTPS_PROXY: 'http://p',
+    NO_PROXY: 'corp.example, localhost',
+  });
+  assert.equal(added.NO_PROXY, 'corp.example,localhost,127.0.0.1,::1');
+  assert.equal(added.no_proxy, '127.0.0.1,localhost,::1');
+  assert.equal(withLoopbackNoProxy(added).NO_PROXY, added.NO_PROXY);
+});
+
+test('a refused cmd argument is named in an actionable message', () => {
+  const message = describeRunError(new UnsafeCommandArgumentError('fix a & b'));
+  assert(message.includes('"fix a & b"'));
+  assert(message.includes('native installer'));
+  assert.equal(describeRunError(new Error('plain')), 'plain');
 });
 
 test('a proxy in the environment needs Node started with NODE_USE_ENV_PROXY', () => {

@@ -18,6 +18,7 @@ test('provider prefixes decide routing, review ownership and harness execution i
   assert.equal(harnessProvider(undefined), undefined);
   assert.equal(providerOwnedReview('multi/antigravity/x'), true);
   assert.equal(providerOwnedReview('multi/openai/x'), true);
+  assert.equal(providerOwnedReview('multi/unknown/x'), true);
   assert.equal(providerOwnedReview('multi/zen/x'), false);
   assert.equal(providerOwnedReview('claude-sonnet'), false);
 });

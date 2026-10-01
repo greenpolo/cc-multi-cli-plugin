@@ -6,6 +6,16 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Close review-round gaps.** The gateway refuses any request whose `Host` is
+  not its own loopback name and port, so a DNS-rebinding page cannot use the
+  raw Anthropic passthrough as a relay. A `multi/` model with an unknown
+  provider prefix is reviewed like other external models, except Zen. A `multi`
+  launch inside a Multi session forwards to the user's own upstream and headers.
+  On Windows the nested `claude` shim also exists as an extensionless sh script
+  for Git Bash. A `claude "a & b"` through a non-npm `.cmd` launcher names the
+  refused argument. With a proxy set, `NO_PROXY` gains the loopback names. A
+  provider failure after the 30 s keepalive is now an assistant message stating
+  the failure rather than an error body under a 200.
 - **Leave Claude sessions alone until a harness runs.** Multi registered about
   70 hidden display tools (named after Cursor, Antigravity, and Grok tools, such
   as `web_search`) at every session start, so ToolSearch could surface them to

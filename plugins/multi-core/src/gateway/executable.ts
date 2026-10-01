@@ -80,11 +80,13 @@ export function isCmdSafeArgument(value: string): boolean {
 
 export class UnsafeCommandArgumentError extends Error {
   readonly code = 'EUNSAFEARG';
-  constructor() {
+  readonly argument: string;
+  constructor(argument = '') {
     super(
       'Refusing to pass an argument containing cmd.exe metacharacters through a .cmd/.bat launcher; deliver it on stdin instead',
     );
     this.name = 'UnsafeCommandArgumentError';
+    this.argument = argument;
   }
 }
 
@@ -128,7 +130,7 @@ export function executableInvocation(
   // safe for such text, so refuse it and let callers use stdin or a file.
   for (const value of [executable, ...args]) {
     if (!isCmdSafeArgument(value)) {
-      throw new UnsafeCommandArgumentError();
+      throw new UnsafeCommandArgumentError(value);
     }
   }
   const command = environmentValue(env, 'ComSpec') ?? process.env.ComSpec ?? 'cmd.exe';

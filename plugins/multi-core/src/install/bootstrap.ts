@@ -3,7 +3,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Installation, readInstallation, uninstall } from './installation.ts';
 import { installedPlugins, settingsArguments } from './plugins.ts';
-import { needsEnvProxy, run, withoutGateway } from './process.ts';
+import {
+  describeRunError,
+  needsEnvProxy,
+  run,
+  withLoopbackNoProxy,
+  withoutGateway,
+} from './process.ts';
 
 async function dispatch(state: Installation, args: string[], management: boolean) {
   const { root, providers } = await installedPlugins(state.claude, settingsArguments(args));
@@ -30,7 +36,7 @@ async function dispatch(state: Installation, args: string[], management: boolean
   if (manifest.name !== 'multi-core') {
     throw new Error('Installed core manifest does not identify multi-core');
   }
-  const env = {
+  const env = withLoopbackNoProxy({
     ...process.env,
     ...(state.models !== undefined && process.env.MULTI_MODELS === undefined
       ? { MULTI_MODELS: state.models }
@@ -40,7 +46,7 @@ async function dispatch(state: Installation, args: string[], management: boolean
     MULTI_REAL_CLAUDE: state.claude,
     MULTI_ENABLED_PROVIDERS: providers.join(','),
     MULTI_ANTIGRAVITY: providers.includes('antigravity') ? '1' : '0',
-  };
+  });
   const entry = management ? 'account.ts' : 'launcher.ts';
   return run(state.node, [path.join(root, 'plugins', 'multi-core', 'src', entry), ...args], {
     env,
@@ -67,7 +73,7 @@ void main().then(
     process.exitCode = code;
   },
   (error: unknown) => {
-    console.error(`Multi: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`Multi: ${describeRunError(error)}`);
     process.exitCode = 1;
   },
 );

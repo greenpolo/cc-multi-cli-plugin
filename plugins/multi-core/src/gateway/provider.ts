@@ -31,10 +31,13 @@ export function providerRoute(model: string | null | undefined): ProviderRoute {
   return providerOf(model) ?? (model ? 'openai' : 'anthropic');
 }
 
-/** Whose reviewer judges the model's actions: a provider's own, never Zen or Claude. */
+/**
+ * Whose reviewer judges the model's actions: a provider's own, never Zen (whose auto mode
+ * is unreviewed) or Claude. An unrecognized `multi/` prefix routes to OpenAI, so it is
+ * reviewed like any other external model.
+ */
 export function providerOwnedReview(model: string): boolean {
-  const provider = providerOf(model);
-  return provider !== undefined && provider !== 'zen';
+  return model.startsWith('multi/') && providerOf(model) !== 'zen';
 }
 
 /** Claude's context tag is display metadata, never part of a native model ID. */
