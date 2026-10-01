@@ -15,13 +15,35 @@ test('terminates POSIX process groups and always attempts the direct PID fallbac
 });
 
 test('uses taskkill tree termination on Windows', () => {
-  const calls: number[] = [];
+  const calls: [number, boolean][] = [];
   terminateProcessTree(42, {
     platform: 'win32',
     kill: () => assert.fail('Windows must not send POSIX signals'),
-    taskkill: (pid) => calls.push(pid),
+    taskkill: (pid, force) => calls.push([pid, force]),
   });
-  assert.deepEqual(calls, [42]);
+  assert.deepEqual(calls, [[42, true]]);
+});
+
+test('Windows asks politely for SIGINT/SIGTERM and forces only for SIGKILL', () => {
+  const calls: [number, boolean][] = [];
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGKILL'] as const) {
+    terminateProcessTree(7, {
+      platform: 'win32',
+      signal,
+      taskkill: (pid, force) => calls.push([pid, force]),
+    });
+  }
+  assert.deepEqual(calls, [
+    [7, false],
+    [7, false],
+    [7, true],
+  ]);
+});
+
+test('groupOnly never signals the bare PID', () => {
+  const calls: number[] = [];
+  terminateProcessTree(42, { platform: 'linux', groupOnly: true, kill: (pid) => calls.push(pid) });
+  assert.deepEqual(calls, [-42]);
 });
 
 test('continues direct POSIX cleanup when group cleanup fails', () => {

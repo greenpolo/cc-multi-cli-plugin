@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  argvSafe,
   executableInvocation,
+  isCmdSafeArgument,
   resolveExecutable,
+  UnsafeCommandArgumentError,
 } from '../../plugins/multi-core/src/gateway/executable.ts';
 
 test('resolves Windows npm shims using PATHEXT order', () => {
@@ -159,4 +162,62 @@ test('Windows resolution reads Path and PathExt regardless of spelling', () => {
     exists: (candidate) => candidate === 'C:\\bin\\claude.cmd',
   });
   assert.equal(found, 'C:\\bin\\claude.cmd');
+});
+
+const comSpec = { ComSpec: 'C:\\Windows\\System32\\cmd.exe' };
+const noShim = { readShim: () => 'unexpected shim body' };
+
+test('refuses cmd.exe metacharacters on the ComSpec path', () => {
+  for (const hostile of [
+    'a"&calc&"',
+    '%PATH%',
+    '!VAR!',
+    'x^y',
+    'a&b',
+    'a|b',
+    'a<b',
+    'a>b',
+    'line\nbreak',
+    'line\rbreak',
+    'say "hi"',
+  ]) {
+    assert.throws(
+      () => executableInvocation('C:\\tools\\agy.cmd', ['-p', hostile], 'win32', comSpec, noShim),
+      UnsafeCommandArgumentError,
+      JSON.stringify(hostile),
+    );
+    assert.equal(isCmdSafeArgument(hostile), false);
+    assert.equal(argvSafe('C:\\tools\\agy.cmd', hostile, 'win32', noShim), false);
+  }
+});
+
+test('refuses a hostile executable path on the ComSpec path', () => {
+  assert.throws(
+    () => executableInvocation('C:\\a%TEMP%\\agy.cmd', [], 'win32', comSpec, noShim),
+    UnsafeCommandArgumentError,
+  );
+});
+
+test('plain text with spaces and parentheses still passes through cmd.exe', () => {
+  const invocation = executableInvocation(
+    'C:\\tools\\agy.cmd',
+    ['-p', 'fix (the) bug, now'],
+    'win32',
+    comSpec,
+    noShim,
+  );
+  assert.equal(invocation.viaComSpec, true);
+  assert.equal(argvSafe('C:\\tools\\agy.cmd', 'fix (the) bug', 'win32', noShim), true);
+});
+
+test('argvSafe only restricts non-shim cmd launchers on Windows', () => {
+  assert.equal(argvSafe('C:\\tools\\agy.exe', '%PATH%', 'win32'), true);
+  assert.equal(argvSafe('/usr/bin/agy', '%PATH% "x"', 'linux'), true);
+  assert.equal(
+    argvSafe('C:\\tools\\agy.cmd', '"%PATH%"', 'win32', {
+      readShim: () => '"%dp0%\\node_modules\\pkg\\cli.js" %*',
+      exists: () => true,
+    }),
+    true,
+  );
 });

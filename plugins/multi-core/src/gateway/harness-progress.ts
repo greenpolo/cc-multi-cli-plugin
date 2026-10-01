@@ -35,7 +35,7 @@ export type NativeAction = {
 };
 
 const maximumListed = 8;
-const maximumTracked = 512;
+export const maximumTracked = 512;
 const unsettledOutput = "The native run ended without reporting this action's completion.";
 
 /**
@@ -48,10 +48,16 @@ export class NativeActionSummary {
   private readonly changed = new Set<string>();
   private readonly problems: string[] = [];
   private unconfirmed = 0;
+  private untracked = 0;
   private readonly tag: string;
 
   constructor(tag: string) {
     this.tag = tag;
+  }
+
+  /** Counts an action past the tracking cap: seen, but with no row, outcome or change entry. */
+  recordUntracked() {
+    this.untracked++;
   }
 
   /**
@@ -78,10 +84,30 @@ export class NativeActionSummary {
     }
   }
 
+  private notices(): string[] {
+    const lines: string[] = [];
+    if (this.changed.size) {
+      lines.push(`[${this.tag}] Changed: ${[...this.changed].join(', ')}.`);
+    }
+    if (this.problems.length) {
+      lines.push(`[${this.tag}] Not completed: ${this.problems.join('; ')}.`);
+    }
+    if (this.untracked) {
+      lines.push(
+        `[${this.tag}] Truncated: ${this.untracked} further action${this.untracked === 1 ? '' : 's'} beyond the first ${maximumTracked} were not tracked, so the counts above and any changes among them are incomplete.`,
+      );
+    }
+    if (this.unconfirmed) {
+      const count = `${this.unconfirmed} action${this.unconfirmed === 1 ? '' : 's'}`;
+      lines.push(`[${this.tag}] Unconfirmed: ${count} ended without a reported outcome.`);
+    }
+    return lines;
+  }
+
   /** `modelCalls` is how many model calls the run made, when the harness reported them. */
   text(modelCalls = 0): string {
     const total = [...this.counts.values()].reduce((sum, count) => sum + count, 0);
-    if (!total && modelCalls < 2) {
+    if (!total && !this.untracked && modelCalls < 2) {
       return '';
     }
     const calls = modelCalls ? `${modelCalls} model call${modelCalls === 1 ? '' : 's'}` : '';
@@ -89,17 +115,9 @@ export class NativeActionSummary {
     const actions = total
       ? `${total} native action${total === 1 ? '' : 's'}: ${parts.join(', ')}`
       : '';
-    const lines = [`[${this.tag}] ${[actions, calls].filter(Boolean).join('; ')}.`];
-    if (this.changed.size) {
-      lines.push(`[${this.tag}] Changed: ${[...this.changed].join(', ')}.`);
-    }
-    if (this.problems.length) {
-      lines.push(`[${this.tag}] Not completed: ${this.problems.join('; ')}.`);
-    }
-    if (this.unconfirmed) {
-      const count = `${this.unconfirmed} action${this.unconfirmed === 1 ? '' : 's'}`;
-      lines.push(`[${this.tag}] Unconfirmed: ${count} ended without a reported outcome.`);
-    }
+    const headline = [actions, calls].filter(Boolean).join('; ');
+    const lines = headline ? [`[${this.tag}] ${headline}.`] : [];
+    lines.push(...this.notices());
     return `\n\n${lines.join('\n')}\n`;
   }
 }
@@ -139,7 +157,12 @@ export class NativeActionTracker {
 
   /** Reports a new action once; a repeated start for the same id is ignored. */
   start(id: string, action: NativeAction) {
-    if (this.actions.has(id) || this.actions.size >= maximumTracked) {
+    if (this.actions.has(id)) {
+      return;
+    }
+    if (this.actions.size >= maximumTracked) {
+      // Counted so the summary can say the record stopped; ids are not retained.
+      this.summary.recordUntracked();
       return;
     }
     const description = displayLine(action.description) || action.tool || action.kind;
