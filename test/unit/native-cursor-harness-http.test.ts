@@ -76,19 +76,9 @@ test('Cursor harness serves isolated main and worker SSE progress without replay
   });
   const permissionModes = new PermissionModes(async () => ({ worker: {} }));
   for (const session_id of ['session-1', 'session-cancelled']) {
-    await permissionModes.record({
-      hook_event_name: 'UserPromptSubmit',
-      session_id,
-      permission_mode: 'auto',
-    });
+    permissionModes.recordModSession(session_id, { permissionMode: 'auto' });
   }
-  await permissionModes.record({
-    hook_event_name: 'SubagentStart',
-    session_id: 'session-1',
-    agent_id: 'worker-1',
-    agent_type: 'worker',
-    cwd: directory,
-  });
+  permissionModes.recordModWorker('session-1', 'worker-1', { cwd: directory });
   const server = createNativeGateway({
     permissionModes,
     token: 'test-token',
@@ -217,19 +207,9 @@ test('native SSE cancellation stops the SDK run without reporting successful com
   });
   const permissionModes = new PermissionModes(async () => ({ worker: {} }));
   for (const session_id of ['session-1', 'session-cancelled']) {
-    await permissionModes.record({
-      hook_event_name: 'UserPromptSubmit',
-      session_id,
-      permission_mode: 'auto',
-    });
+    permissionModes.recordModSession(session_id, { permissionMode: 'auto' });
   }
-  await permissionModes.record({
-    hook_event_name: 'SubagentStart',
-    session_id: 'session-1',
-    agent_id: 'worker-1',
-    agent_type: 'worker',
-    cwd: directory,
-  });
+  permissionModes.recordModWorker('session-1', 'worker-1', { cwd: directory });
   const server = createNativeGateway({
     permissionModes,
     token: 'test-token',
@@ -307,11 +287,7 @@ test('a prompt that arrives during a native run is answered 400, not a retryable
     }),
   });
   const permissionModes = new PermissionModes(async () => ({ worker: {} }));
-  await permissionModes.record({
-    hook_event_name: 'UserPromptSubmit',
-    session_id: 'session-busy',
-    permission_mode: 'auto',
-  });
+  permissionModes.recordModSession('session-busy', { permissionMode: 'auto' });
   const server = createNativeGateway({
     permissionModes,
     token: 'test-token',

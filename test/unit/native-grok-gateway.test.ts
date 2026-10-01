@@ -47,12 +47,7 @@ async function gateway(t: test.TestContext, handle: Parameters<typeof createNati
 
 async function modes() {
   const value = new PermissionModes(async () => ({}));
-  await value.record({
-    hook_event_name: 'UserPromptSubmit',
-    session_id: 'test-session',
-    permission_mode: 'auto',
-    prompt: 'run the tests',
-  });
+  value.recordModSession('test-session', { permissionMode: 'auto' });
   return value;
 }
 
