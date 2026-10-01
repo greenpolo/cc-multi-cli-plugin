@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import os, { hostname } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -198,4 +198,58 @@ test('an empty marker left by the previous flock-based lock is taken over', asyn
   const release = await lockStateFile(file);
   assert.match(await readFile(file, 'utf8'), /"pid"/);
   await release();
+});
+
+async function writeMarker(file: string, owner: Record<string, unknown>) {
+  await writeFile(file, `${JSON.stringify(owner)}\n`, { mode: 0o600 });
+}
+
+test('takes over a dead owner recorded under a renamed host (.local vs .lan)', async (t) => {
+  const directory = await temporaryDirectory(t, 'multi-renamed-host-');
+  const file = path.join(directory, 'session.lock');
+  await writeMarker(file, { pid: 2147483647, hostname: 'Nicks-Mac.local', token: 'old' });
+  const release = await lockStateFile(file, { hostname: 'nicks-mac.lan', machineId: undefined });
+  await release();
+});
+
+test('a matching machine id outranks a changed hostname, a different one refuses', async (t) => {
+  const directory = await temporaryDirectory(t, 'multi-machine-id-');
+  const file = path.join(directory, 'session.lock');
+  await writeMarker(file, {
+    pid: 2147483647,
+    hostname: 'Mac-2',
+    token: 'old',
+    machine: 'uuid-1',
+  });
+  await assert.rejects(
+    lockStateFile(file, { hostname: 'Mac-2', machineId: 'uuid-2' }),
+    /locked by another gateway/,
+  );
+  const release = await lockStateFile(file, { hostname: 'Totally-Different', machineId: 'uuid-1' });
+  await release();
+});
+
+test('puts back a live marker that a racing takeover moved aside', async (t) => {
+  const directory = await temporaryDirectory(t, 'multi-takeover-race-');
+  const file = path.join(directory, 'session.lock');
+  await writeMarker(file, { pid: 2147483647, hostname: hostname(), token: 'dead' });
+  const live = { pid: process.pid, hostname: hostname(), token: 'live' };
+  let raced = false;
+  await assert.rejects(
+    lockStateFile(file, {
+      machineId: undefined,
+      maxAttempts: 2,
+      rename: async (from, to) => {
+        if (!raced) {
+          raced = true;
+          // Another gateway wins the takeover and acquires before our rename lands.
+          await rm(file);
+          await writeMarker(file, live);
+        }
+        await rename(from, to);
+      },
+    }),
+    /locked by another gateway/,
+  );
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).token, 'live');
 });
