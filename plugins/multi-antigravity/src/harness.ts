@@ -1,17 +1,13 @@
-import { createHash } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  archiveHarnessReply,
-  commitHarnessResponse,
-} from '../../multi-core/src/gateway/harness-completion.ts';
-import {
-  ExchangeRegistry,
-  type HarnessExchange,
-  replayPersisted,
-} from '../../multi-core/src/gateway/harness-exchange.ts';
-import { classifyHarnessFailure } from '../../multi-core/src/gateway/harness-failure.ts';
+  CliHarness,
+  type CliTurn,
+  digest,
+  harnessFailure,
+} from '../../multi-core/src/gateway/harness-cli.ts';
+import { commitHarnessResponse } from '../../multi-core/src/gateway/harness-completion.ts';
+import type { HarnessExchange } from '../../multi-core/src/gateway/harness-exchange.ts';
 import {
   continuation,
   historyRewound,
@@ -21,10 +17,7 @@ import {
   terminalSuffix,
   writeNotices,
 } from '../../multi-core/src/gateway/harness-notices.ts';
-import {
-  NativeActionTracker,
-  type NativeProgressObserver,
-} from '../../multi-core/src/gateway/harness-progress.ts';
+import { NativeActionTracker } from '../../multi-core/src/gateway/harness-progress.ts';
 import {
   HarnessModelCalls,
   HarnessResponse,
@@ -33,7 +26,6 @@ import {
 import {
   type HarnessSession,
   type HarnessSessionBase,
-  HarnessSessionStore,
   isRecord,
 } from '../../multi-core/src/gateway/harness-session.ts';
 import type {
@@ -42,7 +34,7 @@ import type {
   MessagesResponse,
 } from '../../multi-core/src/gateway/messages.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
-import { abortGraceMs, settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
+import { settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
 import type {
   AntigravityResult,
   AntigravityRunOptions,
@@ -80,19 +72,6 @@ type Saved = HarnessSessionBase & {
 };
 type Session = HarnessSession<Saved>;
 
-/** Everything one native turn is addressed by, fixed before the exchange starts. */
-type Turn = {
-  body: MessagesRequest;
-  context: PermissionContext;
-  model: AntigravityModel;
-  cwd: string;
-  identity: string;
-  key: string;
-  observe?: NativeProgressObserver;
-};
-
-const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-
 function modelEffort(model: AntigravityModel): AntigravityRunOptions['effort'] {
   if (model.effort) {
     return model.effort;
@@ -125,16 +104,10 @@ function noticeForRun(policy: AntigravityPolicy, context: PermissionContext) {
     : 'Compaction summary; native tools disabled.';
 }
 
-export class AntigravityHarness {
+export class AntigravityHarness extends CliHarness<Saved, AntigravityModel> {
   private readonly models: readonly AntigravityModel[];
-  private readonly defaultCwd: string;
-  private readonly stateDirectory: string;
   private readonly run: AntigravityRunner;
   private readonly checkPermissions: CheckAntigravityPermissions;
-  private readonly platform: NodeJS.Platform;
-  private readonly store: HarnessSessionStore<Saved>;
-  private readonly exchanges = new ExchangeRegistry({ provider: TAG, createMeta: () => ({}) });
-  private closed = false;
   private unindexedSteps = 0;
 
   constructor(
@@ -156,19 +129,13 @@ export class AntigravityHarness {
       platform?: NodeJS.Platform;
     } = {},
   ) {
-    this.models = models;
-    this.defaultCwd = cwd;
-    this.stateDirectory = stateDirectory;
-    this.platform = platform;
-    this.run = run;
-    this.checkPermissions = checkPermissions ?? missingPermissions;
-    this.store = new HarnessSessionStore<Saved>({
-      provider: PROVIDER,
+    super({
       tag: TAG,
+      storeProvider: PROVIDER,
       stateDirectory,
+      defaultCwd: cwd,
       platform,
       version: SESSION_VERSION,
-      runtime: () => ({}),
       fresh: (identity) => ({
         version: SESSION_VERSION,
         provider: PROVIDER,
@@ -177,9 +144,12 @@ export class AntigravityHarness {
       }),
       validate: (saved) => validUsage(saved.usage),
     });
+    this.models = models;
+    this.run = run;
+    this.checkPermissions = checkPermissions ?? missingPermissions;
   }
 
-  private selection(body: MessagesRequest) {
+  protected selection(body: MessagesRequest) {
     return selectAntigravityModel(this.models, body.model, body.output_config?.effort);
   }
 
@@ -188,101 +158,25 @@ export class AntigravityHarness {
     return prepareAntigravityRequest(body, model.id).inputTokens;
   }
 
-  /** The scope's last reply from its session record, located as `handle` locates it. */
-  async recordedResponse(scope: string, context?: PermissionContext) {
-    const cwd = await realpath(context?.cwd ?? this.defaultCwd);
-    return this.store.recordedResponse(`${cwd}\0${scope}`);
+  protected requestKey(body: MessagesRequest) {
+    return {
+      ...body,
+      // Both spellings of a model name the same native request. Keying on the tagged one
+      // would let the plain spelling miss a completed exchange and dispatch it a second
+      // time, which is exactly what happens across a MULTI_DISABLE_1M_CONTEXT change.
+      model: nativeSpelling(body.model),
+      stream: undefined,
+      messages: antigravityHistoryHash(body.messages),
+      system: undefined,
+    };
   }
 
-  async handle(
-    body: MessagesRequest,
-    scope: string,
-    signal: AbortSignal,
-    emit?: Emit,
-    context?: PermissionContext,
-    observe?: NativeProgressObserver,
-  ): Promise<MessagesResponse> {
-    if (this.closed) {
-      throw new Error('Antigravity harness is closed');
-    }
-    signal.throwIfAborted();
-    if (!context) {
-      throw new Error('Antigravity requires an explicit Claude permission context');
-    }
-    const model = this.selection(body);
-    this.validate(body);
-    const cwd = await realpath(context.cwd ?? this.defaultCwd);
-    const identity = `${cwd}\0${scope}`;
-    const key = digest([
-      PROVIDER,
-      identity,
-      {
-        ...body,
-        // Both spellings of a model name the same native request. Keying on the tagged one
-        // would let the plain spelling miss a completed exchange and dispatch it a second
-        // time, which is exactly what happens across a MULTI_DISABLE_1M_CONTEXT change.
-        model: nativeSpelling(body.model),
-        stream: undefined,
-        messages: antigravityHistoryHash(body.messages),
-        system: undefined,
-      },
-      {
-        permissionMode: context.permissionMode,
-        tools: context.tools,
-        disallowedTools: context.disallowedTools,
-        nativePermissionError: context.nativePermissionError,
-        compaction: context.compaction,
-      },
-    ]);
-    const turn: Turn = { body, context, model, cwd, identity, key, observe };
-    let exchange = this.exchanges.get(key);
-    if (!exchange) {
-      if (this.exchanges.size >= 256) {
-        throw new Error('Too many concurrent Antigravity requests');
-      }
-      exchange = this.exchanges.start(key, (started, forward) =>
-        this.cachedExecute(turn, started, forward),
-      );
-    }
-    return this.exchanges.observe(exchange, signal, emit);
+  protected providerError(error: unknown) {
+    return new AntigravityProviderError(error);
   }
 
-  private async cachedExecute(turn: Turn, exchange: HarnessExchange, emit: Emit) {
-    let lease: Awaited<ReturnType<HarnessSessionStore<Saved>['acquireLease']>>;
-    try {
-      // A first-load race is a deterministic conflict, so it must leave here as
-      // this provider's own failure: a bare busy error reads as a retryable 502.
-      lease = await this.store.acquireLease(turn.identity);
-    } catch (error) {
-      throw new AntigravityProviderError(error);
-    }
-    const session = lease.session;
-    try {
-      const replayed = await replayPersisted({
-        stateDirectory: this.stateDirectory,
-        key: turn.key,
-        saved: session.saved,
-        emit,
-        provider: TAG,
-      });
-      if (replayed) {
-        return replayed;
-      }
-      await archiveHarnessReply({
-        session,
-        stateDirectory: this.stateDirectory,
-        platform: this.platform,
-      });
-      return await this.execute(turn, session, exchange, emit);
-    } finally {
-      await lease.release();
-      // The durable record holds everything; an idle attachment only pins its lock and replay events.
-      await this.store.evictIdle(session);
-    }
-  }
-
-  private async execute(
-    turn: Turn,
+  protected async execute(
+    turn: CliTurn<AntigravityModel>,
     session: Session,
     exchange: HarnessExchange,
     emit: Emit,
@@ -309,12 +203,13 @@ export class AntigravityHarness {
   }
 
   private async runTurn(
-    turn: Turn,
+    turn: CliTurn<AntigravityModel>,
     acquired: { session: Session; messages: MessagesRequest['messages']; rewound: boolean },
     exchange: HarnessExchange,
     emit: Emit,
   ): Promise<MessagesResponse> {
-    const { body, context, model, cwd, key } = turn;
+    const { body, context, cwd, key } = turn;
+    const model = turn.selection;
     const { session, messages, rewound } = acquired;
     const signal = exchange.controller.signal;
     let initConversationId: string | undefined;
@@ -491,19 +386,6 @@ export class AntigravityHarness {
     }
     observeAntigravityStep(update, actions, () => `tool-${++this.unindexedSteps}`);
   }
-
-  async close() {
-    this.closed = true;
-    const running: Promise<MessagesResponse>[] = [];
-    for (const exchange of this.exchanges.all()) {
-      if (!exchange.settled) {
-        exchange.controller.abort(new Error('Antigravity gateway closed'));
-        running.push(exchange.result);
-      }
-    }
-    await bounded(Promise.allSettled(running));
-    await this.store.closeAll();
-  }
 }
 
 function appendDiagnostics(response: HarnessResponse, result: AntigravityResult, stderr: string) {
@@ -573,20 +455,6 @@ function validUsage(usage: AntigravityUsage | undefined) {
   );
 }
 
-async function bounded(operation: Promise<unknown>) {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      operation,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, abortGraceMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 const missingPermissions: CheckAntigravityPermissions = async () => {
   throw new Error('Antigravity native permission policy is not configured');
 };
@@ -594,15 +462,11 @@ const missingPermissions: CheckAntigravityPermissions = async () => {
 export class AntigravityProviderError extends Error {
   readonly failure: { status: number; message: string };
   constructor(error: unknown) {
-    const detail = error && typeof error === 'object' && 'message' in error ? error.message : error;
-    const message = String(detail ?? 'unknown Antigravity failure')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 500);
-    super(message, { cause: error });
-    this.name = 'AntigravityProviderError';
     // Deterministic refusals are request errors: a retryable status turned one
     // into ten paid attempts.
-    this.failure = { status: classifyHarnessFailure(error).status, message };
+    const failure = harnessFailure(error, 'unknown Antigravity failure');
+    super(failure.message, { cause: error });
+    this.name = 'AntigravityProviderError';
+    this.failure = failure;
   }
 }
