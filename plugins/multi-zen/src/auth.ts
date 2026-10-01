@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 export class ZenAuthError extends Error {}
 
@@ -9,10 +10,6 @@ export function validateZenKey(value: string): string {
     throw new ZenAuthError('Invalid OpenCode Zen API key.');
   }
   return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function pathForPlatform(platform: NodeJS.Platform) {

@@ -9,6 +9,7 @@ import {
   promptArgvSafe,
   runNativeCli,
 } from '../../multi-core/src/gateway/harness-process.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 /**
  * Grok Build headless contract, captured from `grok -p --output-format streaming-json`
@@ -470,10 +471,6 @@ function parseTerminal(
   };
   parser.terminal = result;
   emit({ event: 'result', result });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function optionalString(value: unknown): string | undefined {

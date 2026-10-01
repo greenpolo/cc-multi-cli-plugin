@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { getDefaultSdkAuthPath } from '@cursor/sdk';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 export interface CursorQuotaUsage {
   billingCycleStart?: string;
@@ -202,10 +203,6 @@ function formatDate(value: string | undefined): string {
     return new Date(milliseconds).toISOString();
   }
   return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function unavailable(): Error {

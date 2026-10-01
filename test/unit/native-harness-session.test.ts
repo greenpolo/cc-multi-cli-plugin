@@ -10,7 +10,6 @@ import {
   type HarnessSessionBase,
   HarnessSessionStore,
   isHash,
-  isRecord,
   optionalCount,
   readJson,
   validMessagesResponse,
@@ -18,6 +17,7 @@ import {
   validReplay,
 } from '../../plugins/multi-core/src/gateway/harness-session.ts';
 import type { MessagesResponse } from '../../plugins/multi-core/src/gateway/messages.ts';
+import { isRecord } from '../../plugins/multi-core/src/gateway/record.ts';
 
 type Saved = HarnessSessionBase & { version: 1; sessionId?: string };
 

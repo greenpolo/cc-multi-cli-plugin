@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { isRecord } from '../../multi-core/src/gateway/harness-session.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 /** The v2 gateway hashed the serialized [workspace, scope] directly. */
 export function legacyCursorSessionFile(directory: string, identity: string): string {

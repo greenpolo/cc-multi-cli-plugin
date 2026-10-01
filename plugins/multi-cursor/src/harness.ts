@@ -46,7 +46,6 @@ import {
   HarnessSessionStore,
   type HarnessTurnLease,
   isHash,
-  isRecord,
   readJson,
   textContentBlock,
 } from '../../multi-core/src/gateway/harness-session.ts';
@@ -57,6 +56,7 @@ import type {
   MessagesResponse,
 } from '../../multi-core/src/gateway/messages.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { dangerousToolMode } from '../../multi-core/src/gateway/safeguards.ts';
 import { settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
 import { CursorProviderError, cursorRunError } from './errors.ts';

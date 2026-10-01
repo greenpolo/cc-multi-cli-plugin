@@ -6,7 +6,7 @@ import {
   promptArgvSafe,
   runNativeCli,
 } from '../../multi-core/src/gateway/harness-process.ts';
-import { isRecord } from '../../multi-core/src/gateway/harness-session.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 type AntigravityStatus =
   | 'SUCCESS'

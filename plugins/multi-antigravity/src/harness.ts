@@ -23,10 +23,9 @@ import {
   HarnessResponse,
   type HarnessUsageFields,
 } from '../../multi-core/src/gateway/harness-response.ts';
-import {
-  type HarnessSession,
-  type HarnessSessionBase,
-  isRecord,
+import type {
+  HarnessSession,
+  HarnessSessionBase,
 } from '../../multi-core/src/gateway/harness-session.ts';
 import type {
   Emit,
@@ -34,6 +33,8 @@ import type {
   MessagesResponse,
 } from '../../multi-core/src/gateway/messages.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
+import { nativeSpelling } from '../../multi-core/src/gateway/provider.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
 import type {
   AntigravityResult,
@@ -45,7 +46,7 @@ import type {
 import { runAntigravity } from './cli.ts';
 import { antigravitySettingsFile } from './hooks.ts';
 import type { AntigravityModel } from './models.ts';
-import { nativeSpelling, selectAntigravityModel } from './models.ts';
+import { selectAntigravityModel } from './models.ts';
 import { type AntigravityPolicy, antigravityCompactionDenyList } from './permissions.ts';
 import {
   observeAntigravityCall,

@@ -4,6 +4,7 @@ import {
   executableInvocation,
   resolveExecutable,
 } from '../../multi-core/src/gateway/executable.ts';
+import { nativeSpelling } from '../../multi-core/src/gateway/provider.ts';
 import { antigravityEnvironment } from './cli.ts';
 
 export interface AntigravityModel {
@@ -137,11 +138,6 @@ function defaultVariant(models: readonly AntigravityModel[], base: string) {
     }
   }
   throw new Error('Antigravity base route has no advertised native variant.');
-}
-
-/** Claude's 1M-context picker tag; it is display metadata and never a native model ID. */
-export function nativeSpelling(model: string | undefined): string | undefined {
-  return model?.replace(/\[1m\]$/i, '');
 }
 
 /** Resolve advertised variants; let agy validate effort for models without suffixes. */

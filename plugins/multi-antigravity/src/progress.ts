@@ -3,6 +3,7 @@ import type {
   NativeActionTracker,
 } from '../../multi-core/src/gateway/harness-progress.ts';
 import type { HarnessModelCalls } from '../../multi-core/src/gateway/harness-response.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { type AntigravityStreamEvent, parseAntigravityUsage } from './cli.ts';
 
 type StepUpdate = Extract<AntigravityStreamEvent, { event: 'step_update' }>['step_update'];
@@ -81,10 +82,6 @@ const kinds: Array<[RegExp, NativeActionKind]> = [
 const targetKey = /path|file|command|query|pattern|url/i;
 const doneState = /done|complete|success|finish/i;
 const failedState = /error|fail|cancel|denied|reject|block/i;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function kindOf(tool: string): NativeActionKind {
   return kinds.find(([pattern]) => pattern.test(tool))?.[1] ?? 'other';

@@ -6,6 +6,7 @@ import { atomicWriteFile } from './atomic-write.ts';
 import { isDisplayTool } from './display-rows.ts';
 import type { HarnessEvent } from './harness-exchange.ts';
 import type { MessagesResponse } from './messages.ts';
+import { isRecord } from './record.ts';
 import { lockStateFile } from './state-lock.ts';
 
 /**
@@ -384,10 +385,6 @@ export async function atomicJson(
 
 export function isHash(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function optionalCount(value: unknown): boolean {

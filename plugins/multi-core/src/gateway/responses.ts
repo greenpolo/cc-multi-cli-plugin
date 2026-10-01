@@ -8,6 +8,7 @@ import type {
   ResponseContentBlock,
   StopReason,
 } from './messages.ts';
+import { isRecord } from './record.ts';
 import { type SafeguardProvider, safeguardResults } from './safeguards.ts';
 import { callId, toolName } from './tools.ts';
 
@@ -109,10 +110,6 @@ interface ReasoningState {
 }
 
 // Boundary guards: JSON.parse and the provider stream hand us `unknown`.
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isOutputItem(value: unknown, done: boolean): value is ResponsesOutputItem {
   if (
     !isRecord(value) ||

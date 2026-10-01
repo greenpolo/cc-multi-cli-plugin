@@ -9,6 +9,7 @@ import type {
 } from '../../multi-core/src/gateway/approval.ts';
 import { NativeApprovalBridge } from '../../multi-core/src/gateway/approval.ts';
 import type { GatewayFetch } from '../../multi-core/src/gateway/fetch.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { readSse } from '../../multi-core/src/gateway/responses.ts';
 import { codexRequest } from './auth.ts';
 
@@ -19,9 +20,6 @@ const REVIEW_FAILURE_EVENTS: readonly unknown[] = [
   'error',
 ];
 const endpoint = 'https://chatgpt.com/backend-api/codex';
-const record = (value: unknown): value is Record<string, unknown> =>
-  !!value && typeof value === 'object' && !Array.isArray(value);
-
 /** Discover the subscription reviewer; never substitute the working model. */
 export async function discoverOpenAIReviewer(
   authFile: string,
@@ -42,9 +40,9 @@ export async function discoverOpenAIReviewer(
   }
   const catalog: unknown = await response.json();
   return (
-    record(catalog) &&
+    isRecord(catalog) &&
     Array.isArray(catalog.models) &&
-    catalog.models.some((model: unknown) => record(model) && model.slug === 'codex-auto-review')
+    catalog.models.some((model: unknown) => isRecord(model) && model.slug === 'codex-auto-review')
   );
 }
 
@@ -55,7 +53,7 @@ export async function inspectApprovalPath(
   { platform = process.platform }: { platform?: NodeJS.Platform } = {},
 ): Promise<unknown> {
   if (
-    !record(input) ||
+    !isRecord(input) ||
     typeof input.path !== 'string' ||
     Object.keys(input).some((key) => key !== 'path')
   ) {
@@ -238,7 +236,7 @@ async function readReviewerOutput(response: Response): Promise<Record<string, un
   const items: Record<string, unknown>[] = [];
   let bytes = 0;
   for await (const event of readSse(response.body)) {
-    if (!record(event)) {
+    if (!isRecord(event)) {
       throw new Error('Invalid reviewer stream');
     }
     bytes += JSON.stringify(event).length;
@@ -248,7 +246,7 @@ async function readReviewerOutput(response: Response): Promise<Record<string, un
     if (REVIEW_FAILURE_EVENTS.includes(event.type)) {
       throw new Error('Reviewer failed or refused');
     }
-    if (event.type === 'response.output_item.done' && record(event.item)) {
+    if (event.type === 'response.output_item.done' && isRecord(event.item)) {
       items.push(event.item);
     }
     if (event.type === 'response.completed') {
@@ -262,12 +260,16 @@ function completedOutput(
   items: Record<string, unknown>[],
   completed: unknown,
 ): Record<string, unknown>[] {
-  if (!record(completed) || completed.status !== 'completed' || !Array.isArray(completed.output)) {
+  if (
+    !isRecord(completed) ||
+    completed.status !== 'completed' ||
+    !Array.isArray(completed.output)
+  ) {
     throw new Error('Incomplete reviewer response');
   }
   // Codex's subscription stream may leave final output empty; done events carry the items.
   const output: unknown[] = items.length ? items : completed.output;
-  if (!output.every(record)) {
+  if (!output.every(isRecord)) {
     throw new Error('Invalid reviewer output item');
   }
   if (JSON.stringify(output).length > 131072) {
@@ -331,7 +333,7 @@ function reviewerVerdict(output: Record<string, unknown>[]): ApprovalVerdict {
         throw new Error('Invalid reviewer verdict');
       }
       return item.content.map((part: unknown) => {
-        if (!record(part) || part.type !== 'output_text' || typeof part.text !== 'string') {
+        if (!isRecord(part) || part.type !== 'output_text' || typeof part.text !== 'string') {
           throw new Error('Invalid reviewer verdict');
         }
         return part.text;
@@ -341,7 +343,7 @@ function reviewerVerdict(output: Record<string, unknown>[]): ApprovalVerdict {
     throw new Error('Invalid reviewer verdict');
   }
   const verdict: unknown = JSON.parse(text.join(''));
-  if (!record(verdict) || (verdict.outcome !== 'allow' && verdict.outcome !== 'deny')) {
+  if (!isRecord(verdict) || (verdict.outcome !== 'allow' && verdict.outcome !== 'deny')) {
     throw new Error('Invalid reviewer verdict');
   }
   if (
