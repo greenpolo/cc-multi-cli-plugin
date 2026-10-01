@@ -39,7 +39,7 @@ export type GatewayOptions = {
 };
 
 /**
- * What the client needs of the engine, as four calls. The engine follows `$` only into
+ * What the client needs of the engine, as four calls and the session keys. The engine follows `$` only into
  * functions of the file that hooks, never across an import, and wants each `$.env.get`
  * name and `$.noun.event(...)` spelled at its call site, so each hooks file builds this
  * from its own `$` and hands it here:
@@ -49,14 +49,45 @@ export type GatewayOptions = {
  *       token: () => $.env.get('MULTI_GATEWAY_TOKEN'),
  *       fetch: (url, init) => $.http.fetch(url, init),
  *       sleep: (ms, signal) => $.clock.sleep(ms, { signal }),
+ *       keys: { read: () => read($, modKeys), save: (change) => update($, modKeys, change) },
  *     });
  */
 export type Wire = {
+  /**
+   * The per-session keys the gateway issued, held in `$.state` so a hot reload keeps them. The
+   * gateway refuses a session's token-only POSTs once its key has been echoed, so a lost key
+   * would lock the mod out of that session.
+   */
+  keys: ModKeys;
   url: () => Promise<string | undefined>;
   token: () => Promise<string | undefined>;
   fetch: (url: string, init: HttpInit) => Promise<HttpResponse>;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
 };
+
+export type ModKeys = {
+  read: () => Promise<Readonly<Record<string, string>>>;
+  save: (change: (held: Record<string, string>) => Record<string, string>) => Promise<unknown>;
+};
+
+/** Sent on every request that names a session once the gateway has issued that session's key. */
+const keyHeader = 'x-multi-mod-key';
+const maxKeys = 256;
+
+/** Forgets the key of an ended session. */
+export async function forgetKey(wire: Wire, sessionId: string): Promise<void> {
+  await wire.keys.save((held) => {
+    const { [sessionId]: _ended, ...others } = held;
+    return others;
+  });
+}
+
+async function rememberKey(wire: Wire, sessionId: string, key: string): Promise<void> {
+  await wire.keys.save((held) => {
+    const { [sessionId]: _replaced, ...others } = held;
+    return Object.fromEntries([...Object.entries(others).slice(-(maxKeys - 1)), [sessionId, key]]);
+  });
+}
 
 type Environment = { base: string; token: string };
 
@@ -78,7 +109,14 @@ export function getJson<T extends GatewayResponse = GatewayResponse>(
   options: GatewayOptions = {},
 ): Promise<T | undefined> {
   const search = new URLSearchParams(query).toString();
-  return send<T>(wire, 'GET', search ? `${route}?${search}` : route, undefined, options);
+  return send<T>(
+    wire,
+    'GET',
+    search ? `${route}?${search}` : route,
+    undefined,
+    options,
+    query.sessionId,
+  );
 }
 
 export function postJson<T extends GatewayResponse = GatewayResponse>(
@@ -87,7 +125,15 @@ export function postJson<T extends GatewayResponse = GatewayResponse>(
   payload: object,
   options: GatewayOptions = {},
 ): Promise<T | undefined> {
-  return send<T>(wire, 'POST', route, JSON.stringify(payload), options);
+  const { sessionId } = payload as { sessionId?: unknown };
+  return send<T>(
+    wire,
+    'POST',
+    route,
+    JSON.stringify(payload),
+    options,
+    typeof sessionId === 'string' ? sessionId : undefined,
+  );
 }
 
 /** The reply only when the gateway accepted the request. */
@@ -101,6 +147,7 @@ async function send<T extends GatewayResponse>(
   route: string,
   body: string | undefined,
   options: GatewayOptions,
+  sessionId: string | undefined,
 ): Promise<T | undefined> {
   const env = await environment(wire);
   if (!env || (body !== undefined && new TextEncoder().encode(body).length > maxBody)) {
@@ -110,9 +157,14 @@ async function send<T extends GatewayResponse>(
   const cancel = () => waiting.abort();
   options.signal?.addEventListener('abort', cancel, { once: true });
   try {
+    const key = sessionId ? (await wire.keys.read())[sessionId] : undefined;
     const fetched = wire.fetch(`${env.base}${route}`, {
       method,
-      headers: { 'content-type': 'application/json', 'x-multi-gateway-token': env.token },
+      headers: {
+        'content-type': 'application/json',
+        'x-multi-gateway-token': env.token,
+        ...(key ? { [keyHeader]: key } : {}),
+      },
       ...(body === undefined ? {} : { body }),
     });
     // A late failure of a fetch that lost the race to its deadline is not reported.
@@ -122,6 +174,10 @@ async function send<T extends GatewayResponse>(
       timeoutMs > 0
         ? await Promise.race([fetched, deadline(wire, timeoutMs, waiting.signal)])
         : await fetched;
+    const issued = result.headers?.[keyHeader];
+    if (sessionId && issued && issued !== key) {
+      await rememberKey(wire, sessionId, issued);
+    }
     return result.ok ? (JSON.parse(result.text) as T) : (refusal(result) as T);
   } catch {
     return undefined;

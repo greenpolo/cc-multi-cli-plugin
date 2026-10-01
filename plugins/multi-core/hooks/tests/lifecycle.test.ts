@@ -295,3 +295,42 @@ test('session end forgets the gateway session, while a client leaving does not',
     { url: 'http://127.0.0.1:4000/multi/mod/detach', body: { sessionId: 'ending' } },
   ]);
 });
+
+test('the gateway session key is captured, echoed, and cleared at session end', async ($, on) => {
+  mock.clock(on);
+  mock.env(on, gatewayEnv);
+  on('session.id', () => ({ value: 'keyed' }));
+  on('session.end', (_$, event) => ({ sessionId: event.sessionId }));
+  on('ui.status', () => ({ value: undefined }));
+  const sent: Array<{ route: string; key: string | undefined }> = [];
+  on('http.fetch', (_$, event) => {
+    const headers = event.init?.headers as Record<string, string> | undefined;
+    sent.push({ route: new URL(event.url).pathname, key: headers?.['x-multi-mod-key'] });
+    const issued: Record<string, string> = headers?.['x-multi-mod-key']
+      ? {}
+      : { 'x-multi-mod-key': 'issued-key' };
+    return { value: { ok: true, status: 200, headers: issued, text: '{"accepted":true}' } };
+  });
+  on('turn.step', async function* (_$, event) {
+    yield { kind: 'text', index: 0, text: 'done' };
+    return stepResult(event);
+  });
+  const step = async (turnId: string) => {
+    for await (const _chunk of $.turn.step({
+      turnId,
+      agentId: 'worker',
+      index: 0,
+      model: 'multi/openai/gpt-6-astra',
+      messageCount: 1,
+    })) {
+      // Each step posts telemetry for the session.
+    }
+  };
+  await step('t1');
+  await step('t2');
+  expect(sent.map((request) => request.key)).toEqual([undefined, 'issued-key']);
+  await $.session.end({ reason: 'clear', sessionId: 'keyed', resume: { id: 'keyed' } } as never);
+  expect(sent.at(-1)).toEqual({ route: '/multi/mod/detach', key: 'issued-key' });
+  await step('t3');
+  expect(sent.at(-1)?.key).toBe(undefined);
+});
