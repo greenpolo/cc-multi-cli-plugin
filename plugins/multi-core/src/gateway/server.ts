@@ -29,6 +29,14 @@ import {
   withoutDisplayTools,
 } from './display-rows.ts';
 import type { GatewayFetch } from './fetch.ts';
+import {
+  emitHandback,
+  handbackOffered,
+  handbackRequestKind,
+  recordedReport,
+  withHandback,
+  withoutHarnessHandback,
+} from './harness-handback.ts';
 import type { NativeObservation } from './harness-progress.ts';
 import type { Emit, MessagesRequest, MessagesResponse, StopReason } from './messages.ts';
 import { ModBridge } from './mod-bridge.ts';
@@ -441,12 +449,14 @@ export function createNativeGateway({
         ? displayRows.issue(scope, observation.row)
         : undefined;
     };
-    const result = await bridge
+    const deliverHandback = handbackOffered(exchange.parsed as MessagesRequest);
+    const streamed = harnessStreamEmitter(emit, deliverHandback);
+    const nativeResult = await bridge
       .handle(
         body,
         scope,
         signal,
-        body.stream ? emit : undefined,
+        body.stream ? streamed : undefined,
         exchange.permissionContext,
         observe,
       )
@@ -460,6 +470,7 @@ export function createNativeGateway({
         );
         throw error;
       });
+    const result = finishHarnessDelivery(nativeResult, deliverHandback, body, emit);
     permissionModes?.finishModCompaction(
       identity.session,
       agentId,
@@ -492,6 +503,7 @@ export function createNativeGateway({
     exchange: ProviderRequest,
     ids: readonly string[],
     external: string | null,
+    deliverHandback: boolean,
   ) {
     const { body, emit } = exchange;
     const followUp = await pendingFollowUp(exchange, ids, providerRoute(external));
@@ -500,7 +512,7 @@ export function createNativeGateway({
     // The reply's context carries over, so the window's fill does not read as empty
     // after a turn with rows; the reply already reported its output and its spend.
     const context = followUp.usage;
-    const result: MessagesResponse = {
+    const plain: MessagesResponse = {
       id: `msg_${randomUUID()}`,
       type: 'message',
       role: 'assistant',
@@ -510,7 +522,9 @@ export function createNativeGateway({
       stop_sequence: null,
       usage: context ? { ...context, output_tokens: 0 } : { input_tokens: 0, output_tokens: 0 },
     };
-    const safeguard_results = safeguardResults(body.safeguards, result.content, 'native');
+    const result = deliverHandback ? withHandback(plain, text, body.safeguards) : plain;
+    const safeguard_results =
+      result.safeguard_results ?? safeguardResults(body.safeguards, result.content, 'native');
     if (safeguard_results) {
       result.safeguard_results = safeguard_results;
     }
@@ -520,17 +534,78 @@ export function createNativeGateway({
       emit('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
       emit('content_block_delta', { index: 0, delta: { type: 'text_delta', text } });
       emit('content_block_stop', { index: 0 });
-      emit('message_delta', {
-        delta: {
-          stop_reason: 'end_turn',
-          stop_sequence: null,
-          ...(safeguard_results === undefined ? {} : { safeguard_results }),
-        },
-        usage: result.usage,
-      });
-      emit('message_stop', {});
+      if (deliverHandback) {
+        emitHandback(emit, result);
+      }
+      emitTerminal(emit, result);
     }
     sendResult(exchange, result);
+  }
+  async function answerHandbackOnly(exchange: ProviderRequest, external: string | null) {
+    const harness = harnessFor(providerRoute(external));
+    const recorded = await harness?.recordedResponse?.(
+      harnessScope(exchange),
+      followUpContext(exchange),
+    );
+    const report = recordedReport(recorded);
+    if (report === undefined) {
+      throw new BadRequest('No recorded harness report is available for SubagentHandback');
+    }
+    const plain: MessagesResponse = {
+      id: `msg_${randomUUID()}`,
+      type: 'message',
+      role: 'assistant',
+      model: exchange.body.model ?? '',
+      content: [{ type: 'text', text: report }],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      usage: recorded?.usage ?? { input_tokens: 0, output_tokens: 0 },
+    };
+    const result = withHandback(plain, report, exchange.body.safeguards);
+    if (exchange.body.stream) {
+      exchange.startStream();
+      exchange.emit('message_start', { message: { ...result, content: [], stop_reason: null } });
+      exchange.emit('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
+      exchange.emit('content_block_delta', {
+        index: 0,
+        delta: { type: 'text_delta', text: report },
+      });
+      exchange.emit('content_block_stop', { index: 0 });
+      emitHandback(exchange.emit, result);
+      emitTerminal(exchange.emit, result);
+    }
+    sendResult(exchange, result);
+  }
+  async function answerHandbackRequest(
+    exchange: ProviderRequest,
+    kind: ReturnType<typeof handbackRequestKind>,
+    deliverHandback: boolean,
+    external: string | null,
+  ): Promise<boolean> {
+    if (!kind || !harnessProvider(external)) {
+      return false;
+    }
+    if (!deliverHandback) {
+      throw new BadRequest('SubagentHandback is required for this harness continuation');
+    }
+    await answerHandbackOnly(exchange, external);
+    return true;
+  }
+  async function dispatchGatewayMessage(
+    exchange: ProviderRequest,
+    followUp: string[] | undefined,
+    external: string | null,
+    deliverHandback: boolean,
+    handbackKind: ReturnType<typeof handbackRequestKind>,
+  ): Promise<void> {
+    if (await answerHandbackRequest(exchange, handbackKind, deliverHandback, external)) {
+      return;
+    }
+    if (followUp) {
+      await answerFollowUp(exchange, followUp, external, deliverHandback);
+      return;
+    }
+    await dispatch(exchange, exchange.identity, external);
   }
   /**
    * The deferred answer the rows' own reply holds, for the scope and provider that
@@ -1005,7 +1080,10 @@ export function createNativeGateway({
       if (url.pathname.startsWith('/multi/mod/')) {
         return handleMod(req, res, url, parsed);
       }
-      const { body, raw, followUp } = displayRowsRemoved(url, request);
+      const { body, raw, followUp, deliverHandback, handbackKind } = displayRowsRemoved(
+        url,
+        request,
+      );
       const external = externalModel(body.model);
       assertProviderEnabled(external, enabledProviders);
       const signal = providerSignal(abort.signal, external, timeoutMs);
@@ -1038,10 +1116,7 @@ export function createNativeGateway({
       if (url.pathname === '/multi/permission') {
         return sendPermissionDecision(exchange);
       }
-      if (followUp) {
-        return await answerFollowUp(exchange, followUp, external);
-      }
-      await dispatch(exchange, metadata, external);
+      await dispatchGatewayMessage(exchange, followUp, external, deliverHandback, handbackKind);
     } catch (error) {
       abort.abort();
       failResponse(res, emit, error, replies.jsonStarted, sourceModel);
@@ -1184,12 +1259,69 @@ function displayRowsRemoved(
   request: { raw: Buffer; parsed: Record<string, unknown>; body: MessagesRequest },
 ) {
   if (isApprovalRequest(request.parsed)) {
-    return { body: request.body, raw: request.raw, followUp: undefined };
+    return {
+      body: request.body,
+      raw: request.raw,
+      followUp: undefined,
+      deliverHandback: false,
+      handbackKind: undefined,
+    };
   }
+  const harness = harnessProvider(externalModel(request.body.model));
+  const deliverHandback = Boolean(harness && handbackOffered(request.body));
+  const handbackKind = harness ? handbackRequestKind(request.body) : undefined;
   const followUp = url.pathname === '/v1/messages' ? displayFollowUp(request.body) : undefined;
-  const body = withoutDisplayTools(request.body);
+  const withoutRows = withoutDisplayTools(request.body);
+  const body = harness ? withoutHarnessHandback(withoutRows) : withoutRows;
   const raw = body === request.body ? request.raw : Buffer.from(JSON.stringify(body));
-  return { body, raw, followUp };
+  return { body, raw, followUp, deliverHandback, handbackKind };
+}
+
+function emitTerminal(emit: Emit, response: MessagesResponse): void {
+  emit('message_delta', {
+    delta: {
+      stop_reason: response.stop_reason,
+      stop_sequence: response.stop_sequence,
+      ...(response.safeguard_results === undefined
+        ? {}
+        : { safeguard_results: response.safeguard_results }),
+    },
+    usage: response.usage,
+  });
+  emit('message_stop', {});
+}
+
+function harnessStreamEmitter(emit: Emit, deliverHandback: boolean): Emit {
+  return (type, value) => {
+    // The native reply is durable before its terminal event. Hold that event
+    // until the gateway has appended Claude's delivery call to the final message.
+    if (deliverHandback && (type === 'message_delta' || type === 'message_stop')) {
+      return;
+    }
+    emit(type, value);
+  };
+}
+
+function finishHarnessDelivery(
+  nativeResult: MessagesResponse,
+  deliverHandback: boolean,
+  body: MessagesRequest,
+  emit: Emit,
+): MessagesResponse {
+  if (!deliverHandback) {
+    return nativeResult;
+  }
+  const result =
+    nativeResult.multi_followup === undefined
+      ? withHandback(nativeResult, recordedReport(nativeResult) ?? '', body.safeguards)
+      : nativeResult;
+  if (body.stream) {
+    if (result !== nativeResult) {
+      emitHandback(emit, result);
+    }
+    emitTerminal(emit, result);
+  }
+  return result;
 }
 
 function providerSignal(disconnected: AbortSignal, model: string | null, timeoutMs?: number) {

@@ -6,6 +6,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Deliver native worker reports in Auto mode.** Cursor, Antigravity, and Grok
+  workers now send their final report through Claude Code's `SubagentHandback`
+  tool when it is offered. Display rows keep their follow-up answer, and resumed
+  workers continue without forwarding handback results or enforcement prompts to
+  the native harness.
 - **Close review-round gaps.** The gateway refuses any request whose `Host` is
   not its own loopback name and port, so a DNS-rebinding page cannot use the
   raw Anthropic passthrough as a relay. A `multi/` model with an unknown
