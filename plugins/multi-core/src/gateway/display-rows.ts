@@ -544,7 +544,7 @@ export function recordedFollowUp(
  * Only a well-formed request is rewritten or answered here; anything else passes
  * unchanged to the validation that refuses it with the provider's own error.
  */
-function wellFormed(body: MessagesRequest): boolean {
+export function wellFormed(body: MessagesRequest): boolean {
   const tools: unknown = body.tools;
   const messages: unknown = body.messages;
   return (

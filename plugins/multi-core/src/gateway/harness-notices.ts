@@ -98,6 +98,8 @@ function historyContent(response: MessagesResponse): ContentBlock[] {
   );
   if (response.multi_followup !== undefined) {
     content.push({ type: 'text', text: response.multi_followup || followUpFallback });
+  } else if (!content.length) {
+    content.push({ type: 'text', text: followUpFallback });
   }
   return content;
 }

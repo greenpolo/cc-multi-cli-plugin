@@ -6,6 +6,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Deliver native worker reports in Auto mode.** Cursor, Antigravity, and Grok
+  workers now send their final report through Claude Code's `SubagentHandback`
+  tool when it is offered. Display rows keep their follow-up answer, and resumed
+  workers continue without forwarding handback results or enforcement prompts to
+  the native harness.
 - **Start several `claude-multi` sessions at once.** Every launch rewrites the
   Antigravity permission hook under a file lock, and a second launch that met a
   live holder failed with "State file is locked by another gateway". The hook
