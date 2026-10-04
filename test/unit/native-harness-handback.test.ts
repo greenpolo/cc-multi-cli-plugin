@@ -91,8 +91,8 @@ function delivery(response: MessagesResponse) {
   assert.equal(block.name, 'SubagentHandback');
   assert.equal(response.stop_reason, 'tool_use');
   assert.deepEqual(response.safeguard_results?.[0].status.tool_uses[block.id], {
-    type: 'evaluated',
-    outcome: 'not_flagged',
+    type: 'unavailable',
+    reason: 'error',
   });
   return block;
 }

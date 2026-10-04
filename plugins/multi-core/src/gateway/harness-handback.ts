@@ -176,7 +176,8 @@ export function withHandback(
             type: 'available' as const,
             tool_uses: {
               ...existing[0].status.tool_uses,
-              [block.id]: { type: 'evaluated' as const, outcome: 'not_flagged' as const },
+              // Nothing reviewed the report, so auto mode's own classifier does.
+              [block.id]: { type: 'unavailable' as const, reason: 'error' as const },
             },
           },
         },
