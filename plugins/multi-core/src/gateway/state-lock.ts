@@ -12,6 +12,11 @@ export interface LockStateFileOptions {
   hostname?: string;
   platform?: NodeJS.Platform;
   maxAttempts?: number;
+  /**
+   * How long to wait for a live owner to release before failing. The default 0
+   * fails at once: a session file held by another gateway is owned, not busy.
+   */
+  waitMs?: number;
   rename?: typeof rename;
   unlink?: typeof unlink;
   open?: typeof open;
@@ -101,31 +106,65 @@ export async function lockStateFile(
   const platform = options.platform ?? process.platform;
   const owner = newOwner(options, platform);
   const maxAttempts = options.maxAttempts ?? 100;
-  const unlinkFile = options.unlink ?? unlink;
   const openFile = options.open ?? open;
-  const readFileContents = options.readFile ?? readFile;
-  const operations: LockOperations = {
-    renameFile: options.rename ?? rename,
-    unlinkFile,
-    lstatFile: options.lstat ?? lstat,
-    readFileContents,
-    linkFile: options.link ?? link,
-  };
+  const operations = lockOperations(options);
+  const { unlinkFile, readFileContents } = operations;
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
     throw new RangeError('State file lock maxAttempts must be a positive integer');
   }
+  const deadline = Date.now() + (options.waitMs ?? 0);
 
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; ) {
     const release = await tryAcquire(file, owner, platform, unlinkFile, openFile, readFileContents);
     if (release) {
       return release;
     }
-    await takeOverStaleLock(file, owner, platform, operations);
+    if (await ownerStillHolds(file, owner, platform, operations, deadline)) {
+      continue;
+    }
+    attempt += 1;
     if (platform === 'win32') {
       await delay(20);
     }
   }
   throw new Error(`State file lock acquisition exceeded ${maxAttempts} attempts`);
+}
+
+function lockOperations(options: LockStateFileOptions): LockOperations {
+  return {
+    renameFile: options.rename ?? rename,
+    unlinkFile: options.unlink ?? unlink,
+    lstatFile: options.lstat ?? lstat,
+    readFileContents: options.readFile ?? readFile,
+    linkFile: options.link ?? link,
+  };
+}
+
+class LockHeld extends Error {}
+
+const ownerPollMs = 50;
+
+/**
+ * Takes over a stale marker; a live owner's marker is waited on until `deadline`,
+ * then refused. True when the caller should try again without spending an attempt.
+ */
+async function ownerStillHolds(
+  file: string,
+  owner: LockOwner,
+  platform: NodeJS.Platform,
+  operations: LockOperations,
+  deadline: number,
+): Promise<boolean> {
+  try {
+    await takeOverStaleLock(file, owner, platform, operations);
+    return false;
+  } catch (error) {
+    if (!(error instanceof LockHeld) || Date.now() >= deadline) {
+      throw error;
+    }
+    await delay(Math.min(ownerPollMs, Math.max(1, deadline - Date.now())));
+    return true;
+  }
 }
 
 async function tryAcquire(
@@ -191,13 +230,14 @@ async function takeOverStaleLock(
   }
   const current = await readOwner(file, platform, readFileContents);
   if (!current) {
-    throw new Error('State file is locked by another gateway (owner metadata is unavailable)');
+    // The owner released between the lstat and the read: the caller acquires again.
+    return;
   }
   if (
     current !== legacyEmptyMarker &&
     (!sameMachine(current, self) || isProcessAlive(current.pid))
   ) {
-    throw new Error('State file is locked by another gateway');
+    throw new LockHeld('State file is locked by another gateway');
   }
   const stale = `${file}.stale-${randomUUID()}`;
   try {

@@ -26,6 +26,20 @@ test('acquires, excludes concurrent owners, and releases a state lock', async (t
   await nextRelease();
 });
 
+test('waits a bounded time for a live owner when asked to', async (t) => {
+  const directory = await temporaryDirectory(t, 'multi-wait-lock-');
+  const file = path.join(directory, 'hooks.lock');
+  const release = await lockStateFile(file);
+  setTimeout(() => void release(), 100);
+  const waited = await lockStateFile(file, { waitMs: 2000 });
+  await waited();
+  const held = await lockStateFile(file);
+  const started = Date.now();
+  await assert.rejects(lockStateFile(file, { waitMs: 150 }), /locked by another gateway/);
+  assert.ok(Date.now() - started >= 140);
+  await held();
+});
+
 test('legacy directory locks remain explicit recovery evidence', async (t) => {
   const directory = await temporaryDirectory(t, 'multi-legacy-lock-');
   const file = path.join(directory, 'session.lock');

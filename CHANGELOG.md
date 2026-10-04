@@ -6,6 +6,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Start several `claude-multi` sessions at once.** Every launch rewrites the
+  Antigravity permission hook under a file lock, and a second launch that met a
+  live holder failed with "State file is locked by another gateway". The hook
+  install now waits up to 5 s for the other launch, and a lock released between
+  the check and the read is retried instead of reported as missing metadata.
 - **Close review-round gaps.** The gateway refuses any request whose `Host` is
   not its own loopback name and port, so a DNS-rebinding page cannot use the
   raw Anthropic passthrough as a relay. A `multi/` model with an unknown
