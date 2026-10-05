@@ -23,7 +23,7 @@ const grok: NativeScript = (request) => ({
           {
             type: 'end',
             sessionId: request.args[request.args.indexOf('--session-id') + 1],
-            stopReason: 'stop',
+            stopReason: 'end_turn',
           },
         ]
           .map((event) => JSON.stringify(event))

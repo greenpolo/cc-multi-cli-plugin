@@ -739,6 +739,12 @@ test('mixed-provider review rejects missing, cross-session, ambiguous, and unava
   const guard = await gateway.prepare(gpt, 'node unavailable.js');
   assert.deepEqual(await guard.json(), {});
   assert.equal((await gateway.classify('node unavailable.js')).status, 400);
+  // A classifier format the gateway cannot read may be that GPT action, so it fails closed.
+  const unreadable = request(1, JSON.stringify({ session_id: 'mixed' }), 'node unavailable.js');
+  const instruction = unreadable.messages[0].content.at(-1);
+  assert(instruction);
+  instruction.text = 'A native classifier format unknown to the gateway.';
+  assert.equal((await gateway.send(unreadable)).status, 400);
   // No observed provider action matches: Claude's own classifier, answered by Anthropic.
   assert.equal((await gateway.classify('node missing.js')).status, 200);
   assert.deepEqual(gateway.nativeReviews.length, 1);

@@ -364,6 +364,12 @@ export function createNativeGateway({
         (name !== 'Bash' || matchesBashAction(candidate, action[name])),
     );
   }
+  function providerActionPending(sourceSession: string) {
+    return [...reviewCandidates.values()].some(
+      (candidate) =>
+        candidate.tool.session === sourceSession && providerOwnedReview(candidate.context.model),
+    );
+  }
   function pendingReview(parsed: Record<string, unknown>, sourceSession: string) {
     const candidates = reviewCandidatesFor(parsed, sourceSession);
     if (candidates.length !== 1) {
@@ -872,6 +878,22 @@ export function createNativeGateway({
     }
     return dispatchReview(exchange, metadata, null);
   }
+  /** The matching review candidates, or undefined when the request is Anthropic's own. */
+  function readableCandidates(parsed: Record<string, unknown>, sourceSession: string) {
+    try {
+      return reviewCandidatesFor(parsed, sourceSession);
+    } catch (error) {
+      // An action the gateway cannot read cannot be matched, so it may be the provider
+      // action waiting for review: it passes to Anthropic only when none is waiting.
+      if (blockAnthropic) {
+        throw error;
+      }
+      if (providerActionPending(sourceSession)) {
+        throw new BadRequest('Unreadable review request while a provider action awaits review');
+      }
+      return undefined;
+    }
+  }
   async function dispatchNativeClassification(
     exchange: ProviderRequest,
     metadata: ReturnType<typeof requestIdentity>,
@@ -879,13 +901,8 @@ export function createNativeGateway({
     if (!guardAuto) {
       return classifyUnobserved(exchange, metadata);
     }
-    let candidates: ReturnType<typeof reviewCandidatesFor>;
-    try {
-      candidates = reviewCandidatesFor(exchange.parsed, metadata.session);
-    } catch (error) {
-      if (blockAnthropic) {
-        throw error;
-      }
+    const candidates = readableCandidates(exchange.parsed, metadata.session);
+    if (!candidates) {
       return handleAnthropic(exchange);
     }
     if (!candidates.some(({ context }) => providerOwnedReview(context.model))) {

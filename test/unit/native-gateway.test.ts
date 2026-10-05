@@ -624,7 +624,7 @@ test('OpenAI main and worker requests adapt instructions without losing runtime 
     seen.push(JSON.parse(String(options.body)));
     return new Response(sse(textEvents));
   });
-  for (const name of ['gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
+  for (const name of ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
     await (await call({ ...payload, model: `multi/openai/${name}` })).text();
   }
   await (await call(payload, { 'x-claude-code-agent-id': 'worker-a' })).text();
@@ -753,7 +753,7 @@ test('all registered model and reasoning choices reach OpenAI without substituti
     return new Response(sse(textEvents));
   });
   assert.equal(OPENAI_WORKER_EFFORT, 'medium');
-  for (const slug of ['gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
+  for (const slug of ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
     assert(Object.values(MODELS).includes(slug), slug);
     for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
       const response = await call(

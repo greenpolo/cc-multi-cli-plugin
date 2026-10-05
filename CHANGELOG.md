@@ -6,6 +6,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Run GPT-6.1 Sol on OpenAI.** Codex now serves `gpt-6.1-sol` on ChatGPT
+  plans, so the OpenAI picker row and `model: gpt-6.1-sol` on a `multi-openai`
+  worker run it in place of the previous-generation `gpt-6-sol`. The default
+  OpenAI model stays `gpt-6-astra`.
 - **Deliver native worker reports in Auto mode.** Cursor, Antigravity, and Grok
   workers now send their final report through Claude Code's `SubagentHandback`
   tool when it is offered. Display rows keep their follow-up answer, and resumed
@@ -40,6 +44,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   returned "Missing or ambiguous pending review action" once the session had run
   a provider. It now goes to Anthropic unless a provider-owned action positively
   matches; a request routed to provider review keeps the session mismatch check.
+  A classifier request the gateway cannot read still fails closed while a
+  provider action in that session awaits review.
 - **Fix provider workers in Claude sessions.** A custom agent pinned to a
   `multi/openai` or `multi/zen` model, or a worker inheriting a provider model,
   was treated as a native Claude subagent, skipped gateway registration, and had
