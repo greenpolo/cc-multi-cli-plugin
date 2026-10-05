@@ -21,6 +21,8 @@ async function rejectingProxy(t: TestContext) {
   });
   server.on('connect', (req, socket) => {
     connections.push(req.url ?? '');
+    // A client that resets a refused tunnel must not fail the test process.
+    socket.on('error', () => {});
     socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

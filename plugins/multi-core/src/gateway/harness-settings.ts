@@ -5,12 +5,11 @@ import path from 'node:path';
 import {
   assertCursorClaudeSettings,
   cursorPermissionPolicy,
-  mergeCursorPermissions,
 } from '../../../multi-cursor/src/permissions.ts';
 import { pluginPermissions, type WorkerPermissions } from './agent-definitions.ts';
 import type { PermissionContext } from './mode-hook.ts';
 
-export interface CursorSettingsOptions {
+export interface HarnessSettingsOptions {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   osRelease?: string;
@@ -29,30 +28,74 @@ export interface CursorSettingsOptions {
 }
 
 /** Every discovery option resolved to a value; not part of the public surface. */
-type SettingsDiscovery = Required<CursorSettingsOptions>;
+type SettingsDiscovery = Required<HarnessSettingsOptions>;
+
+export const policyCommandTimeoutMs = 10_000;
+
+/**
+ * Policy probes run from fixed system directories: a bare name would let a
+ * Windows working directory (searched first) or a user PATH entry answer for
+ * the managed policy.
+ */
+export function systemCommandPath(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (platform === 'win32') {
+    const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? 'C:\\Windows';
+    const system32 = path.win32.join(root, 'System32');
+    if (command === 'powershell.exe') {
+      return path.win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    }
+    return path.win32.join(system32, command.endsWith('.exe') ? command : `${command}.exe`);
+  }
+  return command === 'defaults' ? '/usr/bin/defaults' : command;
+}
 
 const defaultRunCommand = (command: string, args: readonly string[]): Promise<string> =>
   new Promise((resolve, reject) => {
-    childProcess.execFile(command, [...args], { encoding: 'utf8' }, (error, stdout, stderr) => {
-      if (error) {
-        Object.assign(error, { stderr });
-        reject(error);
-        return;
-      }
-      resolve(stdout);
-    });
+    childProcess.execFile(
+      systemCommandPath(command),
+      [...args],
+      { encoding: 'utf8', timeout: policyCommandTimeoutMs, windowsHide: true, cwd: os.tmpdir() },
+      (error, stdout, stderr) => {
+        if (error) {
+          Object.assign(error, { stderr });
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      },
+    );
   });
 
+/** Restriction layers intersect grants and accumulate denials; none can widen another. */
+export function mergePermissions(
+  context: PermissionContext,
+  rules: WorkerPermissions = {},
+): PermissionContext {
+  let tools = context.tools;
+  if (rules.tools !== undefined) {
+    tools = tools === undefined ? rules.tools : tools.filter((tool) => rules.tools?.includes(tool));
+  }
+  return {
+    ...context,
+    tools,
+    disallowedTools: [...(context.disallowedTools ?? []), ...(rules.disallowedTools ?? [])],
+  };
+}
+
 /** Re-read on each native dispatch; Claude-side rules cannot constrain SDK tools. */
-export async function checkCursorSettings(
+export async function checkHarnessSettings(
   cwd: string,
   args: readonly string[],
   inlineSettings: Record<string, unknown>,
-  options: CursorSettingsOptions = {},
+  options: HarnessSettingsOptions = {},
 ): Promise<WorkerPermissions> {
   const { sources, restrictions } = settingSources(args);
   await pluginPermissions(cwd, [...args, '--settings', JSON.stringify(inlineSettings)]);
-  let context = mergeCursorPermissions({ permissionMode: 'auto' }, restrictions);
+  let context = mergePermissions({ permissionMode: 'auto' }, restrictions);
   const { validate = cursorPermissionPolicy, cursorToolRules = options.validate === undefined } =
     options;
   const settingsOptions: SettingsDiscovery = {
@@ -66,12 +109,12 @@ export async function checkCursorSettings(
     cursorToolRules,
   };
   context = mergePolicies(context, await managedSettings(settingsOptions));
-  context = mergeCursorPermissions(
+  context = mergePermissions(
     context,
     assertCursorClaudeSettings(inlineSettings, { cursorToolRules }),
   );
   if (sources.has('user')) {
-    context = mergeCursorPermissions(
+    context = mergePermissions(
       context,
       await checkFile(
         path.join(
@@ -85,7 +128,7 @@ export async function checkCursorSettings(
   }
   for (let directory = path.resolve(cwd); ; directory = path.dirname(directory)) {
     if (sources.has('project')) {
-      context = mergeCursorPermissions(
+      context = mergePermissions(
         context,
         await checkFile(
           path.join(directory, '.claude', 'settings.json'),
@@ -95,7 +138,7 @@ export async function checkCursorSettings(
       );
     }
     if (sources.has('local')) {
-      context = mergeCursorPermissions(
+      context = mergePermissions(
         context,
         await checkFile(
           path.join(directory, '.claude', 'settings.local.json'),
@@ -118,7 +161,7 @@ function mergePolicies(
 ): PermissionContext {
   let context = initial;
   for (const policy of policies) {
-    context = mergeCursorPermissions(context, policy);
+    context = mergePermissions(context, policy);
   }
   return context;
 }
@@ -149,7 +192,7 @@ function settingSources(args: readonly string[]): {
     } else {
       const [list, lastIndex] = toolArguments(value, args, index);
       index = lastIndex;
-      context = mergeCursorPermissions(context, toolRestriction(name, list));
+      context = mergePermissions(context, toolRestriction(name, list));
     }
   }
   return { sources: selectedSources(sources), restrictions: context };

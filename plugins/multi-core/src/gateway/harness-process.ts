@@ -1,8 +1,9 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { executableInvocation, resolveExecutable } from './executable.ts';
+import { argvSafe, executableInvocation, resolveExecutable } from './executable.ts';
 import { terminateProcessTree } from './process-tree.ts';
 
+/** Per-line and retained-stderr bound; the stream itself is not capped in total. */
 export const defaultMaxOutputBytes = 8 * 1024 * 1024;
 export const interruptGraceMs = 1500;
 export const terminateGraceMs = 1500;
@@ -15,6 +16,36 @@ const posixPromptArgumentLimitBytes = 128 * 1024;
 
 export function promptArgumentLimitBytes(platform: NodeJS.Platform): number {
   return platform === 'win32' ? windowsPromptArgumentLimitBytes : posixPromptArgumentLimitBytes;
+}
+
+/**
+ * Whether prompt text may ride in argv to the resolved CLI. A non-shim
+ * `.cmd`/`.bat` launcher is parsed by cmd.exe, which expands `%VAR%` and has no
+ * safe escape for quotes, so such prompts must go through stdin. An unresolved
+ * binary reports true; the spawn itself then fails with a clear ENOENT.
+ */
+export function promptArgvSafe(
+  prompt: string,
+  options: {
+    executable: string;
+    configuredPath?: string;
+    platform: NodeJS.Platform;
+    env: NodeJS.ProcessEnv;
+  },
+): boolean {
+  if (options.platform !== 'win32') {
+    return true;
+  }
+  try {
+    const resolved = resolveExecutable(options.executable, {
+      platform: options.platform,
+      env: options.env,
+      configuredPath: options.configuredPath,
+    });
+    return argvSafe(resolved, prompt, options.platform);
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -146,11 +177,11 @@ type RunContext<P extends NativeParser, E, R> = {
   decoder: StringDecoder;
   limit: number;
   buffer: string;
-  stdoutBytes: number;
-  stderrBytes: number;
   stderr: string;
   aborted: boolean;
   settled: boolean;
+  /** The child's own `close` arrived: its PID may already belong to someone else. */
+  closed: boolean;
   interruptTimer?: NodeJS.Timeout;
   terminateTimer?: NodeJS.Timeout;
   cancellationTimer?: NodeJS.Timeout;
@@ -185,11 +216,10 @@ export function runNativeCli<P extends NativeParser, R, E = unknown>(
       decoder: new StringDecoder('utf8'),
       limit: spec.maxOutputBytes ?? defaultMaxOutputBytes,
       buffer: '',
-      stdoutBytes: 0,
-      stderrBytes: 0,
       stderr: '',
       aborted: false,
       settled: false,
+      closed: false,
       onAbort: () => {},
       resolve,
       reject,
@@ -236,7 +266,10 @@ function attach<P extends NativeParser, E, R>(context: RunContext<P, E, R>): voi
   child.stdin?.on('error', (error: Error) => {
     fail(context, new NativeCliError(`${spec.executable} stdin failed: ${error.message}`, 'spawn'));
   });
-  child.once('close', (exitCode, signal) => finishRun(context, exitCode, signal));
+  child.once('close', (exitCode, signal) => {
+    context.closed = true;
+    finishRun(context, exitCode, signal);
+  });
   spec.signal.addEventListener('abort', context.onAbort, { once: true });
   if (spec.signal.aborted) {
     context.onAbort();
@@ -250,9 +283,19 @@ function kill<P extends NativeParser, E, R>(
   context: RunContext<P, E, R>,
   signal: NodeJS.Signals,
 ): void {
-  if (context.child.pid) {
-    terminateProcessTree(context.child.pid, { platform: context.spec.platform, signal });
+  const { pid } = context.child;
+  if (!pid) {
+    return;
   }
+  if (context.closed) {
+    // The child is gone. taskkill by PID could hit a recycled PID, and on POSIX
+    // only the group (which outlives its leader while members remain) is safe.
+    if (context.spec.platform !== 'win32') {
+      terminateProcessTree(pid, { platform: context.spec.platform, signal, groupOnly: true });
+    }
+    return;
+  }
+  terminateProcessTree(pid, { platform: context.spec.platform, signal });
 }
 
 /** Interrupt first, then terminate, then kill: a CLI may save native state. */
@@ -298,31 +341,33 @@ function consumeStdout<P extends NativeParser, E, R>(
   if (context.spec.parser.failure) {
     return;
   }
-  context.stdoutBytes += chunk.byteLength;
-  if (context.stdoutBytes > context.limit) {
-    fail(
-      context,
-      new NativeCliError(`${context.spec.name} stdout exceeded its safety limit`, 'output_limit'),
-    );
-    return;
-  }
   context.buffer += context.decoder.write(chunk);
   let newline = context.buffer.indexOf('\n');
   while (newline >= 0) {
     const line = context.buffer.slice(0, newline).replace(/\r$/, '');
     context.buffer = context.buffer.slice(newline + 1);
+    if (line.length > context.limit) {
+      failLineLimit(context);
+      return;
+    }
     parse(context, line);
     newline = context.buffer.indexOf('\n');
   }
+  // The stream is JSONL and consumed incrementally, so only one unfinished
+  // line is ever retained; a long healthy run is bounded per line, not in total.
   if (context.buffer.length > context.limit) {
-    fail(
-      context,
-      new NativeCliError(
-        `${context.spec.name} stdout line exceeded its safety limit`,
-        'output_limit',
-      ),
-    );
+    failLineLimit(context);
   }
+}
+
+function failLineLimit<P extends NativeParser, E, R>(context: RunContext<P, E, R>): void {
+  fail(
+    context,
+    new NativeCliError(
+      `${context.spec.name} stdout line exceeded its safety limit`,
+      'output_limit',
+    ),
+  );
 }
 
 function parse<P extends NativeParser, E, R>(context: RunContext<P, E, R>, line: string): void {
@@ -341,15 +386,11 @@ function consumeStderr<P extends NativeParser, E, R>(
   if (context.spec.parser.failure) {
     return;
   }
-  context.stderrBytes += chunk.byteLength;
-  if (context.stderrBytes > context.limit) {
-    fail(
-      context,
-      new NativeCliError(`${context.spec.name} stderr exceeded its safety limit`, 'output_limit'),
-    );
-    return;
-  }
+  // Only the tail is diagnostic; a chatty CLI must not fail an otherwise healthy run.
   context.stderr += chunk.toString('utf8');
+  if (context.stderr.length > context.limit) {
+    context.stderr = context.stderr.slice(-context.limit);
+  }
 }
 
 function abortRun<P extends NativeParser, E, R>(context: RunContext<P, E, R>): void {

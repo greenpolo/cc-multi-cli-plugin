@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -44,4 +44,34 @@ test('rejects an unbounded retry configuration', async () => {
     }),
     /retries must be a non-negative integer/,
   );
+});
+
+test('syncs the temporary file before rename and the directory after, except on Windows', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'atomic-write-sync-'));
+  t.after(() => removeTemporary(directory));
+  for (const platform of ['linux', 'win32'] as const) {
+    const events: string[] = [];
+    const spyOpen = (async (target: string, flags: string, mode?: number) => {
+      const handle = await open(target, flags, mode);
+      const sync = handle.sync.bind(handle);
+      handle.sync = async () => {
+        events.push(`sync:${target === directory ? 'dir' : 'tmp'}`);
+        await sync();
+      };
+      return handle;
+    }) as typeof open;
+    await atomicWriteFile(path.join(directory, 'state.json'), 'v', {
+      platform,
+      open: spyOpen,
+      rename: async (from, to) => {
+        events.push('rename');
+        const { rename } = await import('node:fs/promises');
+        await rename(from, to);
+      },
+    });
+    assert.deepEqual(
+      events,
+      platform === 'win32' ? ['sync:tmp', 'rename'] : ['sync:tmp', 'rename', 'sync:dir'],
+    );
+  }
 });

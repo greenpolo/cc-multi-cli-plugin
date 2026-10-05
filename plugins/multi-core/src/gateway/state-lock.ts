@@ -1,10 +1,22 @@
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { lstat, open, readFile, rename, unlink } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { link, lstat, open, readFile, rename, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 
 export interface LockStateFileOptions {
+  /** Exclusive re-creation of a marker that was moved aside by mistake. */
+  link?: typeof link;
+  /** Stable machine identity; defaults to the OS-provided id when one exists. */
+  machineId?: string | undefined;
+  hostname?: string;
   platform?: NodeJS.Platform;
   maxAttempts?: number;
+  /**
+   * How long to wait for a live owner to release before failing. The default 0
+   * fails at once: a session file held by another gateway is owned, not busy.
+   */
+  waitMs?: number;
   rename?: typeof rename;
   unlink?: typeof unlink;
   open?: typeof open;
@@ -18,6 +30,63 @@ interface LockOwner {
   pid: number;
   hostname: string;
   token: string;
+  /** OS machine identity that survives a hostname change (absent in older markers). */
+  machine?: string;
+}
+
+let cachedMachineId: { value: string | undefined } | undefined;
+
+/**
+ * A hostname follows the network (macOS flips between `.local`, `.lan` and
+ * conflict suffixes), so identity prefers an OS machine id when one is readable.
+ */
+export function machineIdentity(platform: NodeJS.Platform = process.platform): string | undefined {
+  if (cachedMachineId) {
+    return cachedMachineId.value;
+  }
+  let value: string | undefined;
+  try {
+    if (platform === 'linux') {
+      value = readFileSync('/etc/machine-id', 'utf8').trim() || undefined;
+    } else if (platform === 'darwin') {
+      const output = execFileSync('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], {
+        encoding: 'utf8',
+        timeout: 2000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      value = /"IOPlatformUUID"\s*=\s*"([^"]+)"/.exec(output)?.[1];
+    }
+  } catch {
+    value = undefined;
+  }
+  cachedMachineId = { value };
+  return value;
+}
+
+/** Lower-cased first label: `Mac.local`, `mac.lan` and `MAC` are one machine name. */
+export function normalizeHostname(name: string): string {
+  return name.toLowerCase().split('.')[0] ?? '';
+}
+
+/** Whether a marker was written by this machine, tolerating hostname drift. */
+export function sameMachine(
+  recorded: LockOwner,
+  self: { hostname: string; machine?: string | undefined },
+): boolean {
+  if (recorded.machine !== undefined && self.machine !== undefined) {
+    return recorded.machine === self.machine;
+  }
+  return normalizeHostname(recorded.hostname) === normalizeHostname(self.hostname);
+}
+
+function newOwner(options: LockStateFileOptions, platform: NodeJS.Platform): LockOwner {
+  const machine = 'machineId' in options ? options.machineId : machineIdentity(platform);
+  return {
+    pid: process.pid,
+    hostname: options.hostname ?? hostname(),
+    token: randomUUID(),
+    ...(machine === undefined ? {} : { machine }),
+  };
 }
 
 /**
@@ -35,28 +104,67 @@ export async function lockStateFile(
   options: LockStateFileOptions = {},
 ): Promise<() => Promise<void>> {
   const platform = options.platform ?? process.platform;
-  const owner: LockOwner = { pid: process.pid, hostname: hostname(), token: randomUUID() };
+  const owner = newOwner(options, platform);
   const maxAttempts = options.maxAttempts ?? 100;
-  const renameFile = options.rename ?? rename;
-  const unlinkFile = options.unlink ?? unlink;
   const openFile = options.open ?? open;
-  const lstatFile = options.lstat ?? lstat;
-  const readFileContents = options.readFile ?? readFile;
+  const operations = lockOperations(options);
+  const { unlinkFile, readFileContents } = operations;
   if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
     throw new RangeError('State file lock maxAttempts must be a positive integer');
   }
+  const deadline = Date.now() + (options.waitMs ?? 0);
 
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; ) {
     const release = await tryAcquire(file, owner, platform, unlinkFile, openFile, readFileContents);
     if (release) {
       return release;
     }
-    await takeOverStaleLock(file, platform, renameFile, unlinkFile, lstatFile, readFileContents);
+    if (await ownerStillHolds(file, owner, platform, operations, deadline)) {
+      continue;
+    }
+    attempt += 1;
     if (platform === 'win32') {
       await delay(20);
     }
   }
   throw new Error(`State file lock acquisition exceeded ${maxAttempts} attempts`);
+}
+
+function lockOperations(options: LockStateFileOptions): LockOperations {
+  return {
+    renameFile: options.rename ?? rename,
+    unlinkFile: options.unlink ?? unlink,
+    lstatFile: options.lstat ?? lstat,
+    readFileContents: options.readFile ?? readFile,
+    linkFile: options.link ?? link,
+  };
+}
+
+class LockHeld extends Error {}
+
+const ownerPollMs = 50;
+
+/**
+ * Takes over a stale marker; a live owner's marker is waited on until `deadline`,
+ * then refused. True when the caller should try again without spending an attempt.
+ */
+async function ownerStillHolds(
+  file: string,
+  owner: LockOwner,
+  platform: NodeJS.Platform,
+  operations: LockOperations,
+  deadline: number,
+): Promise<boolean> {
+  try {
+    await takeOverStaleLock(file, owner, platform, operations);
+    return false;
+  } catch (error) {
+    if (!(error instanceof LockHeld) || Date.now() >= deadline) {
+      throw error;
+    }
+    await delay(Math.min(ownerPollMs, Math.max(1, deadline - Date.now())));
+    return true;
+  }
 }
 
 async function tryAcquire(
@@ -93,14 +201,21 @@ async function openLock(file: string, openFile: typeof open) {
   }
 }
 
+interface LockOperations {
+  renameFile: typeof rename;
+  unlinkFile: typeof unlink;
+  lstatFile: typeof lstat;
+  readFileContents: typeof readFile;
+  linkFile: typeof link;
+}
+
 async function takeOverStaleLock(
   file: string,
+  self: LockOwner,
   platform: NodeJS.Platform,
-  renameFile: typeof rename,
-  unlinkFile: typeof unlink,
-  lstatFile: typeof lstat,
-  readFileContents: typeof readFile,
+  operations: LockOperations,
 ): Promise<void> {
+  const { renameFile, unlinkFile, lstatFile, readFileContents, linkFile } = operations;
   const info = await lstatFile(file).catch((error: unknown) => {
     if (isCode(error, 'ENOENT')) {
       return undefined;
@@ -115,13 +230,14 @@ async function takeOverStaleLock(
   }
   const current = await readOwner(file, platform, readFileContents);
   if (!current) {
-    throw new Error('State file is locked by another gateway (owner metadata is unavailable)');
+    // The owner released between the lstat and the read: the caller acquires again.
+    return;
   }
   if (
     current !== legacyEmptyMarker &&
-    (current.hostname !== hostname() || isProcessAlive(current.pid))
+    (!sameMachine(current, self) || isProcessAlive(current.pid))
   ) {
-    throw new Error('State file is locked by another gateway');
+    throw new LockHeld('State file is locked by another gateway');
   }
   const stale = `${file}.stale-${randomUUID()}`;
   try {
@@ -134,6 +250,13 @@ async function takeOverStaleLock(
       cause: error,
     });
   }
+  // Between our read and the rename another gateway may have taken over and
+  // acquired; then the marker we moved is a live lock and must go back.
+  const moved = await readOwner(stale, platform, readFileContents);
+  if (!sameMarker(current, moved)) {
+    await restoreMovedMarker(file, stale, platform, { linkFile, unlinkFile });
+    return;
+  }
   await retryLockOperation(() => unlinkFile(stale), platform, 'stale-lock cleanup').catch(
     (error: unknown) => {
       if (!isCode(error, 'ENOENT')) {
@@ -141,6 +264,34 @@ async function takeOverStaleLock(
       }
     },
   );
+}
+
+function sameMarker(
+  expected: LockOwner | typeof legacyEmptyMarker,
+  actual: LockOwner | typeof legacyEmptyMarker | undefined,
+): boolean {
+  if (expected === legacyEmptyMarker || actual === legacyEmptyMarker) {
+    return expected === actual;
+  }
+  return actual !== undefined && actual.token === expected.token;
+}
+
+/** `link` creates the marker only if none exists, so a newer owner is never clobbered. */
+async function restoreMovedMarker(
+  file: string,
+  stale: string,
+  platform: NodeJS.Platform,
+  operations: Pick<LockOperations, 'linkFile' | 'unlinkFile'>,
+): Promise<void> {
+  try {
+    await retryLockOperation(() => operations.linkFile(stale, file), platform, 'lock restore');
+  } catch (error) {
+    // Another gateway already re-acquired; the contested marker is stale-by-token.
+    if (!(error instanceof Error && isCode(error.cause, 'EEXIST'))) {
+      throw error;
+    }
+  }
+  await operations.unlinkFile(stale).catch(() => {});
 }
 
 async function releaseLock(
@@ -155,7 +306,7 @@ async function releaseLock(
     !current ||
     current === legacyEmptyMarker ||
     current.token !== owner.token ||
-    current.hostname !== owner.hostname
+    !sameMachine(current, owner)
   ) {
     return;
   }

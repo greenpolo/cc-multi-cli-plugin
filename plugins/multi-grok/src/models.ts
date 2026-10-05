@@ -4,7 +4,7 @@ import {
   executableInvocation,
   resolveExecutable,
 } from '../../multi-core/src/gateway/executable.ts';
-import type { Effort } from '../../multi-openai/src/responses.ts';
+import type { Effort } from '../../multi-core/src/gateway/responses.ts';
 import { grokEnvironment } from './cli.ts';
 
 /**

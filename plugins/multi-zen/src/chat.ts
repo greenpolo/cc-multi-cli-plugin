@@ -7,11 +7,18 @@ import type {
   ResponseContentBlock,
   StopReason,
 } from '../../multi-core/src/gateway/messages.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
+import { prefixSafeLength, readSse } from '../../multi-core/src/gateway/responses.ts';
 import { safeguardResults } from '../../multi-core/src/gateway/safeguards.ts';
 import { callId, toolName } from '../../multi-core/src/gateway/tools.ts';
-import { prefixSafeLength, readSse } from '../../multi-openai/src/responses.ts';
 
 const SIGNATURE_PREFIX = 'multi-zen-chat:';
+export const ZEN_RESPONSES_SIGNATURE_PREFIX = 'multi-zen-responses:';
+/** Every opaque reasoning signature Zen emits, for stripping from Claude-bound history. */
+export const ZEN_SIGNATURE_PREFIXES: readonly string[] = [
+  ZEN_RESPONSES_SIGNATURE_PREFIX,
+  SIGNATURE_PREFIX,
+];
 const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 export interface ChatRequest {
@@ -87,10 +94,6 @@ interface ChatEvent {
   error?: unknown;
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function string(value: unknown, name: string): string {
   if (typeof value !== 'string') {
     throw new Error(`Invalid ${name}`);
@@ -106,7 +109,7 @@ function blocks(value: unknown): ContentBlock[] {
     throw new Error('Expected text or content blocks');
   }
   for (const block of value) {
-    if (!record(block) || typeof block.type !== 'string') {
+    if (!isRecord(block) || typeof block.type !== 'string') {
       throw new Error('Invalid content block');
     }
   }
@@ -121,7 +124,7 @@ function text(value: unknown): string {
       }
       return block.text;
     })
-    .join('');
+    .join('\n');
 }
 
 function image(block: ContentBlock): ChatContent {
@@ -156,7 +159,7 @@ function image(block: ContentBlock): ChatContent {
 function userContent(value: unknown): string | ChatContent[] {
   const content = blocks(value);
   if (content.every((block) => block.type === 'text')) {
-    return content.map((block) => block.text as string).join('');
+    return content.map((block) => block.text as string).join('\n');
   }
   return content.map((block) => {
     if (block.type === 'text') {
@@ -192,7 +195,7 @@ function ownReasoning(model: string, block: ContentBlock): string | undefined {
     const decoded: unknown = JSON.parse(
       Buffer.from(block.signature.slice(prefix.length), 'base64url').toString(),
     );
-    if (record(decoded) && typeof decoded.reasoning === 'string') {
+    if (isRecord(decoded) && typeof decoded.reasoning === 'string') {
       return decoded.reasoning;
     }
   } catch {
@@ -247,7 +250,7 @@ function assistantText(
     return { kind: 'text', value: string(block.text, 'assistant text') };
   }
   if (block.type === 'tool_use') {
-    if (!block.id || !block.name || !record(block.input)) {
+    if (!block.id || !block.name || !isRecord(block.input)) {
       throw new Error('Invalid tool_use');
     }
     return {
@@ -299,7 +302,7 @@ function plainToolResult(content: ContentBlock[], isError: boolean | undefined):
   const value = content
     .filter((item) => item.type === 'text')
     .map((item) => item.text as string)
-    .join('');
+    .join('\n');
   const references = content
     .filter((item) => item.type === 'tool_reference')
     .map((item) => {
@@ -403,7 +406,7 @@ function lowerUserBlocks(content: ContentBlock[], messages: ChatMessage[]) {
       previous?.role === 'user' &&
       typeof previous.content === 'string'
     ) {
-      previous.content += value;
+      previous.content += `\n${value}`;
     } else {
       messages.push({ role: 'user', content: value });
     }
@@ -415,20 +418,20 @@ function chatTools(body: MessagesRequest): ChatTool[] {
     .filter(
       (tool) =>
         !isDeferredTool(tool) ||
-        (record(tool) && typeof tool.name === 'string' && isDirectToolAvailable(body, tool.name)),
+        (isRecord(tool) && typeof tool.name === 'string' && isDirectToolAvailable(body, tool.name)),
     )
     .map(chatTool);
 }
 
 function isDeferredTool(tool: unknown): boolean {
-  return record(tool) && tool.defer_loading === true;
+  return isRecord(tool) && tool.defer_loading === true;
 }
 
 function chatTool(tool: unknown): ChatTool {
-  if (!record(tool) || (tool.type !== undefined && tool.type !== 'custom')) {
+  if (!isRecord(tool) || (tool.type !== undefined && tool.type !== 'custom')) {
     throw new Error('Invalid tool');
   }
-  if (typeof tool.name !== 'string' || !tool.name.trim() || !record(tool.input_schema)) {
+  if (typeof tool.name !== 'string' || !tool.name.trim() || !isRecord(tool.input_schema)) {
     throw new Error('Invalid function tool');
   }
   if (tool.description !== undefined && typeof tool.description !== 'string') {
@@ -463,7 +466,7 @@ function requestOptions(body: MessagesRequest, result: ChatRequest): ChatRequest
   }
   const format = body.output_config?.format ?? body.output_format;
   if (format !== undefined) {
-    if (format.type !== 'json_schema' || !record(format.schema)) {
+    if (format.type !== 'json_schema' || !isRecord(format.schema)) {
       throw new Error('Unsupported output format');
     }
     result.response_format = {
@@ -475,7 +478,7 @@ function requestOptions(body: MessagesRequest, result: ChatRequest): ChatRequest
 }
 
 function validUsage(value: unknown): value is ChatUsage {
-  if (!record(value)) {
+  if (!isRecord(value)) {
     return false;
   }
   if (!validUsageNumbers(value) || !validUsageDetails(value)) {
@@ -514,14 +517,14 @@ function validUsageDetails(value: Record<string, unknown>): boolean {
       return true;
     }
     return (
-      record(item) &&
+      isRecord(item) &&
       Object.values(item).every((nested) => Number.isSafeInteger(nested) && Number(nested) >= 0)
     );
   });
 }
 
 function usageNumber(value: unknown, ...keys: string[]): number | undefined {
-  if (!record(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
   for (const key of keys) {
@@ -564,7 +567,7 @@ function delta(value: unknown): ChatDelta {
   if (value === undefined || value === null) {
     return {};
   }
-  if (!record(value)) {
+  if (!isRecord(value)) {
     throw new Error('Malformed Zen Chat choice');
   }
   for (const key of ['content', 'reasoning_content']) {
@@ -624,8 +627,8 @@ class ChatAccumulator {
   private stop?: StopReason;
   private started = false;
   private ended = false;
-  private textIndex?: number;
-  private reasoningIndex?: number;
+  /** The one content block currently open; blocks are strictly sequential. */
+  private open?: { kind: 'text' | 'thinking'; index: number };
 
   constructor(model: string, emit: Emit, options: ChatResponseOptions) {
     this.model = model;
@@ -634,7 +637,7 @@ class ChatAccumulator {
   }
 
   accept(value: unknown) {
-    if (!record(value)) {
+    if (!isRecord(value)) {
       throw new Error('Malformed Zen Chat event');
     }
     const event = value as ChatEvent;
@@ -653,7 +656,9 @@ class ChatAccumulator {
       return;
     }
     throw new Error(
-      record(error) && typeof error.message === 'string' ? error.message : 'Zen Chat stream failed',
+      isRecord(error) && typeof error.message === 'string'
+        ? error.message
+        : 'Zen Chat stream failed',
     );
   }
 
@@ -676,7 +681,7 @@ class ChatAccumulator {
       return;
     }
     const choice = value[0];
-    if (!record(choice)) {
+    if (!isRecord(choice)) {
       throw new Error('Malformed Zen Chat choice');
     }
     if (choice.index !== undefined && choice.index !== 0) {
@@ -725,36 +730,60 @@ class ChatAccumulator {
   }
 
   private beginText(): number {
-    if (this.textIndex !== undefined) {
-      return this.textIndex;
+    if (this.open?.kind === 'text') {
+      return this.open.index;
     }
-    this.textIndex = this.content.length;
+    this.closeOpen();
+    this.textValue = '';
+    this.textEmitted = 0;
+    const index = this.content.length;
+    this.open = { kind: 'text', index };
     this.content.push({ type: 'text', text: '' });
-    this.emit('content_block_start', {
-      index: this.textIndex,
-      content_block: { type: 'text', text: '' },
-    });
-    return this.textIndex;
+    this.emit('content_block_start', { index, content_block: { type: 'text', text: '' } });
+    return index;
   }
 
   private beginReasoning(): number {
-    if (this.reasoningIndex !== undefined) {
-      return this.reasoningIndex;
+    if (this.open?.kind === 'thinking') {
+      return this.open.index;
     }
-    this.reasoningIndex = this.content.length;
+    this.closeOpen();
+    this.reasoning = '';
+    const index = this.content.length;
+    this.open = { kind: 'thinking', index };
     this.content.push({ type: 'thinking', thinking: '', signature: '' });
     this.emit('content_block_start', {
-      index: this.reasoningIndex,
+      index,
       content_block: { type: 'thinking', thinking: '', signature: '' },
     });
-    return this.reasoningIndex;
+    return index;
+  }
+
+  /** Finish the open block before another begins, as the Messages stream requires. */
+  private closeOpen() {
+    const open = this.open;
+    if (!open) {
+      return;
+    }
+    const block = this.content[open.index];
+    if (block?.type === 'thinking') {
+      block.signature = signature(this.model, this.reasoning);
+      this.emit('content_block_delta', {
+        index: open.index,
+        delta: { type: 'signature_delta', signature: block.signature },
+      });
+    } else {
+      this.flushText();
+    }
+    this.emit('content_block_stop', { index: open.index });
+    this.open = undefined;
   }
 
   private addReasoning(value: unknown) {
     if (typeof value !== 'string') {
       return;
     }
-    if (this.stoppedSequence) {
+    if (this.stoppedSequence || (!value && this.open?.kind !== 'thinking')) {
       return;
     }
     const index = this.beginReasoning();
@@ -776,7 +805,7 @@ class ChatAccumulator {
     if (typeof value !== 'string') {
       return;
     }
-    if (!value && this.textIndex === undefined) {
+    if (!value && this.open?.kind !== 'text') {
       return;
     }
     if (this.stoppedSequence) {
@@ -831,7 +860,7 @@ class ChatAccumulator {
   }
 
   private toolSlot(raw: unknown): ToolSlot {
-    if (!record(raw) || !Number.isSafeInteger(raw.index) || Number(raw.index) < 0) {
+    if (!isRecord(raw) || !Number.isSafeInteger(raw.index) || Number(raw.index) < 0) {
       throw new Error('Malformed Zen tool call delta');
     }
     const index = Number(raw.index);
@@ -859,7 +888,7 @@ class ChatAccumulator {
     if (fn === undefined) {
       return;
     }
-    if (!record(fn)) {
+    if (!isRecord(fn)) {
       throw new Error('Malformed Zen function delta');
     }
     if (fn.name !== undefined && fn.name !== null) {
@@ -942,7 +971,7 @@ class ChatAccumulator {
       } catch {
         throw new Error('Zen Chat returned invalid tool arguments');
       }
-      if (!record(input)) {
+      if (!isRecord(input)) {
         throw new Error('Zen Chat tool arguments must be an object');
       }
       const block: Extract<ResponseContentBlock, { type: 'tool_use' }> = {
@@ -970,23 +999,15 @@ class ChatAccumulator {
   }
 
   private finishStreamedBlocks() {
-    for (const [index, block] of this.content.entries()) {
-      if (block.type === 'thinking') {
-        block.signature = signature(this.model, this.reasoning);
-        this.emit('content_block_delta', {
-          index,
-          delta: { type: 'signature_delta', signature: block.signature },
-        });
-      }
-      this.emit('content_block_stop', { index });
-    }
+    this.closeOpen();
   }
 
   private flushText() {
-    if (this.textIndex === undefined || this.stoppedSequence) {
+    if (this.open?.kind !== 'text' || this.stoppedSequence) {
       return;
     }
-    const block = this.content[this.textIndex];
+    const textIndex = this.open.index;
+    const block = this.content[textIndex];
     if (block?.type !== 'text') {
       throw new Error('Invalid text state');
     }
@@ -995,7 +1016,7 @@ class ChatAccumulator {
     this.textEmitted = this.textValue.length;
     if (remainder) {
       this.emit('content_block_delta', {
-        index: this.textIndex,
+        index: textIndex,
         delta: { type: 'text_delta', text: remainder },
       });
     }

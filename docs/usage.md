@@ -42,7 +42,7 @@ The advisory uses the same cached account lookups as the menu. Unavailable quota
 is labeled unknown, and lookup failures do not stop the agent. Worker receipts
 are not included in the advisory. Disabling the toggle stops future advisories;
 earlier context already received by the agent is not removed. The preference is
-session-only and is cleared when the session detaches.
+session-only and is cleared when the session ends.
 
 Runtime totals cover requests observed by this gateway process; restarting the
 launcher starts a new in-memory view. Claude subscription passthrough and reviewer

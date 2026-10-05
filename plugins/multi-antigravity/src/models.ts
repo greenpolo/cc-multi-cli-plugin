@@ -4,6 +4,7 @@ import {
   executableInvocation,
   resolveExecutable,
 } from '../../multi-core/src/gateway/executable.ts';
+import { nativeSpelling } from '../../multi-core/src/gateway/provider.ts';
 import { antigravityEnvironment } from './cli.ts';
 
 export interface AntigravityModel {
@@ -101,12 +102,22 @@ export function antigravityDefaultWorkerModel(ids: readonly string[]): string | 
     if (!match) {
       continue;
     }
-    const rank = [Number(match[1]), Number(match[2] ?? 0), id.includes('-pro') ? 1 : 0];
-    if (!best || compareRank(rank, best.rank) > 0) {
+    // Pro before Flash, Flash before Flash-Lite; equal ranks fall to the greater id so the
+    // pick never depends on the order `agy models` lists.
+    const rank = [Number(match[1]), Number(match[2] ?? 0), modelTier(id)];
+    const order = best ? compareRank(rank, best.rank) : 1;
+    if (!best || order > 0 || (order === 0 && id > best.id)) {
       best = { id, rank };
     }
   }
   return best?.id;
+}
+
+function modelTier(id: string): number {
+  if (id.includes('-pro')) {
+    return 2;
+  }
+  return id.includes('-lite') ? 0 : 1;
 }
 
 function compareRank(left: readonly number[], right: readonly number[]): number {
@@ -127,11 +138,6 @@ function defaultVariant(models: readonly AntigravityModel[], base: string) {
     }
   }
   throw new Error('Antigravity base route has no advertised native variant.');
-}
-
-/** Claude's 1M-context picker tag; it is display metadata and never a native model ID. */
-export function nativeSpelling(model: string | undefined): string | undefined {
-  return model?.replace(/\[1m\]$/i, '');
 }
 
 /** Resolve advertised variants; let agy validate effort for models without suffixes. */

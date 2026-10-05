@@ -624,3 +624,64 @@ test('fromChat rejects a tool finish without calls and normalizes tools on stop'
   );
   assert.equal(result.stop_reason, 'tool_use');
 });
+
+test('fromChat emits strictly sequential blocks, one per reasoning or text segment', async () => {
+  const seen = capture();
+  const chunk = (delta: Record<string, unknown>, finish: string | null = null) => ({
+    id: 'chat-seq',
+    choices: [{ index: 0, delta, finish_reason: finish }],
+  });
+  const result = await fromChat(
+    sse([
+      chunk({ reasoning_content: 'one' }),
+      chunk({ content: 'say' }),
+      chunk({ reasoning_content: 'two' }),
+      chunk({ content: 'more' }, 'stop'),
+      { id: 'chat-seq', choices: [], usage: { prompt_tokens: 5, completion_tokens: 4 } },
+    ]),
+    model,
+    seen.emit,
+  );
+  assert.deepEqual(
+    result.content.map((block) => block.type),
+    ['thinking', 'text', 'thinking', 'text'],
+  );
+  assert.equal(result.content[2]?.type === 'thinking' ? result.content[2].thinking : '', 'two');
+  const order = seen.events
+    .filter((event) => event.type.startsWith('content_block_s'))
+    .map((event) => `${event.type}:${(event.value as { index: number }).index}`);
+  assert.deepEqual(order, [
+    'content_block_start:0',
+    'content_block_stop:0',
+    'content_block_start:1',
+    'content_block_stop:1',
+    'content_block_start:2',
+    'content_block_stop:2',
+    'content_block_start:3',
+    'content_block_stop:3',
+  ]);
+});
+
+test('toChat joins separate system and user text blocks with a newline', () => {
+  const request = toChat(
+    {
+      model,
+      system: [
+        { type: 'text', text: 'first rule' },
+        { type: 'text', text: 'second rule' },
+      ],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'alpha' },
+            { type: 'text', text: 'beta' },
+          ],
+        },
+      ],
+    } as never,
+    'kimi-k3',
+  ) as { messages: { role: string; content: unknown }[] };
+  assert.equal(request.messages[0]?.content, 'first rule\nsecond rule');
+  assert.equal(request.messages[1]?.content, 'alpha\nbeta');
+});

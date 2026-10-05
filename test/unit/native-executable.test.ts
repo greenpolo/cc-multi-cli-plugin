@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  argvSafe,
   executableInvocation,
+  isCmdSafeArgument,
   resolveExecutable,
+  UnsafeCommandArgumentError,
 } from '../../plugins/multi-core/src/gateway/executable.ts';
 
 test('resolves Windows npm shims using PATHEXT order', () => {
@@ -111,6 +114,29 @@ test('invokes a canonical npm cmd shim with Node directly', () => {
   assert.deepEqual(seen, [target]);
 });
 
+test('runs an npm cmd shim for a native binary directly', () => {
+  // npm's shim for Claude Code's bin/claude.exe: no Node program, the binary itself.
+  const shim = [
+    '@ECHO off',
+    'GOTO start',
+    ':find_dp0',
+    'SET dp0=%~dp0',
+    'EXIT /b',
+    ':start',
+    'SETLOCAL',
+    'CALL :find_dp0',
+    '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*',
+  ].join('\r\n');
+  const target = 'C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe';
+  const options = { readShim: () => shim, exists: (filename: string) => filename === target };
+  const settings = '{"permissions":{"allow":["Read"]}}';
+  assert.deepEqual(
+    executableInvocation('C:\\npm\\claude.cmd', ['--settings', settings], 'win32', {}, options),
+    { command: target, args: ['--settings', settings], viaComSpec: false },
+  );
+  assert.equal(argvSafe('C:\\npm\\claude.cmd', settings, 'win32', options), true);
+});
+
 test('resolves npm layouts in bat shims', () => {
   const target = 'C:\\tools\\node_modules\\claude\\cli.mjs';
   assert.deepEqual(
@@ -159,4 +185,62 @@ test('Windows resolution reads Path and PathExt regardless of spelling', () => {
     exists: (candidate) => candidate === 'C:\\bin\\claude.cmd',
   });
   assert.equal(found, 'C:\\bin\\claude.cmd');
+});
+
+const comSpec = { ComSpec: 'C:\\Windows\\System32\\cmd.exe' };
+const noShim = { readShim: () => 'unexpected shim body' };
+
+test('refuses cmd.exe metacharacters on the ComSpec path', () => {
+  for (const hostile of [
+    'a"&calc&"',
+    '%PATH%',
+    '!VAR!',
+    'x^y',
+    'a&b',
+    'a|b',
+    'a<b',
+    'a>b',
+    'line\nbreak',
+    'line\rbreak',
+    'say "hi"',
+  ]) {
+    assert.throws(
+      () => executableInvocation('C:\\tools\\agy.cmd', ['-p', hostile], 'win32', comSpec, noShim),
+      UnsafeCommandArgumentError,
+      JSON.stringify(hostile),
+    );
+    assert.equal(isCmdSafeArgument(hostile), false);
+    assert.equal(argvSafe('C:\\tools\\agy.cmd', hostile, 'win32', noShim), false);
+  }
+});
+
+test('refuses a hostile executable path on the ComSpec path', () => {
+  assert.throws(
+    () => executableInvocation('C:\\a%TEMP%\\agy.cmd', [], 'win32', comSpec, noShim),
+    UnsafeCommandArgumentError,
+  );
+});
+
+test('plain text with spaces and parentheses still passes through cmd.exe', () => {
+  const invocation = executableInvocation(
+    'C:\\tools\\agy.cmd',
+    ['-p', 'fix (the) bug, now'],
+    'win32',
+    comSpec,
+    noShim,
+  );
+  assert.equal(invocation.viaComSpec, true);
+  assert.equal(argvSafe('C:\\tools\\agy.cmd', 'fix (the) bug', 'win32', noShim), true);
+});
+
+test('argvSafe only restricts non-shim cmd launchers on Windows', () => {
+  assert.equal(argvSafe('C:\\tools\\agy.exe', '%PATH%', 'win32'), true);
+  assert.equal(argvSafe('/usr/bin/agy', '%PATH% "x"', 'linux'), true);
+  assert.equal(
+    argvSafe('C:\\tools\\agy.cmd', '"%PATH%"', 'win32', {
+      readShim: () => '"%dp0%\\node_modules\\pkg\\cli.js" %*',
+      exists: () => true,
+    }),
+    true,
+  );
 });

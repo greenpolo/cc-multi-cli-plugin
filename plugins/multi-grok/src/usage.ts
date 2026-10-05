@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 /**
  * Grok Build exposes no account quota endpoint, so the useful account fact is the
@@ -24,10 +25,6 @@ export function grokAuthFile(options: GrokAuthOptions = {}): string {
   const platform = options.platform ?? process.platform;
   const join = platform === 'win32' ? path.win32.join : path.posix.join;
   return join(options.homedir ?? os.homedir(), '.grok', 'auth.json');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Loads native auth to report key/refresh-token presence and access-token expiry only. */

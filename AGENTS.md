@@ -17,17 +17,19 @@ Claude Code function-hook UI and extensibility rules live in
 | --- | --- |
 | `plugins/multi-core/src/launcher.ts` | Launches the gateway and registers models and workers. |
 | `plugins/multi-core/src/gateway/server.ts` | Routes requests and manages sessions. |
-| `plugins/multi-core/src/gateway/messages.ts`, `fetch.ts`, `tools.ts` | Shared protocol, outbound fetch, and tool aliases. |
+| `plugins/multi-core/src/gateway/messages.ts`, `fetch.ts`, `tools.ts`, `responses.ts`, `bounded.ts`, `record.ts` | Shared protocol, outbound fetch, tool aliases, Responses translation and SSE reader, bounded maps, and the `isRecord` guard. |
+| `plugins/multi-core/src/gateway/provider.ts`, `provider-request.ts` | Model-prefix provider table, `nativeSpelling`, and the contract through which OpenAI and Zen modules build their own requests. |
 | `plugins/multi-core/src/gateway/executable.ts`, `process-tree.ts` | Resolves executables and manages child processes. |
 | `plugins/multi-core/src/gateway/atomic-write.ts`, `state-lock.ts` | Protects files and serializes native state. |
-| `plugins/multi-core/src/gateway/cursor-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Admits settings, maps prompt and worker permissions, and resolves the Agent tool's `model` against each provider's worker catalog. |
+| `plugins/multi-core/src/gateway/harness-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Admits harness settings (`checkHarnessSettings`, `mergePermissions`), maps prompt and worker permissions, and resolves the Agent tool's `model` against each provider's worker catalog. |
 | `plugins/multi-core/src/gateway/approval.ts`, `permission-hook.ts` | Approval protocol and capability checks. |
-| `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `tool-observer.ts` | Claude Mods control-plane routes, compaction, policy, native action display rows, and tool observation. |
-| `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, and notices shared by Cursor, Antigravity, and Grok; CLI process runner and text prompt preparation shared by Antigravity and Grok. |
+| `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `tool-observer.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, tool observation, and the nested-`claude` environment restore. |
+| `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. |
+| `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, notices, and failure classifier (`harness-failure.ts`) shared by Cursor, Antigravity, and Grok; the CLI harness base (`harness-cli.ts`), process runner, and text prompt preparation shared by Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
-| `plugins/multi-openai/src/` | Codex authentication, models, Responses translation, instructions, and reviewer. |
+| `plugins/multi-openai/src/` | Codex authentication, models, request construction (`gateway-request.ts`), instructions, and reviewer. |
 | `plugins/multi-cursor/src/` | Cursor SDK harness, permissions, progress, requests, models, and workspaces. |
-| `plugins/multi-zen/src/` | Zen API-key authentication, catalogs, requests, and translations. |
+| `plugins/multi-zen/src/` | Zen API-key authentication, catalogs, request construction (`gateway-request.ts`), and translations. |
 | `plugins/multi-antigravity/src/` | `agy` CLI harness, models, hooks, requests, and permissions. |
 | `plugins/multi-grok/src/` | Grok Build CLI harness, models, requests, permissions, and login state. |
 | `test/unit/` | Offline unit tests for gateway and provider behavior. |
@@ -71,9 +73,9 @@ type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
 test suite. Use Node 24.12 or newer and avoid `DEP0190` warnings.
 
 For Claude Mods hook or surface changes, also run `npm run test:mod`. It type-checks
-the hooks against `.claude/types` (write them with `/plugin-types` first; they are
-gitignored) and runs `claude plugin test` with the installed Claude executable,
-without provider inference. It is separate from `npm run check` and the current CI matrix.
+the hooks against `.claude-plugin/types/` (Claude Code writes them when it loads the
+plugin; they are gitignored) and runs `claude plugin test` with the installed Claude
+executable and the Mods rollout flag forced on, without provider inference. It is separate from `npm run check` and the current CI matrix.
 
 | Command | Check | Login needed |
 | --- | --- | --- |

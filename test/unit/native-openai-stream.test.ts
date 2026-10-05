@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Emit, StreamEventBody } from '../../plugins/multi-core/src/gateway/messages.ts';
+import { fromResponses, toResponses } from '../../plugins/multi-core/src/gateway/responses.ts';
 import { safeguardResults } from '../../plugins/multi-core/src/gateway/safeguards.ts';
-import { fromResponses, toResponses } from '../../plugins/multi-openai/src/responses.ts';
 
 const model = 'multi/openai/gpt-6-astra';
 const created = { type: 'response.created', response: { id: 'resp' } };
@@ -385,4 +385,36 @@ test('an early null reasoning snapshot can be replaced by final encrypted state'
   ]);
   assert.equal(result.content[0]?.type, 'thinking');
   assert.equal(result.stop_reason, 'end_turn');
+});
+
+test('a stop sequence hit mid-stream still waits for the terminal event to record billed usage', async () => {
+  const delta = (value: string) => ({
+    type: 'response.output_text.delta',
+    output_index: 0,
+    delta: value,
+  });
+  const { events, emit } = capture();
+  const result = await fromResponses(
+    stream([
+      created,
+      itemEvent('added', { type: 'message', id: 'msg_a', content: [] }),
+      delta('prefix'),
+      delta(' suffix'),
+      delta(' ignored after the stop'),
+      terminal([text]),
+    ]),
+    model,
+    emit,
+    { stopSequences: [' suffix'] },
+  );
+  assert.equal(result.stop_reason, 'stop_sequence');
+  assert.deepEqual(result.content, [{ type: 'text', text: 'prefix' }]);
+  assert.deepEqual(result.usage, {
+    input_tokens: 60,
+    cache_read_input_tokens: 40,
+    cache_creation_input_tokens: 0,
+    output_tokens: 20,
+  });
+  assert.equal(result.multi_usage?.source, 'provider');
+  assert.equal(events.filter((event) => event.type === 'message_stop').length, 1);
 });

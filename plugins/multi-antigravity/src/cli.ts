@@ -3,9 +3,10 @@ import {
   NativeCliError,
   nativeEnvironment,
   promptArgumentLimitBytes,
+  promptArgvSafe,
   runNativeCli,
 } from '../../multi-core/src/gateway/harness-process.ts';
-import { isRecord } from '../../multi-core/src/gateway/harness-session.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 type AntigravityStatus =
   | 'SUCCESS'
@@ -194,8 +195,15 @@ export async function runAntigravity(
 
 function spawnAntigravity(options: AntigravityRunOptions): Promise<AntigravityRunResult> {
   const platform = options.platform ?? process.platform;
-  const promptOnStdin = Buffer.byteLength(options.prompt) >= promptArgumentLimitBytes(platform);
   const environment = antigravityEnvironment(options.env);
+  const promptOnStdin =
+    Buffer.byteLength(options.prompt) >= promptArgumentLimitBytes(platform) ||
+    !promptArgvSafe(options.prompt, {
+      executable: 'agy',
+      configuredPath: options.executable,
+      platform,
+      env: environment,
+    });
   return runNativeCli<ParserState, AntigravityResult, AntigravityStreamEvent>({
     name: 'Antigravity',
     executable: 'agy',

@@ -180,6 +180,19 @@ test('tolerates the toolset growing as MCP servers connect', async (t) => {
   assert.equal(output.response, 'STORED');
 });
 
+test('fails closed on an announced tool that is neither granted nor MCP', async (t) => {
+  const cli = await fakeCli(t);
+  // A native tool this build adds later is not on the forbidden list, but it was never granted.
+  await assert.rejects(
+    replay(cli, 'text-only.jsonl', {
+      tools: ['read_file', 'list_dir', 'grep'],
+      forbiddenTools: [],
+    }),
+    (error: unknown) =>
+      isCliError(error) && error.code === 'policy' && /remains available/.test(error.message),
+  );
+});
+
 test('never infers a result when the stream stops without its terminal event', async (t) => {
   const cli = await fakeCli(t);
   await assert.rejects(
@@ -194,13 +207,14 @@ test('sends explicit flags and refuses to both create and resume a session', asy
   const mode: GrokPermissionMode = 'plan';
   await replay(
     cli,
-    'text-only.jsonl',
+    // The announced toolset must be the requested one, so the fixture's own tools are granted.
+    'session-create.jsonl',
     {
       model: 'grok-4.6',
       effort: 'high',
       mode,
       session: 'f6e4b375-8213-4b5e-993d-f546b91362e4',
-      tools: ['read_file', 'grep'],
+      tools: ['read_file', 'list_dir', 'grep'],
       disallowedTools: ['search_tool', 'use_tool'],
       allow: ['Read(**)'],
       deny: ['Bash(*)', 'MCPTool(*)'],
@@ -217,7 +231,7 @@ test('sends explicit flags and refuses to both create and resume a session', asy
   assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
   assert.equal(args[args.indexOf('--session-id') + 1], 'f6e4b375-8213-4b5e-993d-f546b91362e4');
   assert.equal(args.includes('--resume'), false);
-  assert.equal(args[args.indexOf('--tools') + 1], 'read_file,grep');
+  assert.equal(args[args.indexOf('--tools') + 1], 'read_file,list_dir,grep');
   assert.equal(args[args.indexOf('--disallowed-tools') + 1], 'search_tool,use_tool');
   assert.deepEqual(
     args.flatMap((value, index) => (args[index - 1] === '--deny' ? [value] : [])),
@@ -277,6 +291,42 @@ test('passes an oversized prompt through a file and removes it afterwards', asyn
   assert.equal(args.includes('-p'), false);
   assert.equal(await readFile(copy, 'utf8'), prompt);
   await assert.rejects(stat(args[1]));
+});
+
+async function grokSpawnArguments(
+  launcher: string,
+  prompt: string,
+  platform: NodeJS.Platform,
+): Promise<readonly string[]> {
+  let spawned: readonly string[] = [];
+  await runGrok({
+    cwd: path.dirname(launcher),
+    executable: launcher,
+    prompt,
+    platform,
+    signal: AbortSignal.timeout(2000),
+    spawn: ((_command: string, args?: readonly string[]) => {
+      spawned = args ?? [];
+      throw Object.assign(new Error('stop'), { code: 'ENOENT' });
+    }) as unknown as GrokRunOptions['spawn'],
+  }).catch(() => undefined);
+  return spawned;
+}
+
+test('a prompt with cmd metacharacters goes through a file on a non-shim .cmd launcher on Windows', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'grok-cmd-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const launcher = path.join(directory, 'grok.cmd');
+  await writeFile(launcher, '@echo off\r\nrem not an npm shim\r\n');
+  for (const prompt of ['say "hi"', '100% done', 'a & b']) {
+    const spawned = await grokSpawnArguments(launcher, prompt, 'win32');
+    assert.equal(spawned.join(' ').includes('--prompt-file'), true);
+    assert.equal(spawned.join(' ').includes(prompt), false);
+  }
+  const plain = await grokSpawnArguments(launcher, 'plain', 'win32');
+  assert.equal(plain.join(' ').includes('-p plain'), true);
+  const posix = await grokSpawnArguments(launcher, 'say "hi"', 'linux');
+  assert.deepEqual(posix.slice(0, 2), ['-p', 'say "hi"']);
 });
 
 test('refuses unreadable output and bounds what it buffers', async (t) => {

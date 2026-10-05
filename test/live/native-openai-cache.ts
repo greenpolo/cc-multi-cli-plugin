@@ -5,11 +5,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { AgentCatalog } from '../../plugins/multi-core/src/gateway/agent-catalog.ts';
 import type { MessagesResponse } from '../../plugins/multi-core/src/gateway/messages.ts';
+import type { ResponsesRequest } from '../../plugins/multi-core/src/gateway/responses.ts';
+import { readSse } from '../../plugins/multi-core/src/gateway/responses.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
-import type { ResponsesRequest } from '../../plugins/multi-openai/src/responses.ts';
-import { readSse } from '../../plugins/multi-openai/src/responses.ts';
 import { isolatedEnvironment } from './environment.ts';
 
 interface Sample {
@@ -60,7 +59,6 @@ const workers = {
     tools: ['Read'],
   },
 };
-const catalog = new AgentCatalog(workers, ['multi/openai/gpt-6-astra']);
 const session = randomUUID();
 const token = randomUUID();
 const samples: Sample[] = [];
@@ -237,7 +235,6 @@ for (let turn = 0; turn < 3; turn++) {
     token,
     authFile,
     blockAnthropic: true,
-    agentCatalog: catalog,
     fetchImpl: async (url, init) => {
       assert.equal(url, 'https://chatgpt.com/backend-api/codex/responses');
       assert(samples.length < 6, 'Six-request inference budget exhausted');
@@ -252,8 +249,6 @@ for (let turn = 0; turn < 3; turn++) {
         JSON.stringify(body.input, null, 2),
       );
       assert(input.includes('CACHE_VISIBLE_WORKER'), 'Native CLI catalog was not observed');
-      assert(!input.includes('CACHE_HIDDEN_EFFORT'), 'Reasoning variant leaked into context');
-      assert(!input.includes('CACHE_HIDDEN_MODEL'), 'Non-picker model leaked into context');
       const sample: Sample = {
         turn,
         model: body.model,

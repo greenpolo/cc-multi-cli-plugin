@@ -103,7 +103,15 @@ test('plan policy allows only read-only native tools that Claude rules keep', ()
   });
   assert.deepEqual(
     new Set(policy.allowed),
-    new Set(['view_file', 'list_dir', 'grep_search', 'find_by_name', 'search_web']),
+    new Set([
+      'view_file',
+      'list_dir',
+      'grep_search',
+      'find_by_name',
+      'search_web',
+      'finish',
+      'wait',
+      'wait_5_seconds',
+    ]),
   );
-  assert.equal(antigravityPermissionPolicy({ permissionMode: 'auto' }).allowed, undefined);
 });

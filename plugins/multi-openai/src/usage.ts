@@ -6,6 +6,7 @@ import {
   resolveExecutable,
 } from '../../multi-core/src/gateway/executable.ts';
 import { terminateProcessTree } from '../../multi-core/src/gateway/process-tree.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 interface CodexQuotaWindow {
   label: string;
@@ -43,7 +44,7 @@ export async function readCodexUsage(
       env: environment,
       configuredPath: options.executable,
     }),
-    ['app-server', '-c', 'cli_auth_credentials_store="file"'],
+    ['app-server', '-c', 'cli_auth_credentials_store=file'],
     platform,
     environment,
   );
@@ -103,10 +104,10 @@ async function quotaResponse(
   for await (const line of lines) {
     check();
     const message: unknown = JSON.parse(line);
-    if (!record(message)) {
+    if (!isRecord(message)) {
       throw unavailable();
     }
-    if (message.id === 1 && !initialized && record(message.result)) {
+    if (message.id === 1 && !initialized && isRecord(message.result)) {
       initialized = true;
       send({ method: 'initialized' });
       send({ id: 2, method: 'account/rateLimits/read' });
@@ -121,12 +122,12 @@ async function quotaResponse(
 
 /** The multi-bucket response is authoritative; never count its legacy alias twice. */
 export function normalizeCodexUsage(value: unknown): CodexQuota {
-  if (!record(value)) {
+  if (!isRecord(value)) {
     throw unavailable();
   }
   const quota: CodexQuota = { windows: [] };
   for (const [id, bucket] of quotaBuckets(value).slice(0, 32)) {
-    if (!record(bucket)) {
+    if (!isRecord(bucket)) {
       continue;
     }
     if (typeof bucket.planType === 'string') {
@@ -145,7 +146,7 @@ export function normalizeCodexUsage(value: unknown): CodexQuota {
 }
 
 function quotaCredits(value: unknown): CodexQuota['credits'] {
-  if (!record(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
   return {
@@ -155,17 +156,17 @@ function quotaCredits(value: unknown): CodexQuota['credits'] {
 }
 
 function quotaBuckets(value: Record<string, unknown>): [string, unknown][] {
-  if (record(value.rateLimitsByLimitId) && Object.keys(value.rateLimitsByLimitId).length) {
+  if (isRecord(value.rateLimitsByLimitId) && Object.keys(value.rateLimitsByLimitId).length) {
     return Object.entries(value.rateLimitsByLimitId);
   }
-  if (record(value.rateLimits)) {
+  if (isRecord(value.rateLimits)) {
     return [['codex', value.rateLimits]];
   }
   throw unavailable();
 }
 
 function quotaWindow(value: unknown, name: string, slot: string): CodexQuotaWindow | undefined {
-  if (!record(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
   if (
@@ -201,7 +202,4 @@ function windowLabel(minutes: number) {
     return `${minutes / 60} hours`;
   }
   return `${minutes} minutes`;
-}
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

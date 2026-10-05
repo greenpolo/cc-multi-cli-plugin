@@ -265,6 +265,22 @@ test('compaction core fallback authenticates generation and removes all native c
   assert.equal(typeof modes.resolve('s').compaction, 'string');
 });
 
+test('cancelling a main compaction clears its permission boundary', async (t) => {
+  const modes = new PermissionModes(async () => ({}));
+  const base = await start(t, modes);
+  const generation = await admit(base);
+  const accepted = await request(base, '/multi/mod/compact/authorize', {
+    sessionId: 's',
+    generation,
+  });
+  assert.equal(accepted.body.allow, true);
+  assert.equal(typeof modes.resolve('s').compaction, 'string');
+  const cancelled = await request(base, '/multi/mod/compact/cancel', { sessionId: 's' });
+  assert.equal(cancelled.body.accepted, true);
+  assert.equal(modes.resolve('s').compaction, undefined);
+  assert.notDeepEqual(modes.resolve('s').tools, []);
+});
+
 test('worker route authenticates catalog and generation before child-start acknowledgement', async (t) => {
   const modes = new PermissionModes(async () => ({
     worker: { model: 'multi/cursor/auto', tools: ['Read'] },
@@ -495,4 +511,20 @@ test('wrong tokens cannot update sessions, acknowledge workers, or authorize com
   );
   assert.equal(rejectedCompaction.status, 401);
   assert.throws(() => modes.resolve('unauthorized'), /unavailable/);
+});
+
+test('snapshots beyond capacity evict the least recently used idle scope', () => {
+  const bridge = new ModBridge();
+  const effective = { permissionMode: 'default' };
+  for (let index = 0; index < 128; index++) {
+    bridge.recordSession(JSON.stringify([`s${index}`, 'main']), { effective });
+  }
+  const running = JSON.stringify(['s0', 'main']);
+  bridge.begin(running, 'multi/cursor/auto');
+  // Reading s1 makes it recent, so the next oldest idle scope (s2) is evicted.
+  assert.ok(bridge.mode(JSON.stringify(['s1', 'main'])));
+  assert.ok(bridge.recordSession(JSON.stringify(['fresh', 'main']), { effective }));
+  assert.ok(bridge.mode(running), 'a running scope keeps its snapshot');
+  assert.ok(bridge.mode(JSON.stringify(['s1', 'main'])));
+  assert.equal(bridge.mode(JSON.stringify(['s2', 'main'])), undefined);
 });

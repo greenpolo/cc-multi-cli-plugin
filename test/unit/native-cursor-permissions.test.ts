@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { mergePermissions } from '../../plugins/multi-core/src/gateway/harness-settings.ts';
 import {
   assertCursorClaudeSettings,
   cursorNativePermissions,
   cursorPermissionMode,
   cursorPermissionPolicy,
-  mergeCursorPermissions,
 } from '../../plugins/multi-cursor/src/permissions.ts';
 import { removeTemporary } from '../temporary.ts';
 
@@ -160,12 +160,12 @@ test('native bypass disables review without widening explicit capabilities', asy
 });
 
 test('restriction layers intersect tool lists and accumulate denials', () => {
-  const context = mergeCursorPermissions(
+  const context = mergePermissions(
     { permissionMode: 'auto', tools: ['Read', 'Bash'], disallowedTools: ['Edit'] },
     { tools: ['Read', 'Write'], disallowedTools: ['Write'] },
   );
   assert.deepEqual(context.tools, ['Read']);
   assert.deepEqual(context.disallowedTools, ['Edit', 'Write']);
   assert.deepEqual(cursorPermissionPolicy(context).tools, ['read', 'ls']);
-  assert.deepEqual(mergeCursorPermissions(context, { tools: [] }).tools, []);
+  assert.deepEqual(mergePermissions(context, { tools: [] }).tools, []);
 });

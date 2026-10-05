@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from './atomic-write.ts';
 import { isDisplayTool } from './display-rows.ts';
 import type { HarnessEvent } from './harness-exchange.ts';
 import type { MessagesResponse } from './messages.ts';
+import { isRecord } from './record.ts';
 import { lockStateFile } from './state-lock.ts';
 
 /**
@@ -253,6 +255,9 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
         : { saved: await readJson(file) };
       this.assertOpen();
       const selected = this.validateSaved(restored.saved, identity);
+      if (selected === undefined && restored.saved !== undefined) {
+        await preserveUnsupportedRecord(file, restored.saved);
+      }
       const saved = selected ?? this.fresh(identity);
       const owned: OwnedSession = { busy: false, releases };
       const session: HarnessSession<S, R> = {
@@ -289,7 +294,8 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
     }
     if (saved.version !== this.version) {
       // The native session is never deleted; an unknown record is ignored and a
-      // fresh session starts rather than refusing to load.
+      // fresh session starts rather than refusing to load. `load` copies the
+      // file aside first, because the fresh record's first save replaces it.
       return undefined;
     }
     if (
@@ -322,6 +328,24 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
   private assertOpen(): void {
     if (this.closing) {
       throw new Error(`${this.tag} session store is closed`);
+    }
+  }
+}
+
+/**
+ * A record this build cannot read is about to be replaced by a fresh one. Keep
+ * the original beside it, named for its version, so the native session link is
+ * not lost across a downgrade or upgrade. An earlier copy is never overwritten.
+ */
+async function preserveUnsupportedRecord(file: string, saved: unknown): Promise<void> {
+  const version = isRecord(saved) ? String(saved.version ?? 'unversioned') : 'unknown';
+  const label = version.replaceAll(/[^A-Za-z0-9._-]/g, '_').slice(0, 32);
+  try {
+    await copyFile(file, `${file}.unsupported-v${label}`, constants.COPYFILE_EXCL);
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    if (code !== 'EEXIST' && code !== 'ENOENT') {
+      throw error;
     }
   }
 }
@@ -361,10 +385,6 @@ export async function atomicJson(
 
 export function isHash(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function optionalCount(value: unknown): boolean {

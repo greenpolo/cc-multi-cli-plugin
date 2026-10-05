@@ -4,9 +4,10 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import type {
-  AntigravityRunOptions,
-  AntigravityRunResult,
+import {
+  AntigravityCliError,
+  type AntigravityRunOptions,
+  type AntigravityRunResult,
 } from '../../plugins/multi-antigravity/src/cli.ts';
 import {
   AntigravityHarness,
@@ -925,4 +926,94 @@ test('a first-load race is refused with 400, not a retryable gateway failure', a
   assert.equal(error.failure.status, 400);
   assert.match(error.message, /already (running|loading)/);
   assert.equal(calls.length, 1, 'the refused request must not start a native run');
+});
+
+test('a failed run that already started steps keeps the interruption notice for the retry', async (t) => {
+  const stateDirectory = await mkdtemp(path.join(os.tmpdir(), 'agy-failed-steps-'));
+  t.after(() => removeTemporary(stateDirectory));
+  const calls: AntigravityRunOptions[] = [];
+  const run = async (options: AntigravityRunOptions) => {
+    calls.push(options);
+    if (calls.length === 1) {
+      options.onEvent?.({ event: 'init', conversation_id: 'partial-conversation', init: {} });
+      return {
+        result: {
+          conversation_id: 'partial-conversation',
+          status: 'ERROR' as const,
+          response: '',
+          error: 'model failed after a step',
+        },
+        exitCode: 1,
+        signal: null,
+        stderr: '',
+      };
+    }
+    return {
+      result: {
+        conversation_id: 'partial-conversation',
+        status: 'SUCCESS' as const,
+        response: 'ok',
+      },
+      exitCode: 0,
+      signal: null,
+      stderr: '',
+    };
+  };
+  const harness = new AntigravityHarness([model], {
+    stateDirectory,
+    checkPermissions: policy,
+    run,
+  });
+  t.after(() => harness.close());
+  const request = { model: model.model, messages: [{ role: 'user', content: 'effects' }] };
+  await assert.rejects(
+    harness.handle(request, 'session/worker', new AbortController().signal, undefined, context),
+    /model failed/,
+  );
+  await harness.handle(request, 'session/worker', new AbortController().signal, undefined, context);
+  assert.match(calls[1].prompt, /previous turn was interrupted/);
+});
+
+test('a missing agy binary is a 400, a transient process shortage stays retryable', () => {
+  const missing = new AntigravityCliError('Failed to start agy', 'spawn', { systemCode: 'ENOENT' });
+  assert.equal(new AntigravityProviderError(missing).failure.status, 400);
+  const busy = new AntigravityCliError('Failed to start agy', 'spawn', { systemCode: 'EAGAIN' });
+  assert.equal(new AntigravityProviderError(busy).failure.status, 502);
+});
+
+test('an idle record is evicted after its turn so its lock is not held until shutdown', async (t) => {
+  const fixture = await setup();
+  t.after(() => removeTemporary(fixture.stateDirectory));
+  const first = new AntigravityHarness([model], { ...fixture, checkPermissions: policy });
+  t.after(() => first.close());
+  const second = new AntigravityHarness([model], { ...fixture, checkPermissions: policy });
+  t.after(() => second.close());
+  const ask = (harness: AntigravityHarness, content: string) =>
+    harness.handle(
+      { model: model.model, messages: [{ role: 'user', content }] },
+      'session/worker',
+      new AbortController().signal,
+      undefined,
+      context,
+    );
+  await ask(first, 'one');
+  // Another gateway process can take the record because the first released its lock.
+  await ask(second, 'two');
+  assert.equal(fixture.calls.length, 2);
+});
+
+test('the success text carries no timing or billing decoration', async (t) => {
+  const fixture = await setup();
+  t.after(() => removeTemporary(fixture.stateDirectory));
+  const harness = new AntigravityHarness([model], { ...fixture, checkPermissions: policy });
+  t.after(() => harness.close());
+  const response = await harness.handle(
+    { model: model.model, messages: [{ role: 'user', content: 'plain' }] },
+    'plain',
+    new AbortController().signal,
+    undefined,
+    context,
+  );
+  const text = response.content.map((block) => (block.type === 'text' ? block.text : '')).join('');
+  assert(!/completed in|billed/.test(text));
 });

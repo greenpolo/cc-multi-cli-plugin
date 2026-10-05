@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
@@ -11,6 +13,7 @@ import {
   NativeCliError,
   nativeEnvironment,
   promptArgumentLimitBytes,
+  promptArgvSafe,
   redactStderr,
   runNativeCli,
   terminateGraceMs,
@@ -182,7 +185,7 @@ test('an oversized stream stops the run instead of buffering it', async (t) => {
   await assert.rejects(run, (error: unknown) => {
     assert.ok(error instanceof NativeCliError);
     assert.equal(error.code, 'output_limit');
-    assert.match(error.message, /Native stdout exceeded its safety limit/);
+    assert.match(error.message, /Native stdout line exceeded its safety limit/);
     return true;
   });
 });
@@ -292,4 +295,54 @@ test('platform limits and a native environment keep other providers out', () => 
     ['aborted', 1, 'SIGTERM', 'why', 'EAGAIN'],
   );
   assert.equal(new NativeCliError('bare', 'parse').systemCode, undefined);
+});
+
+test('many small lines past the byte limit are not a failure', async () => {
+  const child = new FakeChild();
+  const { run, parser } = start(child, { maxOutputBytes: 256 });
+  await flush();
+  for (let index = 0; index < 50; index += 1) {
+    child.stdout.write('{"type":"text","id":"a"}\n');
+    child.stderr.write(`${'e'.repeat(100)}\n`);
+  }
+  child.stdout.write('{"type":"end","id":"long"}\n');
+  await flush();
+  child.emit('close', 0, null);
+  const outcome = await run;
+  assert.deepEqual(outcome.result, { id: 'long' });
+  assert.equal(parser.lines.length, 51);
+  assert.ok(outcome.stderr.length <= 256);
+});
+
+test('after the child closes only the process group is signaled, never the bare PID', async (t) => {
+  const targets: number[] = [];
+  t.mock.method(process, 'kill', (pid: number) => {
+    targets.push(pid);
+  });
+  const child = new FakeChild();
+  const { run } = start(child);
+  await flush();
+  child.emit('close', 0, null);
+  await run.catch(() => undefined);
+  assert.deepEqual(targets, [-4242]);
+});
+
+test('promptArgvSafe routes unsafe prompts away from cmd launchers only', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'argv-safe-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const launcher = path.join(directory, 'agy.cmd');
+  await writeFile(launcher, '@echo off\r\nrem not an npm shim\r\n');
+  const shim = path.join(directory, 'shim.cmd');
+  await writeFile(shim, '"%dp0%\\cli.js" %*\r\n');
+  await writeFile(path.join(directory, 'cli.js'), '');
+  const unsafe = '100% "quoted" & more';
+  const win = { executable: 'agy', platform: 'win32' as const, env: {} };
+  assert.equal(promptArgvSafe(unsafe, { ...win, configuredPath: launcher }), false);
+  assert.equal(promptArgvSafe('plain words', { ...win, configuredPath: launcher }), true);
+  assert.equal(promptArgvSafe(unsafe, { ...win, configuredPath: process.execPath }), true);
+  assert.equal(promptArgvSafe(unsafe, { ...win, env: { PATH: '' } }), true);
+  assert.equal(
+    promptArgvSafe(unsafe, { ...win, platform: 'linux', configuredPath: launcher }),
+    true,
+  );
 });

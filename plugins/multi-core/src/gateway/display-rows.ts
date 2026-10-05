@@ -1,10 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { setBounded } from './bounded.ts';
 import type {
   ContentBlock,
   MessagesRequest,
   MessagesResponse,
   RequestMessage,
 } from './messages.ts';
+import { isRecord } from './record.ts';
 
 /**
  * Native harness actions drawn as Claude Code tool rows.
@@ -34,6 +36,7 @@ export const ROW_TOKEN = 'multi_row';
 const maximumName = 64 - DISPLAY_TOOL_PREFIX.length;
 const maximumTools = 160;
 const maximumRows = 2048;
+const maximumSessions = 128;
 const maximumFollowUps = 2048;
 const maximumOutput = 16 * 1024;
 const maximumInputValue = 2000;
@@ -340,14 +343,6 @@ function boundedInput(input: unknown): Record<string, unknown> {
   return output;
 }
 
-function remember<T>(map: Map<string, T>, key: string, value: T, capacity: number) {
-  map.delete(key);
-  map.set(key, value);
-  while (map.size > capacity) {
-    map.delete(map.keys().next().value as string);
-  }
-}
-
 /**
  * The gateway's side of display rows: the native tool names offered to the mod,
  * the names it acknowledged registering, the tokens it issued, and the text each
@@ -355,7 +350,8 @@ function remember<T>(map: Map<string, T>, key: string, value: T, capacity: numbe
  */
 export class DisplayRows {
   private readonly known = new Set<string>();
-  private readonly registered = new Set<string>();
+  /** The names each session's mod acknowledged: another session registered nothing of these. */
+  private readonly registered = new Map<string, Set<string>>();
   private readonly rows = new Map<string, IssuedRow>();
   /** The pending reply of each scope, and which scope wrote each of its rows. */
   private readonly followUps = new Map<string, PendingFollowUp>();
@@ -377,17 +373,19 @@ export class DisplayRows {
     return { revision: this.revision, names: [...this.known] };
   }
 
-  /** Records names the mod registered; only those are ever emitted as rows. */
-  acknowledge(names: unknown) {
+  /** Records names a session's mod registered; only those are ever emitted as its rows. */
+  acknowledge(session: string, names: unknown) {
     if (!Array.isArray(names)) {
       throw new Error('Invalid display tool acknowledgement');
     }
+    const own = new Set<string>();
     for (const name of names) {
       if (typeof name === 'string' && this.known.has(name)) {
-        this.registered.add(name);
+        own.add(name);
       }
     }
-    return { registered: this.registered.size };
+    setBounded(this.registered, session, own, maximumSessions, 'lru');
+    return { registered: own.size };
   }
 
   /**
@@ -397,17 +395,18 @@ export class DisplayRows {
    */
   issue(scope: string, row: NativeRow): DisplayToolUse | undefined {
     const name = displayName(row.tool);
-    if (!name || !this.registered.has(name)) {
+    const session = sessionOf(scope);
+    if (!name || !this.registered.get(session)?.has(name)) {
       return undefined;
     }
     const id = `toolu_multi_${randomUUID().replaceAll('-', '')}`;
     const token = randomBytes(16).toString('hex');
-    const session = String(JSON.parse(scope)[0]);
-    remember(
+    setBounded(
       this.rows,
       token,
       { session, id, output: bounded(row.output, maximumOutput), isError: row.error },
       maximumRows,
+      'lru',
     );
     return {
       type: 'tool_use',
@@ -494,6 +493,7 @@ export class DisplayRows {
   }
 
   forgetSession(session: string) {
+    this.registered.delete(session);
     for (const [token, row] of this.rows) {
       if (row.session === session) {
         this.rows.delete(token);
@@ -540,27 +540,23 @@ export function recordedFollowUp(
   return { text: response.multi_followup, usage: response.usage };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /**
  * Only a well-formed request is rewritten or answered here; anything else passes
  * unchanged to the validation that refuses it with the provider's own error.
  */
-function wellFormed(body: MessagesRequest): boolean {
+export function wellFormed(body: MessagesRequest): boolean {
   const tools: unknown = body.tools;
   const messages: unknown = body.messages;
   return (
-    (tools === undefined || (Array.isArray(tools) && tools.every(isObject))) &&
+    (tools === undefined || (Array.isArray(tools) && tools.every(isRecord))) &&
     (messages === undefined ||
       (Array.isArray(messages) &&
         messages.every(
           (message) =>
-            isObject(message) &&
+            isRecord(message) &&
             typeof message.role === 'string' &&
             (typeof message.content === 'string' ||
-              (Array.isArray(message.content) && message.content.every(isObject))),
+              (Array.isArray(message.content) && message.content.every(isRecord))),
         )))
   );
 }
@@ -628,6 +624,9 @@ export function displayFollowUp(body: MessagesRequest): string[] | undefined {
  * ToolSearch catalogue line naming one, and the grant in a worker's tool list.
  */
 function scrubbed(block: ContentBlock): ContentBlock {
+  if (block.type === 'tool_result') {
+    return withoutReferences(block);
+  }
   if (
     block.type !== 'text' ||
     typeof block.text !== 'string' ||
@@ -641,6 +640,26 @@ function scrubbed(block: ContentBlock): ContentBlock {
     .join('\n')
     .replaceAll(`, ${DISPLAY_TOOL_SERVER})`, ')');
   return { ...block, text };
+}
+
+/**
+ * A ToolSearch result whose `tool_reference` blocks name display tools: the
+ * references are dropped, so no provider is told those tools exist.
+ */
+function withoutReferences(block: ContentBlock): ContentBlock {
+  const content = block.content;
+  if (!Array.isArray(content) || !content.some((item) => isReferenceToDisplay(item))) {
+    return block;
+  }
+  const kept = content.filter((item) => !isReferenceToDisplay(item));
+  return {
+    ...block,
+    content: kept.length ? kept : [{ type: 'text', text: 'No matching deferred tools found.' }],
+  };
+}
+
+function isReferenceToDisplay(item: unknown): boolean {
+  return isRecord(item) && item.type === 'tool_reference' && isDisplayTool(item.tool_name);
 }
 
 function withoutRows(message: RequestMessage, rows: ReadonlySet<string>): RequestMessage {

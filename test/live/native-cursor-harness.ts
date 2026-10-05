@@ -143,12 +143,7 @@ try {
     recovering = false;
     const followup = 'Without using tools, repeat the full line you just produced. One line only.';
     const hooks = new PermissionModes(async () => ({}));
-    await hooks.record({
-      hook_event_name: 'UserPromptSubmit',
-      session_id: 'live',
-      permission_mode: 'auto',
-      prompt: followup,
-    });
+    hooks.recordModSession('live', { permissionMode: 'auto' });
     const history = compact
       ? []
       : [...(request.messages ?? []), { role: 'assistant', content: first.content }];

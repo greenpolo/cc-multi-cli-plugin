@@ -1,14 +1,62 @@
 import type { AgentSpawnInput, EngineInterface, Register } from 'claude-code';
+import { atom, read, update } from 'claude-code';
+import type { MultiCoreDisplayTools, MultiCorePolicy } from '../types/multi-core.d.ts';
 import {
-  ensureHarnessPolicy,
-  type PolicyClient,
-  type PolicyResponse,
-  type PolicyState,
-} from './policy.ts';
-import { isHarnessModel } from './provider.ts';
+  accepted,
+  type GatewayResponse,
+  getJson,
+  isActive,
+  postJson,
+  type Wire,
+} from './gateway.ts';
+import { ensureHarnessPolicy, policyClient } from './policy.ts';
+import { isHarnessModel, isMultiModel } from './provider.ts';
+import { type RowsClient, syncDisplayTools } from './rows.ts';
+import { defined, rememberBounded, withBounded, withItem } from './state.ts';
 import { isProviderWorker, labelled, register as registerWorkerRows } from './worker-rows.ts';
 
-const maxBody = 32000;
+// State values are named where they are read: the engine's scan reads an atom's plugin and key
+// from this file's own source, not across an import.
+const policy = atom({ plugin: 'multi-core', key: 'policy' } as const, {} as MultiCorePolicy);
+const agentModels = atom(
+  { plugin: 'multi-core', key: 'agentModels' } as const,
+  {} as Record<string, string>,
+);
+const spawnModels = atom(
+  { plugin: 'multi-core', key: 'spawnModels' } as const,
+  {} as Record<string, string>,
+);
+const claudeTypes = atom({ plugin: 'multi-core', key: 'claudeTypes' } as const, [] as string[]);
+const offeredProviders = atom(
+  { plugin: 'multi-core', key: 'offeredProviders' } as const,
+  [] as string[],
+);
+const displayTools = atom(
+  { plugin: 'multi-core', key: 'displayTools' } as const,
+  { registered: [] } as MultiCoreDisplayTools,
+);
+
+const rowsClient = ($: EngineInterface): RowsClient => ({
+  wire: wire($),
+  sessionId: () => $.session.id(),
+  held: () => read($, displayTools),
+  save: (change) => update($, displayTools, change),
+  register: (tool) => $.tool.register(tool),
+});
+
+const modKeys = atom(
+  { plugin: 'multi-core', key: 'modKeys' } as const,
+  {} as Record<string, string>,
+);
+
+const wire = ($: EngineInterface): Wire => ({
+  url: () => $.env.get('MULTI_MOD_GATEWAY_URL'),
+  token: () => $.env.get('MULTI_GATEWAY_TOKEN'),
+  fetch: (url, init) => $.http.fetch(url, init),
+  sleep: (ms, signal) => $.clock.sleep(ms, { signal }),
+  keys: { read: () => read($, modKeys), save: (change) => update($, modKeys, change) },
+});
+
 const issues =
   'https://github.com/greenpolo/cc-multi-cli-plugin/issues/new?template=bug_report.yml';
 
@@ -23,84 +71,34 @@ function reportable(reason: string) {
   return `${reason}\n\nIf this reads like a defect in the multi-cli plugin rather than a permission the user chose, tell them so and offer to open an issue at ${issues}, quoting the reason above.`;
 }
 
-type GatewayResponse = PolicyResponse & {
-  accepted?: boolean;
-  error?: string;
-  isOffered?: boolean;
-  execution?: 'claude' | 'harness';
-  known?: boolean;
-  model?: string;
-};
-
 type SpawnEvent = AgentSpawnInput;
 
 /**
  * The model an Agent call named for a provider worker, by tool_use_id. The Agent tool's
  * schema only admits Claude aliases, so `tool.call` (which runs before the engine checks
- * the input) takes the value out and `agent.spawn` resolves it against the catalog.
+ * the input) takes the value out and `agent.spawn` resolves it against the catalog. It
+ * lives from that `tool.call` to its `agent.spawn`, inside one call, so it is not state.
  */
 const requestedModels = new Map<string, string>();
 
-/** Bounded like the other per-call records: the oldest entry makes room. */
-export function rememberBounded<T>(entries: Map<string, T>, key: string, value: T, limit = 256) {
-  entries.delete(key);
-  const oldest = entries.keys().next();
-  if (entries.size >= limit && !oldest.done) {
-    entries.delete(oldest.value);
-  }
-  entries.set(key, value);
-}
+const providerGuidance =
+  "\n\nFor a multi-* agent type (multi-cursor, multi-openai, ...), `model` names one of that provider's models from the type's description, not a Claude alias; omit it for the provider's default.";
 
-// A refused reply keeps only the reason: a non-2xx status never carries an
-// acknowledgement, so every caller still fails closed on the HTTP status alone.
-function refusal(text: string, status: number): GatewayResponse {
-  let reason: string | undefined;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === 'object') {
-      const value = (parsed as { error?: unknown }).error;
-      reason = typeof value === 'string' && value ? value : undefined;
-    }
-  } catch {
-    // A non-JSON body still names the status below.
-  }
-  const detail = text.trim().slice(0, 200);
-  return {
-    refused: true,
-    httpStatus: status,
-    error: reason ?? (detail ? `gateway ${status}: ${detail}` : `gateway ${status}`),
-  };
-}
-
-export const register = (
-  on: Parameters<Register>[0],
-  _options: Parameters<Register>[1],
-  agentModels: Map<string, string> = new Map(),
-  policyState: PolicyState = {},
-  spawnModels: Map<string, string> = new Map(),
-) => {
-  /** The resolved model of each provider-worker spawn, by its Agent call's tool_use_id. */
-  registerWorkerRows(on, agentModels, spawnModels);
-  /**
-   * Agent types the gateway classified as Claude-loop at offer. A definition may name a
-   * provider model the spawn event does not carry, so only such a type skips admission.
-   */
-  const claudeTypes = new Set<string>();
+export const register = (on: Parameters<Register>[0], _options: Parameters<Register>[1]) => {
+  registerWorkerRows(on);
   on('tool.describe', { tool: 'Agent' }, async ($, event, next) => {
     const described = await next(event);
-    if (!(await active($))) {
+    // The paragraph is for the provider types the model is offered; none, no paragraph.
+    if (!(await isActive(wire($))) || !(await read($, offeredProviders)).length) {
       return described;
     }
-    return {
-      ...described,
-      description: `${described.description}\n\nFor a multi-* agent type (multi-cursor, multi-openai, ...), \`model\` names one of that provider's models from the type's description, not a Claude alias; omit it for the provider's default.`,
-    };
+    return { ...described, description: `${described.description}${providerGuidance}` };
   });
   on('tool.call', { tool: 'Agent' }, async ($, event, next) => {
     if (event.tool !== 'Agent' || event.model === undefined) {
       return next(event);
     }
-    if (!isProviderWorker(event.subagent_type) || !(await active($))) {
+    if (!isProviderWorker(event.subagent_type) || !(await isActive(wire($)))) {
       return next(event);
     }
     rememberBounded(requestedModels, event.tool_use_id, String(event.model));
@@ -112,61 +110,68 @@ export const register = (
     }
   });
   on('agent.offer', async ($, event, next) => {
-    if (!(await active($))) {
+    if (!(await isActive(wire($)))) {
       return next(event);
     }
-    const response = await request(
-      $,
-      {
-        sessionId: await $.session.id(),
-        cwd: await $.session.cwd(),
-        agent: event.agent,
-        parentModel: await $.session.model(),
-      },
-      '/multi/mod/offer',
-    );
-    if (response?.execution === 'claude') {
-      claudeTypes.add(event.agent);
-    } else {
-      claudeTypes.delete(event.agent);
+    const parentModel = await $.session.model();
+    // A built-in agent on a Claude session is Claude's own: no gateway call, ever.
+    if (
+      event.source === 'built-in' &&
+      !isMultiModel(parentModel) &&
+      !isProviderWorker(event.agent)
+    ) {
+      await classify($, event.agent, true);
+      return next(event);
     }
+    const response = await postJson(wire($), '/multi/mod/offer', {
+      sessionId: await $.session.id(),
+      cwd: await $.session.cwd(),
+      agent: event.agent,
+      parentModel,
+    });
+    await classify($, event.agent, nativeClaude(response));
     // Claude owns its own catalog. Only a positively identified harness worker
     // is subject to Multi's settings-translation compatibility filter.
-    return response?.execution === 'harness' && response.isOffered === false
-      ? { isOffered: false }
-      : next(event);
+    const hidden = response?.execution === 'harness' && response.isOffered === false;
+    const result = hidden ? { isOffered: false } : await next(event);
+    await markOffered($, event.agent, result.isOffered);
+    return result;
   });
   on('classic.SubagentStart', async ($, event, next) => {
-    if (!(await active($))) {
+    if (!(await isActive(wire($)))) {
       return next(event);
     }
-    // A native Claude subagent in a Claude session needs no gateway record.
+    // A native Claude subagent in a Claude session needs no gateway record. The
+    // subagent's own model and its parent's are not on this event, so any loop known to
+    // run a Multi model (an inheriting child of a provider worker) keeps the record.
     if (
-      claudeTypes.has(event.agent_type) &&
+      (await read($, claudeTypes)).includes(event.agent_type) &&
       !isProviderWorker(event.agent_type) &&
-      !isMultiModel(await $.session.model())
+      !isMultiModel(await $.session.model()) &&
+      !Object.values(await read($, agentModels)).some(isMultiModel)
     ) {
       return next(event);
     }
-    const response = await request($, {
+    const response = await postJson(wire($), '/multi/mod/worker', {
       sessionId: event.session_id,
       agentId: event.agent_id,
       subagentType: event.agent_type,
       cwd: event.cwd,
     });
-    if (response?.accepted && response.model) {
-      agentModels.set(event.agent_id, response.model);
+    const model = response?.accepted ? response.model : undefined;
+    if (model) {
+      await update($, agentModels, (held) => withBounded(held, event.agent_id, model));
     }
     // Registration is observational for Claude-loop workers. An unregistered
     // harness worker still cannot dispatch: resolveHarness rejects its scope.
     return next(event);
   });
   on('agent.spawn', async ($, event, next) => {
-    if (!(await active($))) {
+    if (!(await isActive(wire($)))) {
       return next(event);
     }
     // A native Claude subagent runs on Claude Code's own path: no gateway call.
-    if (nativeClaudeSpawn(event, claudeTypes)) {
+    if (nativeClaudeSpawn(event, await read($, claudeTypes))) {
       return next(event);
     }
     const resolved = await providerSpawn($, event);
@@ -174,21 +179,49 @@ export const register = (
       return { deny: resolved.deny };
     }
     const spawn = resolved.event;
-    if (spawn.model && spawn !== event) {
-      rememberBounded(spawnModels, event.tool_use_id, spawn.model);
-      $.ui.invalidate('ui.render');
+    const resolvedModel = spawn.model;
+    if (resolvedModel && spawn !== event) {
+      // Written to state, so the Agent row and the task notification draw the model.
+      await update($, spawnModels, (held) => withBounded(held, event.tool_use_id, resolvedModel));
     }
-    const denial = await admit($, spawn, resolved.selection, policyState);
+    const denial = await admit($, spawn, resolved.selection);
     if (denial) {
       return { deny: denial };
     }
     const result = await next(spawn);
-    if (result.agentId && result.model) {
-      agentModels.set(result.agentId, result.model);
+    const { agentId, model } = result;
+    if (agentId && model) {
+      await update($, agentModels, (held) => withBounded(held, agentId, model));
     }
     return result;
   });
 };
+
+/** Truly native: the gateway classifies the type as Claude-loop and its model is not a Multi one. */
+function nativeClaude(response: GatewayResponse | undefined): boolean {
+  return response?.execution === 'claude' && !isMultiModel(response.model);
+}
+
+/** Remembers whether an agent type is a native Claude subagent, changing state only on a change. */
+async function classify($: EngineInterface, agent: string, isNative: boolean) {
+  if ((await read($, claudeTypes)).includes(agent) === isNative) {
+    return;
+  }
+  await update($, claudeTypes, (held) =>
+    isNative ? withItem(held, agent) : held.filter((type) => type !== agent),
+  );
+}
+
+/** Tracks the provider worker types the model is offered, for the Agent tool's description. */
+async function markOffered($: EngineInterface, agent: string, isOffered: boolean) {
+  if (!isProviderWorker(agent) || (await read($, offeredProviders)).includes(agent) === isOffered) {
+    return;
+  }
+  await update($, offeredProviders, (held) =>
+    isOffered ? withItem(held, agent) : held.filter((type) => type !== agent),
+  );
+  $.ui.invalidate('tool.describe');
+}
 
 async function spawnPayload($: EngineInterface, event: SpawnEvent) {
   return {
@@ -216,7 +249,7 @@ async function providerSpawn(
   const provider = isProviderWorker(event.subagentType) && !event.fork;
   const named = provider ? (requestedModels.get(event.tool_use_id) ?? event.model) : event.model;
   const payload = { ...(await spawnPayload($, event)), model: named };
-  const selection = await request($, payload, '/multi/mod/worker-model');
+  const selection = await postJson(wire($), '/multi/mod/worker-model', payload);
   if (!provider) {
     return { event, selection };
   }
@@ -238,38 +271,37 @@ async function admit(
   $: EngineInterface,
   event: SpawnEvent,
   selection: GatewayResponse | undefined,
-  policyState: PolicyState,
 ): Promise<string | undefined> {
   const payload = await spawnPayload($, event);
   if (!harnessSpawn(event, selection)) {
     // Keep context for a possible later harness child, but never veto the
     // engine's native worker because Multi could not reconstruct its policy.
-    await request($, payload);
+    await postJson(wire($), '/multi/mod/worker', payload);
     return undefined;
   }
-  await prepareHarness($, policyState);
-  const mode = await request(
-    $,
-    {},
-    `/multi/mod/mode?sessionId=${encodeURIComponent(payload.sessionId)}`,
+  await prepareHarness($);
+  // The worker's rows anchor in its own transcript only once their tools exist.
+  await syncDisplayTools(rowsClient($));
+  const mode = accepted(
+    await getJson(wire($), '/multi/mod/mode', { sessionId: payload.sessionId }),
   );
-  const response = await request($, { ...payload, generation: mode?.generation });
+  const response = await postJson(wire($), '/multi/mod/worker', {
+    ...payload,
+    generation: mode?.generation,
+  });
   return response?.accepted
     ? undefined
     : reportable(response?.error ?? 'Multi harness worker policy was not acknowledged.');
 }
 
-function isMultiModel(model: string | undefined): boolean {
-  return Boolean(model?.startsWith('multi/'));
-}
-
 /**
- * A Claude subagent: not a `multi-*` worker type, offered as Claude-loop, and neither its
- * model nor its parent's (which a fork or an inheriting subagent runs on) is a Multi model.
+ * A Claude subagent: not a `multi-*` worker type, classified as native Claude (a Claude
+ * model, not a provider model its definition pins), and neither its model nor its
+ * parent's (which a fork or an inheriting subagent runs on) is a Multi model.
  */
-function nativeClaudeSpawn(event: SpawnEvent, claudeTypes: ReadonlySet<string>): boolean {
+function nativeClaudeSpawn(event: SpawnEvent, claudeTypeNames: readonly string[]): boolean {
   return (
-    claudeTypes.has(event.subagentType) &&
+    claudeTypeNames.includes(event.subagentType) &&
     !isProviderWorker(event.subagentType) &&
     !isMultiModel(event.model) &&
     !isMultiModel(event.parentModel)
@@ -284,58 +316,21 @@ function harnessSpawn(
   return selection?.execution === 'harness' || (!selection?.known && isHarnessModel(inferred));
 }
 
-async function active($: EngineInterface): Promise<boolean> {
-  const base = await $.env.get('MULTI_MOD_GATEWAY_URL');
-  const token = await $.env.get('MULTI_GATEWAY_TOKEN');
-  return Boolean(base && token);
-}
-
-async function request(
-  $: EngineInterface,
-  payload: Record<string, unknown>,
-  route = '/multi/mod/worker',
-) {
-  const base = await $.env.get('MULTI_MOD_GATEWAY_URL');
-  const token = await $.env.get('MULTI_GATEWAY_TOKEN');
-  if (!base || !token) {
-    return undefined;
+/**
+ * Admits the prompt's harness policy once for every helper it spawns. The snapshot is
+ * state, so the admission outlives a reload; concurrent helpers share one admission in
+ * `policy.ts`.
+ */
+async function prepareHarness($: EngineInterface) {
+  const held = await read($, policy);
+  if (!held.prompt || held.harnessReady) {
+    return;
   }
-  const body = JSON.stringify(payload);
-  if (encodeURIComponent(body).replace(/%[A-F\d]{2}/gi, 'x').length > maxBody) {
-    return undefined;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const response = $.http.fetch(`${base}${route}`, {
-      method: route.includes('?') ? 'GET' : 'POST',
-      headers: { 'content-type': 'application/json', 'x-multi-gateway-token': token },
-      ...(route.includes('?') ? {} : { body }),
-    });
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('gateway request timeout')), 1500);
-    });
-    const result = await Promise.race([response, timeout]);
-    return result.ok
-      ? (JSON.parse(result.text) as GatewayResponse)
-      : refusal(result.text, result.status);
-  } catch {
-    return undefined;
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-}
-
-async function policyClient($: EngineInterface): Promise<PolicyClient> {
-  return {
-    model: await $.session.model(),
-    request: (route, payload) => request($, payload, route),
-  };
-}
-
-async function prepareHarness($: EngineInterface, state: PolicyState) {
-  if (state.prompt && !state.harnessReady) {
-    await ensureHarnessPolicy(await policyClient($), state);
-  }
+  const admitted: MultiCorePolicy = { ...held };
+  await ensureHarnessPolicy(policyClient(wire($), await $.session.model()), admitted);
+  await update($, policy, (latest) =>
+    JSON.stringify(latest.prompt) === JSON.stringify(held.prompt)
+      ? defined({ ...latest, generation: admitted.generation, harnessReady: admitted.harnessReady })
+      : latest,
+  );
 }

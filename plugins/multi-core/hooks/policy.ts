@@ -1,3 +1,5 @@
+import type { MultiCorePolicy, MultiCorePrompt } from '../types/multi-core.d.ts';
+import { type GatewayOptions, getJson, postJson, type Wire } from './gateway.ts';
 import { isHarnessModel } from './provider.ts';
 
 export type PolicyResponse = {
@@ -8,32 +10,58 @@ export type PolicyResponse = {
   status?: string;
   accepted?: boolean;
 };
+/** The policy's gateway for one session model; `wire` is the calling file's own. */
+export function policyClient(wire: Wire, model: string): PolicyClient {
+  return {
+    model,
+    post: (route, payload, options) => postJson(wire, route, payload, options),
+    get: (route, query) => getJson(wire, route, query),
+  };
+}
+
+/** The gateway as the policy needs it: explicit methods, as `gateway.ts` offers them. */
 export type PolicyClient = {
   model: string;
-  request: (route: string, payload: Record<string, unknown>) => Promise<PolicyResponse | undefined>;
+  post: (
+    route: string,
+    payload: Record<string, unknown>,
+    options?: GatewayOptions,
+  ) => Promise<PolicyResponse | undefined>;
+  get: (route: string, query: Record<string, string>) => Promise<PolicyResponse | undefined>;
 };
-export type PromptSnapshot = { sessionId: string; cwd: string; permissionMode: unknown };
-export type PolicyState = {
-  generation?: number;
-  prompt?: PromptSnapshot;
-  harnessReady?: boolean;
-  preparing?: Promise<number | undefined>;
-};
+export type PromptSnapshot = MultiCorePrompt;
+export type PolicyState = MultiCorePolicy;
 
-/** Share one admission across helpers spawned from the same prompt. */
+/** The admission each prompt is running, shared by every helper spawned from that prompt. */
+const preparing = new Map<string, Promise<number | undefined>>();
+
+/** A prompt's identity as the gateway holds it: what, with the model, decides a repost. */
+export function snapshotKey(snapshot: PromptSnapshot, model: string): string {
+  return JSON.stringify([snapshot.sessionId, snapshot.cwd, snapshot.permissionMode ?? null, model]);
+}
+
+/**
+ * Share one admission across helpers spawned from the same prompt. It updates `state`,
+ * a copy the caller persists; only a state still holding the admitted prompt is changed.
+ */
 export async function ensureHarnessPolicy(client: PolicyClient, state: PolicyState) {
   const snapshot = state.prompt;
   if (!snapshot || state.harnessReady) {
     return;
   }
-  const preparing = state.preparing ?? admitPrompt(client, snapshot, state.generation);
-  state.preparing = preparing;
-  const generation = await preparing;
-  if (state.prompt === snapshot) {
-    state.generation = generation;
-    state.harnessReady = generation !== undefined;
-    state.preparing = undefined;
+  const key = snapshotKey(snapshot, client.model);
+  const admission = preparing.get(key) ?? admitPrompt(client, snapshot, state.generation);
+  preparing.set(key, admission);
+  let generation: number | undefined;
+  try {
+    generation = await admission;
+  } finally {
+    if (preparing.get(key) === admission) {
+      preparing.delete(key);
+    }
   }
+  state.generation = generation;
+  state.harnessReady = generation !== undefined;
 }
 
 /** Prepare translated settings only for a harness prompt or a requested harness worker. */
@@ -46,7 +74,7 @@ export async function admitPrompt(
   if (!prepared) {
     return undefined;
   }
-  const response = await client.request('/multi/mod/session', {
+  const response = await client.post('/multi/mod/session', {
     policyGeneration: prepared.policyGeneration,
     sessionId: snapshot.sessionId,
     cwd: snapshot.cwd,
@@ -71,7 +99,7 @@ export async function recordPrompt(
   if (isHarnessModel(model)) {
     return admitPrompt(client, snapshot, generation);
   }
-  const response = await client.request('/multi/mod/session', {
+  const response = await client.post('/multi/mod/session', {
     ...snapshot,
     model,
     event: 'prompt',
@@ -91,7 +119,7 @@ export async function preparePolicy(
   sourceGeneration: number | undefined,
 ): Promise<PolicyHandoff | undefined> {
   let generation = sourceGeneration;
-  let started = await client.request('/multi/mod/policy', { sessionId, cwd, sourceGeneration });
+  let started = await client.post('/multi/mod/policy', { sessionId, cwd, sourceGeneration });
   if (started?.refused) {
     // A reloaded hooks module keeps a mode generation the gateway no longer agrees
     // with, and `/clear` detaches the session so the gateway holds none at all;
@@ -102,7 +130,7 @@ export async function preparePolicy(
       return undefined;
     }
     generation = resynced.generation;
-    started = await client.request('/multi/mod/policy', {
+    started = await client.post('/multi/mod/policy', {
       sessionId,
       cwd,
       sourceGeneration: generation,
@@ -115,29 +143,23 @@ export async function preparePolicy(
   return policyGeneration === undefined ? undefined : { policyGeneration, generation };
 }
 
+/**
+ * One request: the gateway holds the reply until discovery ends (`claude plugin list`
+ * and settings admission take seconds on a cold Windows start) or its own bound passes.
+ * The wait is the gateway's, so it needs no polling loop in the hook's budget.
+ */
 async function awaitPolicy(client: PolicyClient, sessionId: string, generation: string) {
-  // Policy discovery runs `claude plugin list` and settings admission; on a
-  // cold Windows start that takes several seconds. Stay under the 10 s hook budget.
-  const deadline = Date.now() + 8000;
-  while (Date.now() < deadline) {
-    const result = await client.request('/multi/mod/policy', { sessionId, generation });
-    if (result?.status === 'ready') {
-      return generation;
-    }
-    if (!result || result.refused || result.status === 'failed') {
-      return undefined;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return undefined;
+  const result = await client.post(
+    '/multi/mod/policy',
+    { sessionId, generation, wait: true },
+    { timeoutMs: 0 },
+  );
+  return result?.status === 'ready' && !result.refused ? generation : undefined;
 }
 
 /** The gateway's own mode generation, or `{ generation: undefined }` when it holds none. */
 async function modeGeneration(client: PolicyClient, sessionId: string) {
-  const mode = await client.request(
-    `/multi/mod/mode?sessionId=${encodeURIComponent(sessionId)}`,
-    {},
-  );
+  const mode = await client.get('/multi/mod/mode', { sessionId });
   if (typeof mode?.generation === 'number') {
     return { generation: mode.generation };
   }

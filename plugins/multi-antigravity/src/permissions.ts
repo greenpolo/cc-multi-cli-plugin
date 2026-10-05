@@ -1,7 +1,24 @@
+import os from 'node:os';
+import path from 'node:path';
 import { nativeToolRules } from '../../multi-core/src/gateway/display-rows.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 
 /** Native names reachable from each mapped Claude tool. */
+/** The agy config roots that hold hooks and settings; see antigravityProtectedRoots. */
+export function antigravityProtectedRoots(
+  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; homedir?: string } = {},
+): string[] {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const home = options.homedir ?? os.homedir();
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  const roots = [join(home, '.gemini')];
+  if (platform === 'win32') {
+    roots.push(join(env.LOCALAPPDATA ?? env.APPDATA ?? join(home, 'AppData', 'Local'), 'gemini'));
+  }
+  return roots;
+}
+
 const TOOL_MAP = {
   Read: ['view_file', 'list_dir'],
   Grep: ['grep_search'],
@@ -9,7 +26,31 @@ const TOOL_MAP = {
   Bash: ['run_command', 'command_status', 'send_command_input'],
   Write: ['write_to_file'],
   Edit: ['replace_file_content', 'multi_replace_file_content', 'sed_file'],
-  WebFetch: ['read_url_content'],
+  WebFetch: [
+    'read_url_content',
+    'open_browser_url',
+    'read_browser_page',
+    'list_browser_pages',
+    'execute_browser_javascript',
+    'capture_browser_console_logs',
+    'capture_browser_screenshot',
+    'click_browser_pixel',
+    'browser_click_element',
+    'browser_drag_pixel_to_pixel',
+    'browser_get_dom',
+    'browser_get_network_request',
+    'browser_input',
+    'browser_list_network_requests',
+    'browser_mouse_down',
+    'browser_mouse_up',
+    'browser_move_mouse',
+    'browser_press_key',
+    'browser_refresh_page',
+    'browser_resize_window',
+    'browser_scroll',
+    'browser_scroll_dom',
+    'browser_select_option',
+  ],
   WebSearch: ['search_web'],
   NotebookEdit: ['notebook_edit'],
 } as const;
@@ -25,9 +66,20 @@ const PLAN_READ_ONLY = [
   ...TOOL_MAP.Read,
   ...TOOL_MAP.Grep,
   ...TOOL_MAP.Glob,
-  ...TOOL_MAP.WebFetch,
+  // Plan reads pages as text; driving a browser can submit forms and run scripts.
+  'read_url_content',
   ...TOOL_MAP.WebSearch,
 ];
+
+/** Control tools agy needs to finish a turn; they act on nothing outside the conversation. */
+const CONTROL_TOOLS = ['finish', 'wait', 'wait_5_seconds'];
+
+/** Native tools whose parameters name files they write. */
+const WRITING_TOOLS = new Set<string>([
+  ...TOOL_MAP.Write,
+  ...TOOL_MAP.Edit,
+  ...TOOL_MAP.NotebookEdit,
+]);
 
 /** Native child-agent and MCP tools; agy runs with permissions skipped, so these are always denied. */
 const ALWAYS_DENIED = [
@@ -37,6 +89,16 @@ const ALWAYS_DENIED = [
   'browser_subagent',
   'call_mcp_tool',
   'notebook_execution',
+  // Messaging, scheduling, task and resource tools are child-agent or MCP-like surfaces.
+  'schedule',
+  'manage_task',
+  'send_message',
+  'manage_inbox',
+  'list_resources',
+  'read_resource',
+  // No Claude tool maps to these side effects.
+  'generate_image',
+  'delete_knowledge',
 ];
 
 export interface AntigravityPolicy {
@@ -72,9 +134,11 @@ export function antigravityPermissionPolicy(context: PermissionContext): Antigra
       }
     }
   }
+  // Always an allowlist: a tool agy announces later, or one no Claude tool maps to, stays denied.
+  const mapped = plan ? PLAN_READ_ONLY : Object.values(TOOL_MAP).flat();
   return {
     denied: [...denied],
-    ...(plan ? { allowed: PLAN_READ_ONLY.filter((tool) => !denied.has(tool)) } : {}),
+    allowed: [...mapped.filter((tool) => !denied.has(tool)), ...CONTROL_TOOLS],
     plan,
     notice: policyNotice(context.permissionMode),
   };
@@ -125,11 +189,51 @@ function toolList(serialized: string): string[] {
   return tools;
 }
 
+function stringValues(value: unknown, depth = 0): string[] {
+  if (typeof value === 'string') {
+    return [value];
+  }
+  if (depth > 4 || !value || typeof value !== 'object') {
+    return [];
+  }
+  return Object.values(value).flatMap((item) => stringValues(item, depth + 1));
+}
+
+function inside(parent: string, child: string, platform: NodeJS.Platform): boolean {
+  const lib = platform === 'win32' ? path.win32 : path.posix;
+  const fold = (value: string) => (platform === 'win32' ? value.toLowerCase() : value);
+  const relative = lib.relative(fold(parent), fold(child));
+  return relative === '' || (!relative.startsWith('..') && !lib.isAbsolute(relative));
+}
+
+/**
+ * The permission hook lives in agy's user-writable config tree and is read once per turn, so a
+ * granted write tool must never target that tree. Shell commands are not path-checked here;
+ * Bash is a separate grant.
+ */
+function targetsProtectedPath(
+  call: { name: string; parameters?: unknown },
+  options: { protectedRoots: string[]; platform?: NodeJS.Platform; cwd?: string },
+): boolean {
+  if (!WRITING_TOOLS.has(call.name)) {
+    return false;
+  }
+  const platform = options.platform ?? process.platform;
+  const lib = platform === 'win32' ? path.win32 : path.posix;
+  const cwd = options.cwd ?? process.cwd();
+  return stringValues(call.parameters).some((value) => {
+    const expanded = value.startsWith('~') ? `${os.homedir()}${value.slice(1)}` : value;
+    const resolved = lib.resolve(cwd, expanded);
+    return options.protectedRoots.some((root) => inside(lib.resolve(root), resolved, platform));
+  });
+}
+
 /** No policy means an ordinary native CLI session, outside this gateway. */
 export function antigravityToolDecision(
   input: unknown,
   serializedPolicy?: string,
   serializedAllowed?: string,
+  options: { protectedRoots?: string[] } = {},
 ) {
   if (serializedPolicy === undefined) {
     return undefined;
@@ -144,7 +248,15 @@ export function antigravityToolDecision(
     if (!call || typeof call !== 'object' || !('name' in call) || typeof call.name !== 'string') {
       throw new Error('Invalid native tool call');
     }
-    if (denied.includes(call.name) || (allowed && !allowed.includes(call.name))) {
+    const parameters = 'parameters' in call ? call.parameters : undefined;
+    if (
+      denied.includes(call.name) ||
+      (allowed && !allowed.includes(call.name)) ||
+      targetsProtectedPath(
+        { name: call.name, parameters },
+        { protectedRoots: options.protectedRoots ?? antigravityProtectedRoots() },
+      )
+    ) {
       return {
         decision: 'deny',
         reason: 'Claude session policy excludes this native Antigravity tool.',

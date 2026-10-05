@@ -19,12 +19,7 @@ const reply: MessagesResponse = {
 
 test('Antigravity routing resolves authenticated mode and never executes observed tools', async (t) => {
   const modes = new PermissionModes(async () => ({}));
-  await modes.record({
-    hook_event_name: 'UserPromptSubmit',
-    session_id: 'test-session',
-    permission_mode: 'auto',
-    prompt: 'edit the fixture',
-  });
+  modes.recordModSession('test-session', { permissionMode: 'auto' });
   let calls = 0;
   const server = createNativeGateway({
     token: 'test-token',
@@ -71,12 +66,7 @@ test('Antigravity routing resolves authenticated mode and never executes observe
 
 test('a busy Antigravity agent is answered 400, not a retryable 502', async (t) => {
   const modes = new PermissionModes(async () => ({}));
-  await modes.record({
-    hook_event_name: 'UserPromptSubmit',
-    session_id: 'busy-session',
-    permission_mode: 'auto',
-    prompt: 'edit the fixture',
-  });
+  modes.recordModSession('busy-session', { permissionMode: 'auto' });
   const server = createNativeGateway({
     token: 'test-token',
     authFile: '/unused',

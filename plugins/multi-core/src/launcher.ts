@@ -2,7 +2,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,11 +17,11 @@ import {
   antigravityDefaultWorkerModel,
   antigravityPickerOptions,
   discoverAntigravityModels,
-  nativeSpelling,
 } from '../../multi-antigravity/src/models.ts';
 import { antigravityPermissionPolicy } from '../../multi-antigravity/src/permissions.ts';
 import { ANTIGRAVITY_TOOLS } from '../../multi-antigravity/src/progress.ts';
 import { antigravityUsageReader } from '../../multi-antigravity/src/usage-adapter.ts';
+import type { Effort } from '../../multi-core/src/gateway/responses.ts';
 import { CursorHarness } from '../../multi-cursor/src/harness.ts';
 import type { CursorModelOption } from '../../multi-cursor/src/models.ts';
 import {
@@ -29,10 +29,7 @@ import {
   cursorModelOptions,
   cursorPickerOptions,
 } from '../../multi-cursor/src/models.ts';
-import {
-  cursorPermissionPolicy,
-  mergeCursorPermissions,
-} from '../../multi-cursor/src/permissions.ts';
+import { cursorPermissionPolicy } from '../../multi-cursor/src/permissions.ts';
 import { CURSOR_TOOLS } from '../../multi-cursor/src/progress.ts';
 import { cursorUsageReader } from '../../multi-cursor/src/usage-adapter.ts';
 import { CursorWorkspaces } from '../../multi-cursor/src/workspaces.ts';
@@ -52,7 +49,6 @@ import {
   OPENAI_DEFAULT_WORKER_MODEL,
   OPENAI_WORKER_EFFORT,
 } from '../../multi-openai/src/models.ts';
-import type { Effort } from '../../multi-openai/src/responses.ts';
 import { openAIUsageReader } from '../../multi-openai/src/usage-adapter.ts';
 import { readZenKey } from '../../multi-zen/src/auth.ts';
 import {
@@ -63,17 +59,22 @@ import {
   zenPickerOptions,
 } from '../../multi-zen/src/models.ts';
 import { zenUsageReader } from '../../multi-zen/src/usage-adapter.ts';
-import { AgentCatalog } from './gateway/agent-catalog.ts';
 import {
   loadWorkerPermissions,
   type PluginPermissionInventory,
   pluginPermissions,
 } from './gateway/agent-definitions.ts';
-import { type CursorSettingsOptions, checkCursorSettings } from './gateway/cursor-settings.ts';
 import { DISPLAY_TOOL_SERVER } from './gateway/display-rows.ts';
 import { executableInvocation, resolveExecutable } from './gateway/executable.ts';
+import {
+  checkHarnessSettings,
+  type HarnessSettingsOptions,
+  mergePermissions,
+} from './gateway/harness-settings.ts';
 import { ModBridge } from './gateway/mod-bridge.ts';
 import { PermissionModes } from './gateway/mode-hook.ts';
+import { nestedClaudeShim, withPathPrefix } from './gateway/nested-env.ts';
+import { nativeSpelling } from './gateway/provider.ts';
 import type { ProviderUsageReader } from './gateway/provider-usage.ts';
 import { ReceiptLedger } from './gateway/receipts.ts';
 import type { GatewayEvent } from './gateway/server.ts';
@@ -86,6 +87,7 @@ import {
 } from './gateway/worker-catalog.ts';
 
 import { providerSelection } from './install/plugins.ts';
+import { needsEnvProxy, rememberOriginalEnvironment, withoutGateway } from './install/process.ts';
 
 const enabledProviders = providerSelection(process.env.MULTI_ENABLED_PROVIDERS);
 const providerEnabled = (provider: string) =>
@@ -134,8 +136,8 @@ interface LaunchSettings {
 async function main() {
   const args = process.argv.slice(2);
   await handleCommand(args[0]);
-  const { cursorModels, cursorSignedIn } = await discoverCursor(args[0] === '--cursor-models');
   if (args[0] === '--cursor-models') {
+    const { cursorModels, cursorSignedIn } = await discoverCursor(true);
     printCursorModels(cursorModels, cursorSignedIn);
     return;
   }
@@ -143,20 +145,33 @@ async function main() {
     args.shift();
   }
   validateSessionLaunch(args);
-  const pluginInventory = await pluginPermissions(process.cwd(), args);
+  warnIfProxyUnused();
   const pluginRoot = await findPluginRoot(fileURLToPath(import.meta.url));
   await assertFunctionHooksSupported();
-  const anthropic = await anthropicSignedIn();
   const fullCatalog = process.env.MULTI_MODELS !== undefined;
-  const cursorPicker = selectedCursorOptions(cursorModels, fullCatalog);
   const authFile = path.join(
     process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
     'auth.json',
   );
-  const { codexSignedIn, openaiReview } = await discoverOpenAI(authFile);
-  const zenKey = providerEnabled('zen') ? await readZenKey() : undefined;
-  const antigravityModels = await discoverAntigravity();
-  const grokModels = await discoverGrok();
+  // Independent probes run together: Cursor's model listing alone can take 15 s.
+  const [
+    pluginInventory,
+    anthropic,
+    { cursorModels },
+    { codexSignedIn, openaiReview },
+    zenKey,
+    antigravityModels,
+    grokModels,
+  ] = await Promise.all([
+    pluginInventoryOrEmpty(process.cwd(), args),
+    anthropicSignedIn(),
+    discoverCursor(false),
+    discoverOpenAI(authFile),
+    providerEnabled('zen') ? readZenKey() : Promise.resolve(undefined),
+    discoverAntigravity(),
+    discoverGrok(),
+  ]);
+  const cursorPicker = selectedCursorOptions(cursorModels, fullCatalog);
   const token = randomBytes(32).toString('hex');
   const defaultModels = fullCatalog
     ? pickerSettings(
@@ -176,9 +191,12 @@ async function main() {
     fullCatalog,
   );
   await mergeSettings(args, settings);
-  // The supervisor does not transfer --agents or our session-local gateway env,
-  // and can outlive the child whose exit releases settingsDir and the gateway.
-  // Keep ordinary background subagent tasks available within this owned session.
+  // Agent view and background sessions are off for this session only, through the
+  // session's own settings: nested Claude runs do not read them, unlike an environment
+  // variable. The background supervisor does not carry --agents or this session's gateway
+  // environment, and outlives the child whose exit releases settingsDir and the gateway,
+  // so a session handed to it would lose its workers and its gateway. Ordinary background
+  // subagent tasks stay available inside this session.
   settings.disableAgentView = true;
   filterPicker(settings, process.env.MULTI_MODELS, defaultModels);
   const callerSettings = structuredClone(settings);
@@ -236,13 +254,10 @@ async function main() {
     usageReaders,
     permissionModes,
     approvalBridge,
-    approvalProviders,
+    // A launch inside another Multi session forwards to the user's own upstream, not the outer gateway.
+    anthropicBaseUrl: withoutGateway(process.env).ANTHROPIC_BASE_URL || undefined,
     blockAnthropic: !anthropic,
     guardAuto: true,
-    agentCatalog: new AgentCatalog(
-      agents,
-      settings.modelPicker.options.map((option) => option.model),
-    ),
     onEvent: traceEvent,
   });
   await new Promise<void>((resolve, reject) => {
@@ -261,11 +276,12 @@ async function main() {
   configureApproval(settings, approvalProviders, selectedModel, { antigravity, grok }, anthropic);
   await writeFile(settingsFile, JSON.stringify(settings), { mode: 0o600 });
   const definitions = JSON.stringify(agents);
-  const childEnvironment = gatewayEnvironment(address.port, token, anthropic);
+  const baseEnvironment = gatewayEnvironment(address.port, token, anthropic);
   const claudePath = resolveExecutable('claude', {
     configuredPath: claudeExecutable,
-    env: childEnvironment,
+    env: baseEnvironment,
   });
+  const childEnvironment = await withNestedClaudeShim(baseEnvironment, settingsDir, claudePath);
   const childArguments = launcherArguments(
     args,
     settingsFile,
@@ -289,7 +305,7 @@ async function main() {
     await rm(settingsDir, { recursive: true, force: true });
     throw error;
   }
-  const ready = awaitModSessionStart();
+  const modStart = awaitModSessionStart();
   const child = spawn(childInvocation.command, childInvocation.args, {
     stdio: 'inherit',
     env: childEnvironment,
@@ -304,20 +320,19 @@ async function main() {
     await receipts.drain();
     await rm(settingsDir, { recursive: true, force: true });
   };
-  try {
-    await ready;
-  } catch (error) {
-    child.kill();
-    await shutdown();
-    throw error;
-  }
+  // Attached before anything is awaited: a Claude that cannot start, or that exits at
+  // once (--version, an argument error), must end the launcher with its own exit code
+  // rather than after the mod's acknowledgement times out.
+  const exited = new Promise<number>((resolve) => {
+    child.once('exit', (code) => resolve(code ?? 1));
+  });
   child.once('error', (error) => {
+    modStart.cancel();
     console.error(error.message);
     void shutdown().finally(() => process.exit(1));
   });
-  child.once('exit', (code) => {
-    void shutdown().finally(() => process.exit(code ?? 1));
-  });
+  await awaitStartOrExit(modStart, exited, child, shutdown);
+  void exited.then((code) => shutdown().finally(() => process.exit(code)));
   if (process.platform === 'win32') {
     // Windows console control events do not provide POSIX process groups. Claude's
     // child owns Ctrl+C handling; forward termination explicitly to its process tree.
@@ -363,13 +378,9 @@ function validateSessionLaunch(args: string[]) {
     args.some((arg) => arg === '--bg' || arg === '--background') ||
     ['attach', 'respawn'].includes(args[0] ?? '')
   ) {
+    // The background supervisor does not carry the gateway environment or --agents.
     throw new Error(
       'Multi sessions must stay attached to their launcher. Exit and use --resume <session-id> to continue with a fresh gateway; whole-session background handoff is unsupported.',
-    );
-  }
-  if (process.env.ANTHROPIC_BASE_URL) {
-    throw new Error(
-      'Start without ANTHROPIC_BASE_URL; this launcher supplies the central gateway.',
     );
   }
   if (args.some((arg) => arg === '--agents' || arg.startsWith('--agents='))) {
@@ -400,7 +411,7 @@ function nativeSettingsCheck(
       return {};
     }
     try {
-      return await checkCursorSettings(cwd, args, callerSettings, sharedAdmission(harnesses));
+      return await checkHarnessSettings(cwd, args, callerSettings, sharedAdmission(harnesses));
     } catch (error) {
       return { nativePermissionError: String(error) };
     }
@@ -419,7 +430,7 @@ function nativeHarnesses(
         (cwd) =>
           new CursorHarness(cursorModels, {
             cwd,
-            checkPermissions: () => checkCursorSettings(cwd, args, callerSettings),
+            checkPermissions: () => checkHarnessSettings(cwd, args, callerSettings),
           }),
       )
     : undefined;
@@ -427,20 +438,20 @@ function nativeHarnesses(
     ? new AntigravityHarness(antigravityModels, {
         checkPermissions: async (cwd, context) => {
           await checkAntigravityHooks();
-          const restrictions = await checkCursorSettings(cwd, args, callerSettings, {
+          const restrictions = await checkHarnessSettings(cwd, args, callerSettings, {
             validate: antigravityPermissionPolicy,
           });
-          return antigravityPermissionPolicy(mergeCursorPermissions(context, restrictions));
+          return antigravityPermissionPolicy(mergePermissions(context, restrictions));
         },
       })
     : undefined;
   const grok = grokModels.length
     ? new GrokHarness(grokModels, {
         checkPermissions: async (cwd, context) => {
-          const restrictions = await checkCursorSettings(cwd, args, callerSettings, {
+          const restrictions = await checkHarnessSettings(cwd, args, callerSettings, {
             validate: grokPermissionPolicy,
           });
-          return grokPermissionPolicy(mergeCursorPermissions(context, restrictions));
+          return grokPermissionPolicy(mergePermissions(context, restrictions));
         },
       })
     : undefined;
@@ -588,22 +599,54 @@ function atLeastVersion(actual: number[], required: number[]): boolean {
  */
 const modSessionStartTimeoutMs = Number(process.env.MULTI_MOD_START_TIMEOUT_MS ?? 30000);
 
-function awaitModSessionStart(): Promise<void> {
-  return new Promise((resolve, reject) => {
+/**
+ * Wait for the mod's acknowledgement, or for a Claude that exits first: that ends the
+ * launch with Claude's own exit code. A timeout is the launcher's error.
+ */
+async function awaitStartOrExit(
+  modStart: { ready: Promise<void>; cancel: () => void },
+  exited: Promise<number>,
+  child: { kill: () => boolean },
+  shutdown: () => Promise<void>,
+) {
+  try {
+    const earlyExit = await Promise.race([modStart.ready.then(() => undefined), exited]);
+    if (earlyExit !== undefined) {
+      modStart.cancel();
+      await shutdown();
+      process.exit(earlyExit);
+    }
+  } catch (error) {
+    child.kill();
+    await shutdown();
+    throw error;
+  }
+}
+
+function awaitModSessionStart(): { ready: Promise<void>; cancel: () => void } {
+  let cancel = () => {};
+  const ready = new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      process.off('multi-mod-session-start', ready);
+      process.off('multi-mod-session-start', acknowledged);
       reject(
         new Error(
           'Claude Code 2.1.272 or newer with loaded function hooks is required; the Multi mod did not acknowledge session.start.',
         ),
       );
     }, modSessionStartTimeoutMs);
-    const ready = () => {
+    const acknowledged = () => {
       clearTimeout(timer);
       resolve();
     };
-    process.once('multi-mod-session-start', ready);
+    cancel = () => {
+      clearTimeout(timer);
+      process.off('multi-mod-session-start', acknowledged);
+    };
+    process.once('multi-mod-session-start', acknowledged);
   });
+  // A cancelled wait never settles; a timed-out one is handled by whoever awaits it.
+  ready.catch(() => {});
+  return { ready, cancel };
 }
 
 async function anthropicSignedIn(): Promise<boolean> {
@@ -660,7 +703,7 @@ export function sharedAdmission(harnesses: {
   cursor?: unknown;
   antigravity?: unknown;
   grok?: unknown;
-}): CursorSettingsOptions {
+}): HarnessSettingsOptions {
   if (harnesses.antigravity) {
     return { validate: antigravityPermissionPolicy, cursorToolRules: false };
   }
@@ -1139,10 +1182,15 @@ function pickerSettings(
 }
 
 /**
- * CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC also blocks the plugin worker's
- * loopback call to this gateway, which the Mods control plane requires. Keep
- * the user's intent (no updater, telemetry or error reports) with the narrower
- * flags instead of silently running without the mod.
+ * CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC also blocks the plugin worker's loopback call
+ * to this gateway, which the Mods control plane requires (an end-to-end check on
+ * Claude Code 2.1.283 showed the broad flag blocks the function-hook fetch while the
+ * narrow flags do not). Keep the user's intent (no updater, telemetry, error reports or
+ * feedback command) with the narrower flags instead of silently running without the mod.
+ *
+ * This is not about GrowthBook. The broad flag and DISABLE_TELEMETRY both turn it off,
+ * and on Claude Code 2.1.287 the Mods rollout flag `tengu_plugin_hooks_modules` defaults
+ * to on without it, so the replacement flags leave the mod loading.
  */
 function translateTrafficPolicy(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC === undefined) {
@@ -1150,7 +1198,7 @@ function translateTrafficPolicy(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
   const { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: _flag, ...rest } = env;
   process.stderr.write(
-    'Multi: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC would block the local gateway; using DISABLE_AUTOUPDATER, DISABLE_TELEMETRY, DISABLE_ERROR_REPORTING and DISABLE_BUG_COMMAND instead.\n',
+    'Multi: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC would block the local gateway; using DISABLE_AUTOUPDATER, DISABLE_TELEMETRY, DISABLE_ERROR_REPORTING, DISABLE_BUG_COMMAND and DISABLE_FEEDBACK_COMMAND instead.\n',
   );
   return {
     ...rest,
@@ -1158,31 +1206,79 @@ function translateTrafficPolicy(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     DISABLE_TELEMETRY: '1',
     DISABLE_ERROR_REPORTING: '1',
     DISABLE_BUG_COMMAND: '1',
+    DISABLE_FEEDBACK_COMMAND: '1',
   };
 }
 
 function gatewayEnvironment(port: number, token: string, anthropic: boolean) {
-  const env = translateTrafficPolicy({ ...process.env });
+  // A launch inside another Multi session starts from the user's own environment.
+  const origin = withoutGateway(process.env);
+  const env = translateTrafficPolicy({ ...origin });
   delete env.OPENCODE_API_KEY;
   return {
     ...env,
-    CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+    // What nested Claude runs get back in place of the gateway (see nested-env.ts).
+    ...rememberOriginalEnvironment(origin),
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
-    // A custom base URL disables Claude's on-demand tool loading unless opted in.
-    // We forward Claude tool references, so match the direct default of always
-    // deferring; 'auto' loads every tool once a 1M window makes them under 10%.
-    ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH ?? 'true',
+    // A custom base URL makes Claude Code skip on-demand tool loading unless it is told
+    // otherwise, and a gateway base URL is always custom. Claude's own default against
+    // Anthropic is to defer tools always, which is what 'true' says; the user's own
+    // setting is kept. 'auto' would instead load every tool once a 1M window makes them
+    // under 10%.
+    ENABLE_TOOL_SEARCH: origin.ENABLE_TOOL_SEARCH ?? 'true',
     MULTI_GATEWAY_TOKEN: token,
+    // Claude Code 2.1.287 and newer has Mods on by default; 2.1.272 to 2.1.286 need this.
     CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1',
     MULTI_MOD_GATEWAY_URL: `http://127.0.0.1:${port}`,
     ...(!anthropic ? { ANTHROPIC_AUTH_TOKEN: token } : {}),
-    ANTHROPIC_CUSTOM_HEADERS: [
-      process.env.ANTHROPIC_CUSTOM_HEADERS,
-      `x-multi-gateway-token: ${token}`,
-    ]
+    ANTHROPIC_CUSTOM_HEADERS: [origin.ANTHROPIC_CUSTOM_HEADERS, `x-multi-gateway-token: ${token}`]
       .filter(Boolean)
       .join('\n'),
   };
+}
+
+/**
+ * A `claude` run by Claude's own tools (Bash `claude -p`, scripts) inherits the session's
+ * gateway environment and would route through a gateway that is not its own. Put a
+ * `claude` on the session's PATH that runs the real executable without it.
+ */
+async function withNestedClaudeShim(
+  env: NodeJS.ProcessEnv,
+  settingsDir: string,
+  claude: string,
+): Promise<NodeJS.ProcessEnv> {
+  const directory = path.join(settingsDir, 'bin');
+  const shim = nestedClaudeShim({
+    node: process.execPath,
+    script: fileURLToPath(new URL('./install/nested-claude.ts', import.meta.url)),
+    claude,
+  });
+  await mkdir(directory, { recursive: true });
+  for (const file of shim.files) {
+    await writeFile(path.join(directory, file.file), file.content, { mode: 0o755 });
+  }
+  return withPathPrefix(env, directory);
+}
+
+/** A proxy the user has configured is honored only if Node was started to use it. */
+function warnIfProxyUnused() {
+  if (needsEnvProxy(process.env)) {
+    process.stderr.write(
+      'Multi: HTTP_PROXY/HTTPS_PROXY is set but Node ignores it for the gateway; start the launcher with NODE_USE_ENV_PROXY=1 (the installed command does).\n',
+    );
+  }
+}
+
+/** A plugin inventory that cannot be read means no plugin workers, not no session. */
+async function pluginInventoryOrEmpty(cwd: string, args: readonly string[]) {
+  try {
+    return await pluginPermissions(cwd, args);
+  } catch (error) {
+    process.stderr.write(
+      `Multi: could not list Claude plugins (${error instanceof Error ? error.message.split('\n', 1)[0] : String(error)}); plugin-provided workers are unavailable.\n`,
+    );
+    return { permissions: {}, multiCoreEnabled: false } satisfies PluginPermissionInventory;
+  }
 }
 
 function traceEvent(event: GatewayEvent) {

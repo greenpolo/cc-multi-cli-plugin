@@ -240,7 +240,8 @@ test('summarizes native tool activity as text instead of replaying it', async (t
   // An ordinary tool error is not a permission decision and must not read as one.
   assert.match(text(response), /tool \(failed: Error: note\.txt does not exist\)/);
   assert.match(text(response), /I could not run it\./);
-  assert.match(text(response), /\$0\.0175 billed/);
+  // Timing and cost belong to receipts, not to the text the model reads back.
+  assert.doesNotMatch(text(response), /billed|completed in/);
 });
 
 test('replays a completed identical request instead of running it twice', async (t) => {
@@ -545,3 +546,36 @@ async function session(stateDirectory: string) {
   assert.notEqual(file, undefined);
   return JSON.parse(await readFile(path.join(stateDirectory, String(file)), 'utf8'));
 }
+
+test('only end_turn is a finished answer; a cancelled turn resumes with the interruption notice', async (t) => {
+  const { stateDirectory, calls } = await setup(t);
+  const harness = new GrokHarness([model], {
+    stateDirectory,
+    checkPermissions: policy,
+    run: async (options) => {
+      calls.push(options);
+      return echoSession(options, calls.length === 1 ? { stopReason: 'cancelled' } : {});
+    },
+  });
+  t.after(() => harness.close());
+  await assert.rejects(ask(harness, 'work'), /stopped before finishing.*cancelled/);
+  await ask(harness, 'work');
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].prompt, /previous turn was interrupted/);
+});
+
+test('an idle record is evicted after its turn so its lock is not held until shutdown', async (t) => {
+  const { stateDirectory } = await setup(t);
+  const make = () =>
+    new GrokHarness([model], {
+      stateDirectory,
+      checkPermissions: policy,
+      run: async (options) => echoSession(options),
+    });
+  const first = make();
+  t.after(() => first.close());
+  const second = make();
+  t.after(() => second.close());
+  await ask(first, 'one');
+  await ask(second, 'two');
+});

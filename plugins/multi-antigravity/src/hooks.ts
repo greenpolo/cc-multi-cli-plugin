@@ -6,6 +6,8 @@ import { hookCommand } from '../../multi-core/src/gateway/permission-hook.ts';
 import { lockStateFile } from '../../multi-core/src/gateway/state-lock.ts';
 
 const namespace = 'multi-cli-antigravity';
+/** Long enough for a concurrent launch's read and atomic rewrite of the hook file. */
+const hookLockWaitMs = 5000;
 
 export interface AntigravityPathOptions {
   platform?: NodeJS.Platform;
@@ -85,7 +87,8 @@ export async function installAntigravityHook(
   options: AntigravityPathOptions = {},
 ): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
-  const unlock = await lockStateFile(`${file}.multi-lock`);
+  // Every launch reinstalls the hook, so a concurrent launch holds this briefly.
+  const unlock = await lockStateFile(`${file}.multi-lock`, { waitMs: hookLockWaitMs });
   try {
     const hooks = await readHooks(file);
     const platform = options.platform ?? process.platform;

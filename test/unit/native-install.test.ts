@@ -179,7 +179,10 @@ test('wrapper follows installed core updates and enables only selected providers
   await f.install();
   const old = await core(f.directory, 'core-v1');
   await writeFile(f.listing, JSON.stringify(plugins(old)));
-  const args = ['--settings', '{"model":"sonnet"}', '--', 'literal $() and spaces'];
+  // The Windows fake Claude is a .cmd file, and cmd.exe cannot carry a `"` to it: the
+  // launcher refuses that argument, so this passthrough uses a settings file path.
+  const settings = f.windows ? 'C:\\settings dir\\multi.json' : '{"model":"sonnet"}';
+  const args = ['--settings', settings, '--', 'literal $() and spaces'];
   const first = JSON.parse((await f.invoke('claude-multi', args)).stdout);
   assert.deepEqual(first.args, args);
   assert.equal(first.providers, 'zen');

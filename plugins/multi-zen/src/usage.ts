@@ -1,3 +1,4 @@
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { readZenKey, validateZenKey, type ZenAuthPathOptions } from './auth.ts';
 
 interface ZenQuotaWindow {
@@ -131,10 +132,6 @@ function parseWindow(value: unknown): ZenQuotaWindow | undefined {
     return undefined;
   }
   return { status: value.status, percent: value.percent, resetsAt: value.resetsAt };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isEntitlementError(value: unknown) {

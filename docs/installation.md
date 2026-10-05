@@ -5,7 +5,12 @@
 - Node 24.12 or newer from a persistent installation. Setup records its executable path.
 - Claude Code 2.1.272 or newer with function hooks. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
   would block the local gateway, so the launcher replaces it for its session with
-  `DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING` and `DISABLE_BUG_COMMAND`.
+  `DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `DISABLE_BUG_COMMAND` and
+  `DISABLE_FEEDBACK_COMMAND`.
+- A proxy (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) and a caller-set `ANTHROPIC_BASE_URL` are
+  honored for Claude's own traffic: the gateway forwards it through the proxy to that base URL.
+  Node reads the proxy variables at startup only, so the installed command starts the launcher
+  with `NODE_USE_ENV_PROXY=1`; a launcher started by hand needs it set.
 - OpenAI: the official Codex CLI (`codex`) and a ChatGPT login.
 - Cursor: the official Cursor SDK login. No separate Cursor CLI is required.
 - OpenCode Zen: a Zen API key in OpenCode's auth store or `OPENCODE_API_KEY`.

@@ -175,7 +175,6 @@ test('Zen native tools cannot acquire OpenAI review; explicit bypass stays expli
   let reviewed = 0;
   const base = await gateway(t, async () => completion(true), {
     guardAuto: true,
-    approvalProviders: ['openai'],
     approvalBridge: {
       respond: async () => {
         reviewed++;

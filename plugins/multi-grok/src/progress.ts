@@ -2,6 +2,7 @@ import type {
   NativeActionKind,
   NativeActionTracker,
 } from '../../multi-core/src/gateway/harness-progress.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import type { GrokStreamEvent, GrokToolCall } from './cli.ts';
 
 // ACP tool kinds as the Grok Build CLI reports them.
@@ -13,10 +14,6 @@ const kinds: Record<string, NativeActionKind> = {
   move: 'edit',
   execute: 'shell',
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** The text a tool update carries in its content blocks. */
 function grokContentText(content: unknown): string {

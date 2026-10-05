@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { toResponses } from '../../plugins/multi-openai/src/responses.ts';
+import { toResponses } from '../../plugins/multi-core/src/gateway/responses.ts';
 import { toChat } from '../../plugins/multi-zen/src/chat.ts';
 
 const body = {

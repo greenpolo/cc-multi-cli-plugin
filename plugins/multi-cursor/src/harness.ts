@@ -11,6 +11,7 @@ import type {
   TokenUsage,
 } from '@cursor/sdk';
 import type { WorkerPermissions } from '../../multi-core/src/gateway/agent-definitions.ts';
+import { boundedWait } from '../../multi-core/src/gateway/harness-cli.ts';
 import {
   archiveHarnessReply,
   commitHarnessResponse,
@@ -45,25 +46,22 @@ import {
   HarnessSessionStore,
   type HarnessTurnLease,
   isHash,
-  isRecord,
   readJson,
   textContentBlock,
 } from '../../multi-core/src/gateway/harness-session.ts';
+import { mergePermissions } from '../../multi-core/src/gateway/harness-settings.ts';
 import type {
   Emit,
   MessagesRequest,
   MessagesResponse,
 } from '../../multi-core/src/gateway/messages.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { dangerousToolMode } from '../../multi-core/src/gateway/safeguards.ts';
 import { settleOrAbort } from '../../multi-core/src/gateway/settle.ts';
 import { CursorProviderError, cursorRunError } from './errors.ts';
 import { type CursorModelOption, cursorSelection } from './models.ts';
-import {
-  cursorNativePermissions,
-  cursorPermissionPolicy,
-  mergeCursorPermissions,
-} from './permissions.ts';
+import { cursorNativePermissions, cursorPermissionPolicy } from './permissions.ts';
 import { cursorContextNotice, observeCursorUpdate } from './progress.ts';
 import { prepareCursorRequest } from './request.ts';
 import { legacyCursorSessionFile, restoreCursorSession } from './session-record.ts';
@@ -396,7 +394,7 @@ export class CursorHarness {
     if (!context) {
       throw new Error('Cursor requires an explicit Claude permission context');
     }
-    const permissions = mergeCursorPermissions(context, await this.checkPermissions());
+    const permissions = mergePermissions(context, await this.checkPermissions());
     this.validate(body, permissions);
     this.cwd = await realpath(this.cwd);
     const key = hash([
@@ -864,7 +862,10 @@ export class CursorHarness {
         exchange.controller.abort(new Error('Cursor gateway closed'));
       }
     }
-    await bounded(Promise.allSettled(this.registry.all().map((exchange) => exchange.result)));
+    await boundedWait(
+      Promise.allSettled(this.registry.all().map((exchange) => exchange.result)),
+      1000,
+    );
     for (const session of [...this.store.sessions()]) {
       this.closeAgent(session.runtime.agent);
     }
@@ -897,18 +898,4 @@ function savedAgentId(saved: unknown): string | undefined {
     return undefined;
   }
   return saved.agentId;
-}
-
-async function bounded(operation: Promise<unknown>) {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      operation,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, 1000);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }

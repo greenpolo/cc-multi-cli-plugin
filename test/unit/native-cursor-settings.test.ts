@@ -6,9 +6,11 @@ import path from 'node:path';
 import test, { mock } from 'node:test';
 import { antigravityPermissionPolicy } from '../../plugins/multi-antigravity/src/permissions.ts';
 import {
-  type CursorSettingsOptions,
-  checkCursorSettings,
-} from '../../plugins/multi-core/src/gateway/cursor-settings.ts';
+  checkHarnessSettings,
+  type HarnessSettingsOptions,
+  policyCommandTimeoutMs,
+  systemCommandPath,
+} from '../../plugins/multi-core/src/gateway/harness-settings.ts';
 import type { PermissionContext } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { sharedAdmission } from '../../plugins/multi-core/src/launcher.ts';
 import {
@@ -24,9 +26,9 @@ async function checkSettings(
   cwd: string,
   args: readonly string[],
   inlineSettings: Record<string, unknown>,
-  options: CursorSettingsOptions = {},
+  options: HarnessSettingsOptions = {},
 ) {
-  return checkCursorSettings(cwd, args, inlineSettings, {
+  return checkHarnessSettings(cwd, args, inlineSettings, {
     platform: 'linux',
     osRelease: 'test-linux',
     runCommand: absentManagedPolicy,
@@ -294,7 +296,7 @@ function commandError(
   return error;
 }
 
-function absentManagedFiles(): Pick<CursorSettingsOptions, 'readDir' | 'readFile'> {
+function absentManagedFiles(): Pick<HarnessSettingsOptions, 'readDir' | 'readFile'> {
   return {
     readDir: async () => {
       throw commandError('ENOENT', 'missing');
@@ -562,4 +564,17 @@ test('native settings admission treats WSL as Linux managed file discovery', asy
     },
   );
   assert.deepEqual(policy.disallowedTools, ['Read']);
+});
+
+test('policy probes use absolute system paths and a bounded timeout', () => {
+  assert.equal(
+    systemCommandPath('reg', 'win32', { SystemRoot: 'D:\\Win' }),
+    'D:\\Win\\System32\\reg.exe',
+  );
+  assert.equal(
+    systemCommandPath('powershell.exe', 'win32', {}),
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  );
+  assert.equal(systemCommandPath('defaults', 'darwin'), '/usr/bin/defaults');
+  assert.ok(policyCommandTimeoutMs > 0 && policyCommandTimeoutMs <= 30_000);
 });

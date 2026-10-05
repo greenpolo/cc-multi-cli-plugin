@@ -4,6 +4,7 @@ import {
   resolveExecutable,
 } from '../../multi-core/src/gateway/executable.ts';
 import { terminateProcessTree } from '../../multi-core/src/gateway/process-tree.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
 interface AntigravityQuotaBucket {
   id: string;
@@ -221,8 +222,4 @@ function runCommand(
       }
     });
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

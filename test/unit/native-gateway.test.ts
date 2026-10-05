@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
-import { AgentCatalog } from '../../plugins/multi-core/src/gateway/agent-catalog.ts';
 import {
   type ApprovalContext,
   NativeApprovalBridge,
@@ -19,6 +18,18 @@ import type {
 } from '../../plugins/multi-core/src/gateway/messages.ts';
 import { PermissionModes } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { ReceiptLedger } from '../../plugins/multi-core/src/gateway/receipts.ts';
+import type {
+  ResponsesInputContent,
+  ResponsesInputItem,
+  ResponsesRequest,
+} from '../../plugins/multi-core/src/gateway/responses.ts';
+import {
+  forAnthropic,
+  fromResponses,
+  OPENAI_SIGNATURE_PREFIX,
+  readSse,
+  toResponses,
+} from '../../plugins/multi-core/src/gateway/responses.ts';
 import type { GatewayEvent, GatewayOptions } from '../../plugins/multi-core/src/gateway/server.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import { estimateInputTokens } from '../../plugins/multi-core/src/gateway/tokens.ts';
@@ -30,18 +41,10 @@ import {
 import { readCodexAuth } from '../../plugins/multi-openai/src/auth.ts';
 import { openaiInstructions } from '../../plugins/multi-openai/src/instructions.ts';
 import { MODELS, OPENAI_WORKER_EFFORT } from '../../plugins/multi-openai/src/models.ts';
-import type {
-  ResponsesInputContent,
-  ResponsesInputItem,
-  ResponsesRequest,
-} from '../../plugins/multi-openai/src/responses.ts';
-import {
-  forAnthropic,
-  fromResponses,
-  readSse,
-  toResponses,
-} from '../../plugins/multi-openai/src/responses.ts';
+import { ZEN_SIGNATURE_PREFIXES } from '../../plugins/multi-zen/src/chat.ts';
 import { removeTemporary } from '../temporary.ts';
+
+const FOREIGN_PREFIXES = [OPENAI_SIGNATURE_PREFIX, ...ZEN_SIGNATURE_PREFIXES];
 
 /** A test double for one OpenAI Responses SSE event; sent as JSON, never typed upstream. */
 interface SseEvent {
@@ -263,7 +266,7 @@ test('images retain their order and tool-result association across provider swit
       { type: 'input_text', text: 'Capture timed out' },
     ],
   });
-  assert.equal(forAnthropic(request), request);
+  assert.equal(forAnthropic(request, FOREIGN_PREFIXES), request);
   assert.deepEqual(request, snapshot, 'Conversion must not rewrite the stored transcript');
 });
 
@@ -378,7 +381,7 @@ test('switching back to Claude removes OpenAI reasoning while preserving message
     },
   ];
   const mixed = { ...body, messages: stored };
-  const cleaned = forAnthropic(mixed).messages ?? [];
+  const cleaned = forAnthropic(mixed, FOREIGN_PREFIXES).messages ?? [];
   assert.equal(cleaned.length, 3);
   assert.deepEqual(cleaned[0], stored[0]);
   assert.deepEqual(cleaned[1].content, [tool]);
@@ -390,7 +393,11 @@ test('switching back to Claude removes OpenAI reasoning while preserving message
     2,
     'Stored transcript must not be mutated',
   );
-  assert.equal(forAnthropic(body), body, 'Unmixed Claude requests retain byte-exact passthrough');
+  assert.equal(
+    forAnthropic(body, FOREIGN_PREFIXES),
+    body,
+    'Unmixed Claude requests retain byte-exact passthrough',
+  );
 });
 
 test('fragmented SSE and truncated or failed responses never become successful completions', async () => {
@@ -617,7 +624,7 @@ test('OpenAI main and worker requests adapt instructions without losing runtime 
     seen.push(JSON.parse(String(options.body)));
     return new Response(sse(textEvents));
   });
-  for (const name of ['gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
+  for (const name of ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
     await (await call({ ...payload, model: `multi/openai/${name}` })).text();
   }
   await (await call(payload, { 'x-claude-code-agent-id': 'worker-a' })).text();
@@ -671,43 +678,6 @@ test('Claude prompts remain unchanged after OpenAI main and worker requests, inc
   }
   assert.equal(openaiCalls, 2);
   assert.equal(claudeCalls, 8);
-});
-
-test('catalog filtering reaches Claude and OpenAI without changing user text or native registration', async (t) => {
-  const row = '- hidden: Hidden worker (Tools: Read)';
-  const text = `<system-reminder>\nAvailable agent types for the Agent tool:\n${row}\n- custom: Keep this (Tools: Read)\n</system-reminder>`;
-  const seen: string[] = [];
-  const call = await gateway(
-    t,
-    async (url, options) => {
-      seen.push(String(options.body));
-      return url.includes('anthropic')
-        ? Response.json({ content: [] })
-        : new Response(sse(textEvents));
-    },
-    {
-      agentCatalog: new AgentCatalog(
-        { hidden: { model, description: 'Hidden worker', tools: ['Read'] } },
-        [],
-      ),
-    },
-  );
-  for (const choice of [model, 'claude-sonnet-5']) {
-    await (
-      await call({
-        model: choice,
-        messages: [
-          { role: 'user', content: text },
-          { role: 'user', content: row },
-        ],
-      })
-    ).text();
-  }
-  assert.equal(seen.length, 2);
-  for (const sent of seen) {
-    assert.equal(sent.split('Hidden worker').length - 1, 1);
-    assert(sent.includes('Keep this'));
-  }
 });
 
 test('external route isolates provider credentials and handles simultaneous worker identities', async (t) => {
@@ -783,7 +753,7 @@ test('all registered model and reasoning choices reach OpenAI without substituti
     return new Response(sse(textEvents));
   });
   assert.equal(OPENAI_WORKER_EFFORT, 'medium');
-  for (const slug of ['gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
+  for (const slug of ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-5.6-terra', 'gpt-6-luna']) {
     assert(Object.values(MODELS).includes(slug), slug);
     for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
       const response = await call(
@@ -1323,12 +1293,7 @@ const harnessReply = (model: string, text = 'native'): MessagesResponse => ({
 
 async function harnessPermissionModes(session = 'routing-session') {
   const modes = new PermissionModes(async () => ({}));
-  await modes.record({
-    hook_event_name: 'UserPromptSubmit',
-    session_id: session,
-    permission_mode: 'auto',
-    prompt: 'route',
-  });
+  modes.recordModSession(session, { permissionMode: 'auto' });
   return modes;
 }
 
@@ -1558,12 +1523,7 @@ test('plan mode binds OpenAI review and denies planned edits without review', as
   const session = 'plan-review-session';
   const modes = new PermissionModes(async () => ({}));
   const prompt = (mode: string) =>
-    modes.record({
-      hook_event_name: 'UserPromptSubmit',
-      session_id: session,
-      permission_mode: mode,
-      prompt: 'review',
-    });
+    modes.recordModSession(session, { permissionMode: mode as 'default' });
   const contexts: (ApprovalContext | undefined)[] = [];
   const bridge = new NativeApprovalBridge(async (_input, _signal, context) => {
     contexts.push(context);

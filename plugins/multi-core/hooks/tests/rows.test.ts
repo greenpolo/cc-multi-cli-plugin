@@ -1,5 +1,8 @@
+import type { On as EngineOn } from 'claude-code';
+import type { Engine as TestEngine } from 'claude-code/testing';
 import { expect, mock, test } from 'claude-code/testing';
-import { syncDisplayTools } from '../rows.ts';
+import type { MultiCoreDisplayTools } from '../../types/multi-core.d.ts';
+import { type RowsClient, syncDisplayTools } from '../rows.ts';
 
 const gatewayEnv = {
   MULTI_GATEWAY_TOKEN: 'test-token',
@@ -11,12 +14,18 @@ const tool = 'mcp__multi-core__run_command';
 type Fetched = { url: string; body: Record<string, unknown> | undefined };
 
 /** A gateway that offers two native tools and answers only the token it issued. */
-function gateway(on: Parameters<Parameters<typeof test>[1]>[1], rows: Record<string, unknown>) {
+function gateway(
+  on: EngineOn,
+  rows: Record<string, unknown>,
+  model = 'multi/antigravity/gemini-3.8-flash',
+) {
   const fetched: Fetched[] = [];
   mock.env(on, gatewayEnv);
   on('session.id', () => ({ value: 'rows-session' }));
   on('session.cwd', () => ({ value: '/workspace' }));
-  on('session.model', () => ({ value: 'multi/antigravity/gemini-3.8-flash' }));
+  on('session.model', () => ({ value: model }));
+  on('classic.UserPromptSubmit', () => ({}));
+  on('session.end', (_$, event) => ({ sessionId: event.sessionId }));
   on('command.register', (_$, event) => ({ value: { command: event.name } }));
   on('http.fetch', (_$, event) => {
     const sent = event.init?.body;
@@ -39,15 +48,47 @@ function gateway(on: Parameters<Parameters<typeof test>[1]>[1], rows: Record<str
   return fetched;
 }
 
-test('session start registers the native tools the gateway offers and acknowledges them', async ($, on) => {
-  const fetched = gateway(on, {});
+function registrations(on: EngineOn) {
   const registered: string[] = [];
   on('tool.register', (_$, event) => {
     registered.push(event.name);
     return { value: { tool: `mcp__multi-core__${event.name}` } };
   });
+  return registered;
+}
+
+test('a session registers no display tools until a harness could run one', async ($, on) => {
+  mock.clock(on);
+  gateway(on, {});
+  const registered = registrations(on);
   on('session.start', () => ({ cwd: '/workspace' }));
-  await $.session.start({ cwd: '/workspace' });
+  await $.session.start({ cwd: '/workspace' } as never);
+  expect(registered).toEqual([]);
+});
+
+test('a Claude prompt registers no display tools either', async ($, on) => {
+  mock.clock(on);
+  gateway(on, {}, 'claude-sonnet-5');
+  const registered = registrations(on);
+  await $.classic.UserPromptSubmit({
+    prompt: 'hello',
+    permission_mode: 'default',
+    session_id: 'rows-session',
+    cwd: '/workspace',
+  });
+  expect(registered).toEqual([]);
+});
+
+test('a harness prompt registers the native tools the gateway offers and acknowledges them', async ($, on) => {
+  mock.clock(on);
+  const fetched = gateway(on, {});
+  const registered = registrations(on);
+  await $.classic.UserPromptSubmit({
+    prompt: 'hello',
+    permission_mode: 'default',
+    session_id: 'rows-session',
+    cwd: '/workspace',
+  });
   expect(registered.sort()).toEqual(['run_command', 'view_file']);
   const acknowledgement = fetched.find(
     (item) => item.url.endsWith('/multi/mod/display-tools') && item.body,
@@ -59,9 +100,40 @@ test('session start registers the native tools the gateway offers and acknowledg
     sessionId: 'rows-session',
     registered: ['run_command', 'view_file'],
   });
+  // The unchanged catalog registers nothing again.
+  registered.length = 0;
+  await $.classic.UserPromptSubmit({
+    prompt: 'again',
+    permission_mode: 'default',
+    session_id: 'rows-session',
+    cwd: '/workspace',
+  });
+  expect(registered).toEqual([]);
+});
+
+test('a session end forgets what was registered, so the next session registers again', async ($, on) => {
+  mock.clock(on);
+  gateway(on, {});
+  const registered = registrations(on);
+  const prompt = {
+    prompt: 'hello',
+    permission_mode: 'default',
+    session_id: 'rows-session',
+    cwd: '/workspace',
+  };
+  await $.classic.UserPromptSubmit(prompt);
+  expect(registered.length).toBe(2);
+  await $.session.end({
+    reason: 'clear',
+    sessionId: 'rows-session',
+    resume: { id: 'rows-session' },
+  } as never);
+  await $.classic.UserPromptSubmit({ ...prompt, session_id: 'rows-session-2' });
+  expect(registered.length).toBe(4);
 });
 
 test('tool.describe keeps display rows behind ToolSearch and leaves other tools alone', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   on('tool.describe', (_$, event) => ({ description: event.description }));
   const provider = { plugin: 'multi-core', tier: 'user' as const };
@@ -76,6 +148,7 @@ test('tool.describe keeps display rows behind ToolSearch and leaves other tools 
 });
 
 test('a model-originated call to a display row is denied at check and at call', async ($, on) => {
+  mock.clock(on);
   gateway(on, { toolu_row: { output: 'hi', isError: false } });
   on('tool.check', () => ({ decision: 'allow' as const }));
   on('tool.call', () => ({ result: 'core ran it' }));
@@ -100,6 +173,7 @@ test('a model-originated call to a display row is denied at check and at call', 
 });
 
 test('a gateway-originated row is allowed and answered with the native output', async ($, on) => {
+  mock.clock(on);
   gateway(on, { toolu_row: { output: 'hi\n', isError: false } });
   const check = await $.tool.check({
     tool,
@@ -110,6 +184,7 @@ test('a gateway-originated row is allowed and answered with the native output', 
 });
 
 test('a gateway-originated row answers its native output, and a failed action as an error', async ($, on) => {
+  mock.clock(on);
   gateway(on, { '*': { output: 'cat: missing: No such file', isError: true } });
   const called = await $.tool.call({
     tool,
@@ -177,7 +252,7 @@ function relabelled(tree: unknown, native: string, builtin: string): unknown {
   return JSON.parse(JSON.stringify(tree).replaceAll(`"${native}"`, `"${builtin}"`));
 }
 
-type Mount = Parameters<Parameters<typeof test>[1]>[0];
+type Mount = TestEngine;
 
 async function header(
   $: Mount,
@@ -229,7 +304,7 @@ async function result(
 }
 
 /** The engine beneath the mod: what it was asked to draw, and a stand-in for its drawing. */
-function engine(on: Parameters<Parameters<typeof test>[1]>[1]) {
+function engine(on: EngineOn) {
   const drawn: Array<Record<string, unknown>> = [];
   on('ui.render', (_$, event) => {
     drawn.push(event.props as Record<string, unknown>);
@@ -239,6 +314,7 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1]) {
 }
 
 test('an agy view_file row draws exactly as Claude draws Read, but for its name', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   const input = {
     kind: 'Read',
@@ -259,6 +335,7 @@ test('an agy view_file row draws exactly as Claude draws Read, but for its name'
 });
 
 test('a shell row draws as Bash and leaves its output to the engine, compact and under ctrl+o', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   const asked = engine(on);
   for (const surface of surfaces) {
@@ -279,6 +356,7 @@ test('a shell row draws as Bash and leaves its output to the engine, compact and
 });
 
 test('a search row draws as Grep: its pattern and path, then what it found', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   for (const surface of surfaces) {
     const drawn = await header($, surface, 'grep_search', {
@@ -297,6 +375,7 @@ test('a search row draws as Grep: its pattern and path, then what it found', asy
 });
 
 test('a failed action draws as a failed built-in: error dot, `Error:` in the error colour', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   const text = (value: string) => ({ type: 'Text', props: { color: 'error' }, children: [value] });
   for (const surface of surfaces) {
@@ -335,6 +414,7 @@ test('a failed action draws as a failed built-in: error dot, `Error:` in the err
 });
 
 test('writes and edits draw as Write and Update do: counts, numbered preview, diff', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   for (const surface of surfaces) {
     await header($, surface, 'write_to_file', {
@@ -395,6 +475,7 @@ test('writes and edits draw as Write and Update do: counts, numbered preview, di
 });
 
 test('Cursor edits draw from their result: a created file as Write, a diff or counts as Update', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   // The output a Cursor edit row carries is its `EditSuccess.diffString`, as a real run reported it.
   const createdDiff =
@@ -456,6 +537,7 @@ test('Cursor edits draw from their result: a created file as Write, a diff or co
 });
 
 test('a native tool with no built-in keeps its own argument and output', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   const asked = engine(on);
   for (const surface of surfaces) {
@@ -469,6 +551,7 @@ test('a native tool with no built-in keeps its own argument and output', async (
 });
 
 test('an action the run never confirmed draws neither green nor red, with an unconfirmed outcome', async ($, on) => {
+  mock.clock(on);
   gateway(on, {});
   for (const surface of surfaces) {
     const drawn = await header($, surface, 'write_to_file', {
@@ -505,19 +588,39 @@ test('an action the run never confirmed draws neither green nor red, with an unc
 test('a failed display tool acknowledgement is retried while the catalog is unchanged', async () => {
   const acknowledged: unknown[] = [];
   let failures = 1;
-  const client = {
-    sessionId: async () => 'rows-session',
-    catalog: async () => ({ revision: 41, names: ['ack_probe'] }),
-    register: async () => ({ tool: 'mcp__multi-core__ack_probe' }),
-    // The gateway client turns a timeout or an HTTP failure into `undefined`.
-    acknowledge: async (payload: Record<string, unknown>) => {
-      acknowledged.push(payload.registered);
-      if (failures > 0) {
-        failures--;
-        return undefined;
-      }
-      return { registered: 1 };
+  let held: MultiCoreDisplayTools = { registered: [] };
+  const reply = (status: number, value: unknown) => ({
+    ok: status === 200,
+    status,
+    headers: {},
+    text: JSON.stringify(value),
+  });
+  const client: RowsClient = {
+    wire: {
+      keys: { read: async () => ({}), save: async () => undefined },
+      url: async () => 'http://127.0.0.1:4000',
+      token: async () => 'token',
+      sleep: () => new Promise<void>(() => undefined),
+      fetch: async (_url, init) => {
+        if (!init.body) {
+          return reply(200, { revision: 41, names: ['ack_probe'] });
+        }
+        acknowledged.push(JSON.parse(init.body).registered);
+        if (failures > 0) {
+          failures--;
+          // The gateway client turns an HTTP failure into a refusal, not an acknowledgement.
+          return reply(503, {});
+        }
+        return reply(200, { registered: 1 });
+      },
     },
+    sessionId: async () => 'rows-session',
+    held: async () => held,
+    save: async (change) => {
+      held = change(held);
+      return held;
+    },
+    register: async () => ({ tool: 'mcp__multi-core__ack_probe' }),
   };
   await syncDisplayTools(client);
   await syncDisplayTools(client);

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { MessagesRequest } from '../../plugins/multi-core/src/gateway/messages.ts';
-import type { ResponsesInputItem } from '../../plugins/multi-openai/src/responses.ts';
-import { fromResponses } from '../../plugins/multi-openai/src/responses.ts';
+import type { ResponsesInputItem } from '../../plugins/multi-core/src/gateway/responses.ts';
+import { fromResponses } from '../../plugins/multi-core/src/gateway/responses.ts';
 import { toChat } from '../../plugins/multi-zen/src/chat.ts';
 import { zenRequest } from '../../plugins/multi-zen/src/request.ts';
 

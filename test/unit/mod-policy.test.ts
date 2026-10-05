@@ -216,7 +216,7 @@ test('ambiguous simultaneous worker starts fail closed and catalog filtering pre
   assert.equal(modes.offered('/workspace', 'unknown'), false);
 });
 
-test('worker contexts retain the authenticated compaction deny marker and parent restrictions', async () => {
+test('a main-loop compaction boundary is its own scope: workers keep tools and parent restrictions', async () => {
   const modes = new PermissionModes(async () => policy.workers);
   await modes.precompute('/workspace');
   modes.recordModSession('s', {
@@ -230,11 +230,50 @@ test('worker contexts retain the authenticated compaction deny marker and parent
     permissionMode: 'auto',
   });
   modes.startPreparedModWorker('s', 'worker', 'cursor', '/workspace');
+  const before = modes.resolve('s', 'worker').tools;
   modes.authorizeModCompaction('s');
-  assert.equal(modes.resolve('s', 'worker').compaction, modes.resolve('s').compaction);
+  const armed = modes.resolve('s');
+  assert.deepEqual(armed.tools, []);
+  assert.ok(armed.compaction);
+  // The boundary is for the main loop alone: a worker resolved now is an ordinary worker.
+  assert.equal(modes.resolve('s', 'worker').compaction, undefined);
+  assert.deepEqual(modes.resolve('s', 'worker').tools, before);
   assert.deepEqual(modes.resolve('s', 'worker').disallowedTools, ['Bash']);
+  // A failed or cancelled compaction clears it; it does not stay armed.
+  modes.cancelModCompaction('s');
+  assert.equal(modes.resolve('s').compaction, undefined);
+  assert.equal(modes.resolve('s').tools, undefined);
+  modes.authorizeModCompaction('s');
+  modes.finishModCompaction('s', undefined, modes.resolve('s').compaction);
+  assert.equal(modes.resolve('s').compaction, undefined);
   modes.forgetSession('s');
   assert.throws(() => modes.resolve('s', 'worker'), /unavailable/);
+});
+
+test('a worker compaction boundary is restored when it is cancelled', async () => {
+  const modes = new PermissionModes(async () => policy.workers);
+  await modes.precompute('/workspace');
+  modes.recordModSession('s', { permissionMode: 'plan', cwd: '/workspace' });
+  await modes.prepareModWorker('s', {
+    subagentType: 'cursor',
+    cwd: '/workspace',
+    permissionMode: 'plan',
+  });
+  modes.startPreparedModWorker('s', 'worker', 'cursor', '/workspace');
+  modes.authorizeModCompaction('s', 'worker');
+  assert.deepEqual(modes.resolve('s', 'worker').tools, []);
+  modes.cancelModCompaction('s', 'worker');
+  assert.deepEqual(modes.resolve('s', 'worker').tools, ['Read']);
+  assert.equal(modes.resolve('s', 'worker').compaction, undefined);
+});
+
+test('the permission context table evicts its oldest entry instead of refusing new sessions', () => {
+  const modes = new PermissionModes(async () => ({}));
+  for (let index = 0; index < 4200; index++) {
+    modes.recordModSession(`session-${index}`, { permissionMode: 'default' });
+  }
+  assert.equal(modes.resolve('session-4199').permissionMode, 'default');
+  assert.throws(() => modes.resolve('session-0'), /unavailable/);
 });
 
 test('a policy discovery that outlasts the hook is reused on retry until admitted', async () => {
@@ -428,4 +467,56 @@ test('a planning parent binds every worker, whatever mode it was spawned or defi
   parent('default');
   assert.equal(modes.resolve('s', 'explicit').permissionMode, 'bypassPermissions');
   assert.throws(() => modes.planning('s', 'unregistered'), /unavailable/);
+});
+
+test('a hook long-polls one request that returns when discovery ends', async () => {
+  let finish: ((value: PreparedPolicy) => void) | undefined;
+  const store = new ModPolicies(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const job = store.begin('s', '/workspace');
+  const waiting = store.wait('s', job.generation, 5000);
+  finish?.(policy);
+  assert.equal((await waiting).status, 'ready');
+  // A wait that outlasts its bound answers pending instead of blocking the hook.
+  const slow = store.begin('t', '/workspace');
+  assert.equal((await store.wait('t', slow.generation, 5)).status, 'pending');
+  await assert.rejects(store.wait('t', 'other', 5), /stale/);
+});
+
+test('an unconsumed policy job expires instead of being reused indefinitely', async () => {
+  let clock = 1000;
+  let discoveries = 0;
+  const store = new ModPolicies(
+    async () => {
+      discoveries++;
+      return policy;
+    },
+    () => clock,
+  );
+  const first = store.begin('s', '/workspace');
+  await setImmediate();
+  clock += 59_000;
+  assert.equal(store.begin('s', '/workspace').generation, first.generation);
+  clock += 2_000;
+  assert.notEqual(store.begin('s', '/workspace').generation, first.generation);
+  assert.equal(discoveries, 2);
+});
+
+test('policy sessions beyond capacity evict the least recent idle one', async () => {
+  const store = new ModPolicies(async () => policy);
+  const first = store.begin('session-0', '/workspace');
+  for (let index = 1; index < 128; index++) {
+    store.begin(`session-${index}`, '/workspace');
+    if (index % 32 === 0) {
+      await setImmediate();
+    }
+  }
+  await setImmediate();
+  const added = store.begin('session-new', '/workspace');
+  assert.equal(added.status, 'pending');
+  assert.throws(() => store.status('session-0', first.generation), /stale/);
 });

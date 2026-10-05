@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import type { ServerResponse } from 'node:http';
+import { isRecord } from './record.ts';
 
 interface Tool {
   id: string;
@@ -8,8 +9,6 @@ interface Tool {
 }
 
 const MAX_BYTES = 8 * 1024 * 1024;
-const record = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** Observe provider output for attribution, never for permission grants. */
 export class ToolObserver {
@@ -21,7 +20,7 @@ export class ToolObserver {
   }
 
   response(value: unknown) {
-    if (record(value) && Array.isArray(value.content)) {
+    if (isRecord(value) && Array.isArray(value.content)) {
       for (const block of value.content) {
         const tool = this.tool(block);
         if (tool) {
@@ -32,7 +31,7 @@ export class ToolObserver {
   }
 
   event(value: unknown) {
-    if (!record(value) || typeof value.index !== 'number') {
+    if (!isRecord(value) || typeof value.index !== 'number') {
       return;
     }
     if (value.type === 'content_block_start') {
@@ -46,7 +45,7 @@ export class ToolObserver {
     if (!tool) {
       return;
     }
-    if (value.type === 'content_block_delta' && record(value.delta)) {
+    if (value.type === 'content_block_delta' && isRecord(value.delta)) {
       this.append(tool, value.delta.partial_json);
     }
     if (value.type === 'content_block_stop') {
@@ -66,7 +65,7 @@ export class ToolObserver {
 
   private tool(value: unknown): Tool | undefined {
     if (
-      record(value) &&
+      isRecord(value) &&
       value.type === 'tool_use' &&
       typeof value.id === 'string' &&
       typeof value.name === 'string'
@@ -82,6 +81,7 @@ class SseObserver {
   private decoder = new TextDecoder();
   private pending = '';
   private data: string[] = [];
+  private dataBytes = 0;
   private observer: ToolObserver;
 
   constructor(observer: ToolObserver) {
@@ -90,73 +90,122 @@ class SseObserver {
 
   push(chunk: Uint8Array) {
     this.pending += this.decoder.decode(chunk, { stream: true });
-    if (this.pending.length > MAX_BYTES) {
-      throw new Error('Observed SSE buffer exceeds 8 MiB');
-    }
+    // Split first: a chunk may hold many complete events, and only an incomplete line or
+    // event that outgrows the bound is a reason to stop observing.
     for (let index = this.pending.indexOf('\n'); index !== -1; index = this.pending.indexOf('\n')) {
       const line = this.pending.slice(0, index).replace(/\r$/, '');
       this.pending = this.pending.slice(index + 1);
       this.line(line);
     }
+    if (this.pending.length > MAX_BYTES) {
+      throw new Error('Observed SSE line exceeds 8 MiB');
+    }
   }
 
   private line(line: string) {
     if (line.startsWith('data:')) {
-      this.data.push(line.slice(5).replace(/^ /, ''));
+      const value = line.slice(5).replace(/^ /, '');
+      this.dataBytes += value.length;
+      if (this.dataBytes > MAX_BYTES) {
+        throw new Error('Observed SSE event exceeds 8 MiB');
+      }
+      this.data.push(value);
     } else if (!line && this.data.length) {
       const value = this.data.join('\n');
       this.data = [];
+      this.dataBytes = 0;
       this.observer.event(JSON.parse(value));
     }
+  }
+}
+
+/** Observation of one response body; once it cannot keep up it stops and says why. */
+class BestEffortObservation {
+  private readonly observer: ToolObserver;
+  private readonly streamed: boolean;
+  private readonly stopped: (reason: string) => void;
+  private readonly sse: SseObserver;
+  private chunks: Uint8Array[] = [];
+  private bytes = 0;
+  private observing = true;
+
+  constructor(
+    remember: (tool: Tool) => void,
+    streamed: boolean,
+    stopped: (reason: string) => void,
+  ) {
+    this.observer = new ToolObserver(remember);
+    this.sse = new SseObserver(this.observer);
+    this.streamed = streamed;
+    this.stopped = stopped;
+  }
+
+  push(chunk: Uint8Array) {
+    if (!this.observing) {
+      return;
+    }
+    try {
+      this.accept(chunk);
+    } catch (error) {
+      this.stop(error);
+    }
+  }
+
+  finish() {
+    if (!this.observing || this.streamed) {
+      return;
+    }
+    try {
+      this.observer.response(JSON.parse(Buffer.concat(this.chunks).toString('utf8')));
+    } catch (error) {
+      this.stop(error);
+    }
+  }
+
+  private accept(chunk: Uint8Array) {
+    if (this.streamed) {
+      this.sse.push(chunk);
+      return;
+    }
+    this.bytes += chunk.length;
+    if (this.bytes > MAX_BYTES) {
+      throw new Error('Observed response exceeds 8 MiB');
+    }
+    this.chunks.push(chunk);
+  }
+
+  private stop(error: unknown) {
+    this.observing = false;
+    this.chunks = [];
+    this.stopped(error instanceof Error ? error.message : String(error));
   }
 }
 
 /**
  * Pass the upstream bytes through unchanged and observe them on the side. An
  * observation failure (partial tool JSON, oversized input) only stops observing;
- * it never reaches Claude Code. The passthrough itself has no size cap.
+ * it never reaches Claude Code, and `stopped` records why. The passthrough itself
+ * has no size cap.
  */
 export async function forwardObservedTools(
   upstream: Response,
   res: ServerResponse,
   remember: (tool: Tool) => void,
   signal: AbortSignal,
+  stopped: (reason: string) => void = () => {},
 ) {
   if (!upstream.body) {
     res.end();
     return;
   }
-  const observer = new ToolObserver(remember);
-  const streamed = upstream.headers.get('content-type')?.includes('text/event-stream');
-  const sse = new SseObserver(observer);
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  let observing = true;
+  const streamed = Boolean(upstream.headers.get('content-type')?.includes('text/event-stream'));
+  const observation = new BestEffortObservation(remember, streamed, stopped);
   for await (const chunk of upstream.body) {
     if (!res.write(chunk)) {
       await once(res, 'drain', { signal });
     }
-    if (!observing) {
-      continue;
-    }
-    try {
-      if (streamed) {
-        sse.push(chunk);
-      } else {
-        bytes += chunk.length;
-        observing = bytes <= MAX_BYTES;
-        chunks.push(chunk);
-      }
-    } catch {
-      observing = false;
-    }
+    observation.push(chunk);
   }
-  if (observing && !streamed) {
-    try {
-      observer.response(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-    } catch {
-      // Observation is best effort.
-    }
-  }
+  observation.finish();
   res.end();
 }

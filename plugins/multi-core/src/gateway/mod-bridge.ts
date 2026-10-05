@@ -1,3 +1,4 @@
+import { setBounded } from './bounded.ts';
 import type { NativeObservation } from './harness-progress.ts';
 
 const MAX_LINE = 160;
@@ -55,15 +56,28 @@ export class ModBridge {
   private readonly lifecycle = new Map<string, Lifecycle>();
   private readonly telemetry = new Map<string, { model: string; effort?: string | number }>();
 
-  recordSession(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
-    return this.record(key, value);
-  }
-
   mode(key: string) {
-    return this.snapshots.get(key);
+    const snapshot = this.snapshots.get(key);
+    if (snapshot) {
+      // A read counts as use: the map's order is the recency eviction reads.
+      this.snapshots.delete(key);
+      this.snapshots.set(key, snapshot);
+    }
+    return snapshot;
   }
 
-  private record(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
+  /** Drops the least recently used snapshot whose scope has no running native run. */
+  private evictSnapshot() {
+    const idle = [...this.snapshots.keys()].find(
+      (key) => this.lifecycle.get(key)?.state !== 'running',
+    );
+    const victim = idle ?? this.snapshots.keys().next().value;
+    if (victim !== undefined) {
+      this.snapshots.delete(victim);
+    }
+  }
+
+  recordSession(key: string, value: { effective: Effective; cwd?: string; generation?: number }) {
     if (
       value.generation !== undefined &&
       value.generation !== this.snapshots.get(key)?.generation
@@ -71,7 +85,7 @@ export class ModBridge {
       return undefined;
     }
     if (!this.snapshots.has(key) && this.snapshots.size >= MAX_KEYS) {
-      throw new Error('Mod session capacity reached; restart the gateway');
+      this.evictSnapshot();
     }
     const snapshot = {
       generation: ++this.generation,
@@ -82,6 +96,7 @@ export class ModBridge {
       },
       cwd: value.cwd,
     };
+    this.snapshots.delete(key);
     this.snapshots.set(key, snapshot);
     return snapshot;
   }
@@ -179,10 +194,7 @@ export class ModBridge {
   }
 
   observeStep(key: string, value: { model: string; effort?: string | number }) {
-    if (!this.telemetry.has(key) && this.telemetry.size >= MAX_KEYS) {
-      this.telemetry.delete(this.telemetry.keys().next().value as string);
-    }
-    this.telemetry.set(key, value);
+    setBounded(this.telemetry, key, value, MAX_KEYS, 'insertion');
   }
 
   /**

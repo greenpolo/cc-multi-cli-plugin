@@ -2,6 +2,7 @@ import type { SDKUserMessage } from '@cursor/sdk';
 import { normalizeConversation, textContent } from '../../multi-core/src/gateway/conversation.ts';
 import { isDirectToolAvailable } from '../../multi-core/src/gateway/direct-tools.ts';
 import type { MessagesRequest } from '../../multi-core/src/gateway/messages.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { estimateTextTokens } from '../../multi-core/src/gateway/tokens.ts';
 
 function validateControls(body: MessagesRequest) {
@@ -80,10 +81,6 @@ function validateThinking(thinking: MessagesRequest['thinking']) {
   if (budget !== undefined && (!Number.isSafeInteger(budget) || budget < 0)) {
     throw new Error('Invalid thinking budget');
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function prepareCursorRequest(body: MessagesRequest) {

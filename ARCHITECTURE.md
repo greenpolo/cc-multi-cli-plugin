@@ -13,7 +13,13 @@ session. The launcher registers provider models and one Agent-tool worker type
 per provider. The Node gateway routes requests, preserves Claude passthrough,
 and coordinates sessions.
 Claude Mods provide the in-engine control plane for model rows, worker rows,
-permission state, progress, and compaction. [The local Mods reference](docs/claude-mods.md)
+permission state, progress, and compaction. The hooks (`plugins/multi-core/hooks/`)
+reach the gateway through one client (`hooks/gateway.ts`) and keep state in
+`$.state` so it survives a hot reload. The gateway mints a per-session mod key
+(`mod-keys.ts`) on the mod's first request and, once the mod echoes it, refuses
+`/multi/mod/*` requests carrying only the environment token, so a shell command
+cannot loosen a session's permissions. Session state is dropped on `session.end`,
+not when a client detaches. [The local Mods reference](docs/claude-mods.md)
 is required reading for changes to Claude Code UI or extensibility. Provider adapters own their model
 catalogs, authentication, execution, and review boundaries.
 
@@ -32,8 +38,19 @@ Claude Code session (/model, workers, prompts)
 ## Request flow
 
 Claude Code sends Anthropic Messages traffic and provider requests to the gateway.
-The gateway passes Anthropic traffic through and translates direct-provider
-requests. `/model` exposes provider model and effort rows. Each connected
+The gateway passes Anthropic traffic through untouched (every path other than
+Messages and `/multi/*` is forwarded as raw bytes, and a failed upstream
+connection is dropped so Claude Code's own retry runs) and translates
+direct-provider requests. It honors `HTTPS_PROXY` and forwards to a caller-set
+`ANTHROPIC_BASE_URL`. A `claude` started by a command inside the session gets
+the session-start environment back (`nested-env.ts`, a PATH shim and the
+bootstrap), so it never routes through the session gateway. Hosted-API
+providers build their own requests: `gateway/provider-request.ts` defines the
+contract, `multi-openai/src/gateway-request.ts` and
+`multi-zen/src/gateway-request.ts` implement it, and the gateway owns keepalive,
+events, and failure mapping. `gateway/provider.ts` is the one reader of a model
+ID's provider prefix. The Responses translation and SSE reader live in
+`gateway/responses.ts`. `/model` exposes provider model and effort rows. Each connected
 provider's Agent-tool worker type runs that provider's picker rows; the Agent
 tool's `model` parameter picks which. Each run reports a visible lifecycle: row,
 elapsed time, streamed progress, completion, failure, and cancellation.
@@ -78,19 +95,26 @@ action becomes a display row in the harness's own reply: a tool_use block named 
 the native tool (`mcp__multi-core__run_command`) with the native parameters and a
 gateway-issued token, answered by the Multi mod with the native output, so the row
 sits in the transcript of the `/model` session or worker that ran it. Display tools
-are never model tools: the gateway strips them from every provider's tools and
-history, the mod defers them and refuses any call without an issued token, and the
+are never model tools: they register in the engine lazily, only when a harness
+prompt, worker, or step needs them, and the gateway strips them (and their
+`tool_reference` blocks) from every provider's tools and history. The mod defers
+them and refuses any call without an issued token, and the
 gateway answers the engine's follow-up request with the reply's remaining text
 without a native run. Nothing is replayed or re-executed. Cursor supports Auto, Plan, and Bypass. Antigravity uses its native CLI
 with Claude policy enforcement at the prompt boundary. Grok carries the same
 policy in its own run arguments, and each announced toolset is checked against
-it because an unknown removal is accepted and ignored by that CLI.
+it because an unknown removal is accepted and ignored by that CLI. Antigravity
+runs an allowlist built from the Claude grant: unmapped tools are denied in
+every mode, scheduling, messaging, task, and knowledge-deletion tools are always
+denied, and write tools cannot touch agy's own hook or config files.
 
 All three harnesses share their session store, in-flight exchange registry,
-response builder, durable completion, notices, and the transcript action summary from
-`plugins/multi-core/src/gateway/harness-*.ts`. Grok and Antigravity additionally
-share native process execution, text prompt preparation, and the native action
-tracker (Cursor uses it too) that turns native actions into display rows; Cursor retains its
+response builder, durable completion, notices, failure classifier, and the
+transcript action summary from `plugins/multi-core/src/gateway/harness-*.ts`.
+Grok and Antigravity additionally share a CLI harness base (`harness-cli.ts`:
+the request flow around one native run), native process execution, text prompt
+preparation, and the native action tracker (Cursor uses it too) that turns
+native actions into display rows; Cursor retains its
 SDK and image-aware prompt format. Each provider still owns
 its own event grammar, CLI argument construction, usage accounting, and (for
 Cursor) SDK agent lifecycle. The shared layer owns turn leases, lock lifetime,
@@ -102,7 +126,9 @@ than queued against a native conversation that has moved on.
 ## Permissions
 
 Claude's permission mode controls each provider at prompt boundaries through the
-UserPromptSubmit and SubagentStart hooks. The gateway intersects worker rules,
+UserPromptSubmit and SubagentStart hooks. Worker tool calls are attributed
+through the Mods `tool.call` hook, with the session's permission mode.
+Harness settings admission is `gateway/harness-settings.ts`. The gateway intersects worker rules,
 provider capabilities, project settings, and platform policy. Unsupported modes,
 unknown workers, untranslatable policies, and unavailable required reviewers fail
 explicitly. Plan denies shell and edit capabilities. Bypass disables Cursor native
@@ -117,6 +143,10 @@ children and MCP stay denied. Grok denies native subagents and MCP execution by
 rule, and its announced toolset is verified because that CLI accepts an unknown
 removal silently; its MCP tools stay visible to the model and are documented as
 such. Explicit native workspace selection is required.
+
+Auto-mode classifier requests for Claude's own actions go to Anthropic unless a
+provider-owned pending action positively matches; only a request routed to
+provider review keeps the session mismatch check.
 
 Claude's launcher enables on-demand tool discovery for the local gateway. Direct
 provider adapters omit deferred tool schemas until Claude discovers or uses
