@@ -118,6 +118,11 @@ export function executableInvocation(
     return { command: executable, args: [...args], viaComSpec: false };
   }
   const shimTarget = resolveNpmShimTarget(executable, shimOptions);
+  // npm links a package's native binary (Claude Code's bin/claude.exe) through the same
+  // shim, so that target runs directly instead of through cmd.exe.
+  if (shimTarget && /\.exe$/i.test(shimTarget)) {
+    return { command: shimTarget, args: [...args], viaComSpec: false };
+  }
   if (shimTarget) {
     return {
       command: process.execPath,
@@ -144,7 +149,7 @@ export function executableInvocation(
 }
 
 const MAX_SHIM_SIZE = 32 * 1024;
-const SHIM_TARGET = /"%dp0%\\([^"\r\n]+\.(?:js|cjs|mjs))"[ \t]+%\*/gi;
+const SHIM_TARGET = /"%dp0%\\([^"\r\n]+\.(?:js|cjs|mjs|exe))"[ \t]+%\*/gi;
 
 function resolveNpmShimTarget(
   executable: string,

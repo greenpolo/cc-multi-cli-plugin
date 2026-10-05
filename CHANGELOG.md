@@ -119,7 +119,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   and joins text blocks with newlines, and OpenAI replies that end on a stop
   sequence record their billed usage.
 - **Harden Windows process handling and state files.** Arguments containing
-  cmd.exe metacharacters are refused for non-shim `.cmd`/`.bat` launchers,
+  cmd.exe metacharacters are refused for non-shim `.cmd`/`.bat` launchers, and
+  npm's shim for a native binary, such as an npm-installed Claude Code's
+  `claude.exe`, now runs that binary directly instead of through cmd.exe,
   cancellation asks the process tree to close before forcing it and never kills
   a reused PID, policy probes run `reg`, `powershell`, and `defaults` from system
   paths with a timeout, state locks survive hostname changes and recheck racing

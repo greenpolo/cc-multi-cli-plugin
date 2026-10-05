@@ -114,6 +114,29 @@ test('invokes a canonical npm cmd shim with Node directly', () => {
   assert.deepEqual(seen, [target]);
 });
 
+test('runs an npm cmd shim for a native binary directly', () => {
+  // npm's shim for Claude Code's bin/claude.exe: no Node program, the binary itself.
+  const shim = [
+    '@ECHO off',
+    'GOTO start',
+    ':find_dp0',
+    'SET dp0=%~dp0',
+    'EXIT /b',
+    ':start',
+    'SETLOCAL',
+    'CALL :find_dp0',
+    '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*',
+  ].join('\r\n');
+  const target = 'C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe';
+  const options = { readShim: () => shim, exists: (filename: string) => filename === target };
+  const settings = '{"permissions":{"allow":["Read"]}}';
+  assert.deepEqual(
+    executableInvocation('C:\\npm\\claude.cmd', ['--settings', settings], 'win32', {}, options),
+    { command: target, args: ['--settings', settings], viaComSpec: false },
+  );
+  assert.equal(argvSafe('C:\\npm\\claude.cmd', settings, 'win32', options), true);
+});
+
 test('resolves npm layouts in bat shims', () => {
   const target = 'C:\\tools\\node_modules\\claude\\cli.mjs';
   assert.deepEqual(
