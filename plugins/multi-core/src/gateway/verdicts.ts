@@ -114,7 +114,9 @@ async function toolVerdict(
   if (!unreviewedModes.has(mode) && mode !== 'plan') {
     return blocked('The permission mode is unavailable or unknown.');
   }
-  if (tool.name === 'SubagentHandback' && harnessProvider(request.model)) {
+  // A harness reply carries only rows for finished native actions and the hand-back;
+  // the harness applied the prompt-boundary mode itself, so nothing is left to judge.
+  if (harnessProvider(request.model) || readOnly.has(tool.name)) {
     return allowed;
   }
   if (mode === 'plan' && writes.has(tool.name)) {
@@ -124,9 +126,6 @@ async function toolVerdict(
     return mode === 'plan'
       ? blocked('Plan mode: actions without a reviewer are refused.')
       : allowed;
-  }
-  if (readOnly.has(tool.name)) {
-    return allowed;
   }
   try {
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(60000)]);

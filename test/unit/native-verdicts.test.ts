@@ -69,7 +69,7 @@ test('provider table determines verdicts for every supported mode and launch dis
   assert.match(autoReviewPolicy('openai', false).statement, /unreviewed/);
 });
 
-test('read-only calls skip review, plan writes block first, all harness handbacks pass', async () => {
+test('read-only calls skip review, plan writes block first, all harness rows and handbacks pass', async () => {
   let calls = 0;
   const reviewer: Reviewer = async (input) => {
     calls++;
@@ -98,15 +98,26 @@ test('read-only calls skip review, plan writes block first, all harness handback
   assert.equal(calls, 1);
   assert.equal(result?.[0].status.tool_uses.call_0.outcome, 'not_flagged');
   assert.equal(result?.[0].status.tool_uses.call_5.outcome, 'flagged');
+  const zenRead = await verdictsFor(
+    request('plan'),
+    reply(['Read', 'Bash']),
+    PROVIDER_AUTO_REVIEW.zen,
+    undefined,
+    signal(),
+  );
+  assert.equal(zenRead?.[0].status.tool_uses.call_0.outcome, 'not_flagged');
+  assert.equal(zenRead?.[0].status.tool_uses.call_1.outcome, 'flagged');
   for (const provider of ['cursor', 'antigravity', 'grok'] as const) {
-    const handback = await verdictsFor(
+    const harness = await verdictsFor(
       { ...request('plan'), model: `multi/${provider}/test` },
-      reply(['SubagentHandback']),
+      reply(['SubagentHandback', 'Bash', 'Write']),
       PROVIDER_AUTO_REVIEW[provider],
       undefined,
       signal(),
     );
-    assert.equal(handback?.[0].status.tool_uses.call_0.outcome, 'not_flagged');
+    for (const verdict of Object.values(harness?.[0].status.tool_uses ?? {})) {
+      assert.equal(verdict.outcome, 'not_flagged', provider);
+    }
   }
 });
 
