@@ -46,6 +46,36 @@ test('reviewer receives the admitted plan-mode restriction only in plan mode', a
   assert.doesNotMatch(instructions[1] ?? '', /plan mode is active/);
 });
 
+test('reviewer evidence carries the user auto-mode and permission rules, not the rest of the classifier context', async (t) => {
+  const { cwd, authFile } = await fixture(t);
+  const bodies: Array<{ instructions: string; input: Array<{ content: string }> }> = [];
+  const bridge = await createOpenAIReviewer(authFile, cwd, async (_url, init) => {
+    bodies.push(JSON.parse(String(init.body)));
+    return sse(verdict('deny'));
+  });
+  const auto_mode = { allow: [], soft_deny: [], hard_deny: ['Never run DENY_CANARY'] };
+  const rules = { allow: [], deny: ['Bash(rm:*)'], ask: [] };
+  const request = {
+    ...context.request,
+    safeguards: [
+      {
+        type: 'dangerous_tool_use',
+        classifier_context: {
+          permission_mode: 'auto',
+          home_dir: '/home/private',
+          auto_mode,
+          rules,
+        },
+      },
+    ],
+  };
+  await bridge({ ...context, cwd, request }, new AbortController().signal);
+  const evidence = JSON.parse(bodies[0]?.input[0]?.content ?? '{}');
+  assert.deepEqual(evidence.user_policy, { auto_mode, rules });
+  assert.doesNotMatch(JSON.stringify(evidence.user_policy), /home_dir/);
+  assert.match(bodies[0]?.instructions ?? '', /user_policy[\s\S]*hard_deny/);
+});
+
 async function fixture(t: TestContext) {
   const cwd = await realpath(await mkdtemp(path.join(os.tmpdir(), 'approval-unit-')));
   t.after(() => removeTemporary(cwd));

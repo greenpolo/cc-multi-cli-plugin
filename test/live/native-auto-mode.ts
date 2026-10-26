@@ -189,31 +189,14 @@ try {
     const denied = await readFile(path.join(cwd, 'AUTO_MODE_DENY_CANARY.txt'), 'utf8').catch(
       () => null,
     );
+    // Server verdicts decide every Bash call: Anthropic's for Claude, the gateway's for
+    // OpenAI. A local classifier request for a Bash call means a billed fallback.
+    const localBashReviews = [...debug.matchAll(/classifier_request_started reqId=\S+ tool=Bash /g)]
+      .length;
     const classifications = ['ALLOW', 'DENY'].map((kind) => {
-      const section =
-        debug
-          .split('[auto-mode] new action being classified: ')
-          .slice(1)
-          .find(
-            (s) =>
-              s.startsWith('{"Bash":') && s.split('\n')[0]?.includes(`AUTO_MODE_${kind}_CANARY`),
-          ) ?? '';
-      const requests = [
-        ...section.matchAll(/classifier_request_started reqId=(\S+) tool=Bash model=(\S+)/g),
-      ].map(([, id, classifierModel]) => ({
-        id,
-        model: classifierModel,
-        completed:
-          section.includes(`classifier_request_finished reqId=${id} tool=Bash`) &&
-          new RegExp(`classifier_request_finished reqId=${id} tool=Bash[^\\n]*outcome=ok`).test(
-            section,
-          ),
-      }));
       const call = calls.find((c) => c.input.command === command(kind));
-      // Fast approvals omit the "Slow permission decision" diagnostic. Require
-      // successful classification followed by dispatch of this exact tool ID.
       const dispatched =
-        call && section.includes(`tool_dispatch_start tool=Bash toolUseId=${call.id} `);
+        call && debug.includes(`tool_dispatch_start tool=Bash toolUseId=${call.id} `);
       const classifierDenied =
         call &&
         deniedResults.some(
@@ -221,19 +204,13 @@ try {
             r.tool_use_id === call.id &&
             /denied by (?:the Claude Code )?auto mode classifier/i.test(JSON.stringify(r.content)),
         );
-      let observedDecision: string | undefined;
+      let decision: string | undefined;
       if (dispatched) {
-        observedDecision = 'allow';
+        decision = 'allow';
       } else if (classifierDenied) {
-        observedDecision = 'deny';
+        decision = 'deny';
       }
-      return {
-        kind,
-        requests,
-        decision:
-          section.match(/permission decision: [^\n]*\(mode=auto, behavior=(allow|deny)\)/)?.[1] ??
-          observedDecision,
-      };
+      return { kind, decision };
     });
     const entry = {
       label,
@@ -247,6 +224,7 @@ try {
       calls,
       deniedResults,
       classifications,
+      localBashReviews,
       routes: traces,
       passed: false,
     };
@@ -273,41 +251,31 @@ try {
           assert.equal(matching[0].model, model, 'Wrong provider supplied the tool request');
         }
         const classified = classifications.find((c) => c.kind === kind);
-        assert(classified, `Missing classification for ${kind}`);
-        assert(
-          classified.requests.length > 0 && classified.requests.every((r) => r.completed),
-          `Missing successful classifier request for ${kind}`,
-        );
         assert.equal(
-          classified.decision,
+          classified?.decision,
           kind === 'ALLOW' ? 'allow' : 'deny',
           `Missing auto-mode verdict for ${kind}`,
         );
-        if (item.name === 'sonnet') {
-          assert(
-            classified.requests.every(
-              (r) =>
-                r.model?.startsWith('claude-') &&
-                traces.some(
-                  (t) => t.route === 'anthropic' && t.model === r.model && t.status === 200,
-                ),
-            ),
-            'Claude classifier did not use successful Anthropic passthrough',
-          );
-        } else {
+        if (item.name !== 'sonnet') {
           assert(
             traces.some(
               (trace) =>
                 trace.route === 'review' &&
+                trace.tool === 'Bash' &&
                 trace.model === 'codex-auto-review' &&
-                trace.stage === 1 &&
                 trace.outcome === (kind === 'ALLOW' ? 'allow' : 'deny') &&
                 Boolean(trace.agentId) === item.worker,
             ),
-            `Missing provider-owned ${kind} review for the originating worker`,
+            `Missing inline OpenAI ${kind} review for the originating ${item.worker ? 'worker' : 'main loop'}`,
           );
         }
       }
+      assert.equal(localBashReviews, 0, 'A Bash call fell back to a billed local classifier');
+      assert(
+        !debug.includes('classifies locally for the rest of this session') &&
+          !debug.includes('fell back to billed classifier requests'),
+        'Server checks were turned off for the session',
+      );
       assert.equal(allowed, 'ALLOW\n', 'Allowed canary did not execute');
       assert.equal(denied, null, 'Denied canary executed');
       const deniedCall = calls.find((c) => c.input.command === command('DENY'));

@@ -1,9 +1,11 @@
 import type { MessagesRequest } from '../../multi-core/src/gateway/messages.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import type { ReviewInput } from '../../multi-core/src/gateway/verdicts.ts';
 
 const requestBudget = 768 * 1024;
 const actionBudget = 128 * 1024;
 const messageBudget = 64 * 1024;
+const policyBudget = 32 * 1024;
 
 /** Bound cost without refusing long sessions; omissions are explicit evidence gaps. */
 export function reviewEvidence(cwd: string, context: ReviewInput) {
@@ -14,6 +16,7 @@ export function reviewEvidence(cwd: string, context: ReviewInput) {
   const perRequest = context.worker ? requestBudget / 2 : requestBudget;
   const evidence = JSON.stringify({
     planned_action: boundedValue({ [context.tool.name]: context.tool.input }, actionBudget),
+    user_policy: boundedValue(userPolicy(context.request), policyBudget),
     original_request: requestEvidence(context.request, perRequest),
     root_request:
       context.worker && context.rootRequest
@@ -22,6 +25,19 @@ export function reviewEvidence(cwd: string, context: ReviewInput) {
     cwd: reviewCwd.slice(0, 4096),
   });
   return { reviewCwd, evidence };
+}
+
+/** The human's auto-mode and permission rules, as Claude Code reports them with the request. */
+function userPolicy(request: MessagesRequest) {
+  const entry = Array.isArray(request.safeguards)
+    ? request.safeguards.find((item) => isRecord(item) && item.type === 'dangerous_tool_use')
+    : undefined;
+  const context = isRecord(entry) ? entry.classifier_context : undefined;
+  if (!isRecord(context)) {
+    return undefined;
+  }
+  const { auto_mode, rules, trusted_directories } = context;
+  return { auto_mode, rules, trusted_directories };
 }
 
 function requestEvidence(request: MessagesRequest, budget: number) {
