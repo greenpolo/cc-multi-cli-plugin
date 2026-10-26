@@ -63,12 +63,17 @@ For every gateway-served reply requested with `safeguards`, core supplies an
 `evaluated` verdict for every tool use before the final stream events, including
 display rows, handbacks and empty failure replies. It never sends `unavailable`
 or `skipped`, which would send a served tool call to Claude's local classifier.
-OpenAI investigations run at most four at a time per reply, with a 60-second
-budget per tool. An explicit read-only list (Read, Glob, Grep, LS, ToolSearch and
-MCP resource readers) skips reviewer calls. Plan blocks file-edit tools before
+OpenAI investigations run at most four at a time per reply and four across the
+process. The 60-second budget per tool includes queue time. An explicit read-only list (Read, Glob, Grep, LS, ToolSearch and
+MCP resource readers) skips reviewer calls, including in Plan. Coordination and
+UI tools (TodoWrite, SubagentHandback, EnterPlanMode, ExitPlanMode,
+AskUserQuestion, Agent/Task, Skill and task bookkeeping/output tools) also pass
+without review in every mode. Process cancellation, worktree and scheduling
+tools remain actions requiring a verdict. Plan blocks file-edit tools before
 review and asks the reviewer to permit only read-only actions.
 
-Every harness's `SubagentHandback` is `not_flagged`, including Cursor. The report
+Every provider's `SubagentHandback` is `not_flagged`, including OpenAI and Zen
+workers. Completed harness rows also pass when the request mode is missing. The report
 and any embedded instructions reach the parent without a separate handback
 review. Native capability restrictions still govern the actions taken inside the
 harness. Anthropic traffic, including Claude's own classifier requests, passes
@@ -78,6 +83,24 @@ Claude's own actions. These verdicts do not bypass Claude's explicit deny rules.
 ## Explicit failures
 
 Cursor, Antigravity and Grok admission fails explicitly for unsupported modes, unknown workers, untranslatable policies, and unavailable permission context. Multi does not apply these harness checks to Claude, OpenAI, or Zen workers. If the OpenAI reviewer is unavailable at launch, Auto remains available and actions run unreviewed. Plan refuses actions without a reviewer. Once a reviewer is enabled, a failed or timed-out review, malformed evidence, or unavailable evidence produces a `flagged` verdict with a plain explanation. The gateway never substitutes Claude or the working model for the account reviewer.
+
+## Without Anthropic credentials
+
+The launcher keeps Auto available for external models even when Claude is signed
+out. Gateway-served tools receive provider verdicts; Claude inference and any
+Claude-only classifier request are refused locally with "Anthropic is not signed
+in", without forwarding or borrowing another provider's credentials.
+
+In the inspected Claude Code 2.1.306 behavior, a separate handoff classifier or
+ordinary workflow gate can allow an unreviewed result when classification is
+unavailable. Oversized workflow output schemas are an exception and can be
+refused. Auto-answer classification for AskUserQuestion falls back to the
+question dialog; sandbox-network classification fails closed. These checks sit
+outside the gateway-served tool verdict contract, so a signed-out session can
+still encounter a dialog or denial. Explicit rules and native harness policy
+remain in force. Multi keeps this external Auto capability rather than disabling
+it for the whole session; switch to a signed-in Claude account for Claude-only
+features. This describes the supplied binary evidence, not a new live probe.
 
 ## Managed policy sources
 

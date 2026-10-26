@@ -6,6 +6,16 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Preserve sessions and keep Auto review bounded after upgrade.** Existing native
+  sessions and archived replies migrate away from retired verdicts and terminal
+  events without changing native history or repeating actions. OpenAI review
+  trims long evidence instead of refusing it, omits duplicate main-loop context,
+  and shares four review slots across the process. Coordination and UI tools,
+  including ExitPlanMode and worker handbacks, pass without review. The review
+  status belongs to the main loop and clears on a switch to Claude. Stop sequences
+  cancel provider generation before review, and failed failure delivery closes
+  the transport safely.
+
 - **Make the gateway the Auto-mode arbiter** ([#20](https://github.com/greenpolo/cc-multi-cli-plugin/issues/20)).
   Every served tool call receives an evaluated verdict before its reply completes,
   including display rows, handbacks, replay and keepalive failures. OpenAI reviews
@@ -17,7 +27,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   handbacks always pass: the harness applied the mode to its own actions.
   Removed private classifier parsing, pending-action attribution and the
   `/multi/permission` route. Native records now replay content events only;
-  old terminal-event replay records are refused explicitly.
+  old terminal-event replay records are migrated on load.
 
 - **Run GPT-6.1 Sol on OpenAI.** Codex now serves `gpt-6.1-sol` on ChatGPT
   plans, so the OpenAI picker row and `model: gpt-6.1-sol` on a `multi-openai`

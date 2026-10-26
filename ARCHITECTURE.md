@@ -161,11 +161,16 @@ stream ends with an error without claiming completion. Failure text is filtered
 so it cannot disable server verdicts in Claude Code.
 
 OpenAI reviews independent tools with at most four concurrent investigations per
-reply, each bounded at 60 seconds. Read, Glob, Grep and other explicit read-only
-tools pass without reviewer calls. The provider owns its guardian policy and
+reply and four across the process, each bounded at 60 seconds including queue
+time. Read, Glob, Grep and coordination/UI tools pass before mode checks without
+reviewer calls. Completed harness rows and handbacks pass even when the request
+omits the mode: native admission already applied it. The provider owns its guardian policy and
 read-only filesystem investigation. The core retains a bounded map of the latest
-tool-bearing main requests for worker authorization, and resolves cwd from the
-prompt snapshot with launcher cwd as fallback. Claude's private classifier
+tool-bearing main requests for worker authorization (sent only with worker
+reviews), and resolves cwd from the
+prompt snapshot with launcher cwd as fallback. OpenAI omits tool schemas and
+bounds review evidence below 1 MiB, retaining the system head and recent messages
+with explicit omission markers. Claude's private classifier
 prompts are never parsed or intercepted: Anthropic responses pass through byte
 for byte. Every harness's `SubagentHandback` receives `not_flagged`: reports,
 including any embedded instructions, reach the parent without another review.
@@ -215,8 +220,9 @@ provider-owned. `harness-completion.ts` archives a previous reply before the nex
 native dispatch can replace it, then commits the new response and content-only replay events
 in one atomic session write before returning to the gateway finaliser. Each serve
 computes verdicts from its current request; native records carry no verdicts or
-terminal events. Old records containing terminal replay events are rejected
-explicitly rather than replaying stale verdicts. Provider usage and
+terminal events. On load the store strips old verdicts and terminal events and
+saves the migrated record under its existing locks. Archives are migrated before
+replay too; native IDs, pending runs and content are preserved. Provider usage and
 native recovery decisions stay in the adapters.
 
 Cursor upgrades preserve v2 native agents and pending run IDs. The store holds

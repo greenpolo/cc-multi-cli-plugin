@@ -43,6 +43,23 @@ const readOnly = new Set([
   'ListMcpResourcesTool',
   'ReadMcpResourceTool',
 ]);
+// Claude Code 2.1.306 coordination/UI tools: they do not perform machine actions.
+// TaskStop, worktree and scheduling tools are deliberately absent.
+const controls = new Set([
+  'TodoWrite',
+  'SubagentHandback',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'AskUserQuestion',
+  'Agent',
+  'Task',
+  'Skill',
+  'TaskCreate',
+  'TaskUpdate',
+  'TaskGet',
+  'TaskList',
+  'TaskOutput',
+]);
 const writes = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const allowed: ToolVerdict = { type: 'evaluated', outcome: 'not_flagged' };
 const blocked = (explanation: string): ToolVerdict => ({
@@ -111,13 +128,13 @@ async function toolVerdict(
   context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker'>,
   onReview: (tool: string, verdict: ReviewVerdict) => void,
 ): Promise<ToolVerdict> {
-  if (!unreviewedModes.has(mode) && mode !== 'plan') {
-    return blocked('The permission mode is unavailable or unknown.');
-  }
   // A harness reply carries only rows for finished native actions and the hand-back;
   // the harness applied the prompt-boundary mode itself, so nothing is left to judge.
-  if (harnessProvider(request.model) || readOnly.has(tool.name)) {
+  if (harnessProvider(request.model) || readOnly.has(tool.name) || controls.has(tool.name)) {
     return allowed;
+  }
+  if (!unreviewedModes.has(mode) && mode !== 'plan') {
+    return blocked('The permission mode is unavailable or unknown.');
   }
   if (mode === 'plan' && writes.has(tool.name)) {
     return blocked('Plan mode does not permit file changes.');

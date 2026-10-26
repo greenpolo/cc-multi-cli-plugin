@@ -146,9 +146,16 @@ async function prepareStep(
       ...event,
       sessionId: await $.session.id(),
     });
-    if (typeof state?.reviewStatement === 'string') {
-      $.ui.status(`${event.model} · ${state.reviewStatement}`);
+    if (event.agentId === undefined) {
+      $.ui.status(
+        typeof state?.reviewStatement === 'string'
+          ? `${event.model} · ${state.reviewStatement}`
+          : undefined,
+      );
     }
+  }
+  if (!isMultiModel(event.model) && event.agentId === undefined) {
+    $.ui.status(undefined);
   }
   if (isHarnessModel(event.model)) {
     await startPoll($, key, event.agentId);

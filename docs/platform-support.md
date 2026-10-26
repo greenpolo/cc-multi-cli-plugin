@@ -9,7 +9,7 @@ results. Live provider checks need a real login on the host and are run by hand.
 
 | Provider | Earlier Linux live reports | Earlier Windows live reports | macOS live evidence |
 | --- | --- | --- | --- |
-| OpenAI | Inference, reviewer, manual/repeated compaction and resume; automatic compaction still pending | Reviewer and approval-worker checks; broader mode/compaction reruns pending | No recorded run in this guide |
+| OpenAI | Inference, reviewer, manual/repeated compaction and resume; automatic compaction still pending | Reviewer and earlier approval-transport probes (since retired); broader mode/compaction reruns pending | No recorded run in this guide |
 | Cursor SDK | Tools, continuation and disk resume | Native harness check | No recorded run in this guide |
 | OpenCode Zen | Tools/cache/resume, including revalidation of saved traces | Live rerun pending | No recorded run in this guide |
 | Antigravity | Native harness check | Native harness check from an interactive desktop login | No recorded run in this guide |
@@ -25,10 +25,10 @@ Future verification reports should name the tested revision, date, OS, CLI/SDK
 versions, command and result, including skips and a log reference when available.
 
 The earlier Windows report used Windows 11, PowerShell 7, Node 24, Claude Code
-2.1.273: the unit suite, live install, Cursor, OpenAI reviewer, OpenAI
-approval worker and Antigravity checks passed. The permissions check skipped its
-PTY cases, and the provider-approval check skips its dialog proof; its direct
-non-PTY path still needs its expectations adapted. The previously reported Zen, auto-mode and compaction failures also reproduced
+2.1.273: the unit suite, live install, Cursor, OpenAI reviewer and Antigravity
+checks passed. Earlier worker and provider approval-transport probes, now
+retired, also ran; they do not verify the current inline reviewer. The permissions
+check skipped its PTY cases and one retired probe skipped its dialog proof. The previously reported Zen, auto-mode and compaction failures also reproduced
 on Linux. The fixes cover Zen terminal reasoning reconciliation, native Auto
 policy propagation, and compaction before the first restored prompt. Linux
 validation now covers manual/repeated compaction and fresh-process resume. Saved

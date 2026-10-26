@@ -121,21 +121,80 @@ test('read-only calls skip review, plan writes block first, all harness rows and
   }
 });
 
-test('a direct-provider handback still uses its account reviewer', async () => {
+test('control tools and harness rows pass before mode and reviewer checks', async () => {
+  const names = [
+    'TodoWrite',
+    'SubagentHandback',
+    'EnterPlanMode',
+    'ExitPlanMode',
+    'AskUserQuestion',
+    'Agent',
+    'Task',
+    'Skill',
+    'TaskCreate',
+    'TaskUpdate',
+    'TaskGet',
+    'TaskList',
+    'TaskOutput',
+  ];
+  const reviewer: Reviewer = async () => {
+    throw new Error('Control tools must not request review');
+  };
+  for (const provider of ['openai', 'zen'] as const) {
+    for (const mode of ['auto', 'plan', '', 'future-mode']) {
+      const results = await verdictsFor(
+        { ...request(mode), model: `multi/${provider}/test` },
+        reply(names),
+        PROVIDER_AUTO_REVIEW[provider],
+        reviewer,
+        signal(),
+      );
+      assert.equal(
+        Object.values(results?.[0].status.tool_uses ?? {}).every(
+          (verdict) => verdict.outcome === 'not_flagged',
+        ),
+        true,
+      );
+    }
+  }
+  for (const provider of ['cursor', 'antigravity', 'grok'] as const) {
+    const results = await verdictsFor(
+      { model: `multi/${provider}/test`, safeguards: [{}] },
+      reply(['SubagentHandback', 'mcp__multi-core__write']),
+      PROVIDER_AUTO_REVIEW[provider],
+      undefined,
+      signal(),
+    );
+    assert.equal(
+      Object.values(results?.[0].status.tool_uses ?? {}).every(
+        (verdict) => verdict.outcome === 'not_flagged',
+      ),
+      true,
+    );
+  }
+});
+
+test('process, worktree, scheduling and unknown tools are not mistaken for control tools', async () => {
   let calls = 0;
   const reviewer: Reviewer = async () => {
     calls++;
     return { model: 'stub', outcome: 'deny' };
   };
+  const names = ['TaskStop', 'EnterWorktree', 'ExitWorktree', 'CronCreate', 'FutureTool'];
   const result = await verdictsFor(
-    { ...request(), model: 'multi/openai/test' },
-    reply(['SubagentHandback']),
+    request(),
+    reply(names),
     PROVIDER_AUTO_REVIEW.openai,
     reviewer,
     signal(),
   );
-  assert.equal(calls, 1);
-  assert.equal(result?.[0].status.tool_uses.call_0.outcome, 'flagged');
+  assert.equal(calls, names.length);
+  assert.equal(
+    Object.values(result?.[0].status.tool_uses ?? {}).every(
+      (verdict) => verdict.outcome === 'flagged',
+    ),
+    true,
+  );
 });
 
 test('review allow, deny, exception and aborted deadline always produce evaluated prose verdicts', async () => {

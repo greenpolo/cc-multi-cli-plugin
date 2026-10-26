@@ -80,7 +80,7 @@ test('Claude completion does not wait on Multi accounting or clear another provi
   expect(
     routes.some((route) => route.endsWith('/usage/complete') || route.endsWith('/compact/cancel')),
   ).toBe(false);
-  expect(statusChanges).toBe(0);
+  expect(statusChanges).toBe(1); // The Claude step clears the previous provider statement.
 });
 
 test('a completed harness child retains its provider for compaction between turns', async ($, on) => {
@@ -375,4 +375,45 @@ test('a provider step shows the gateway auto-review statement in the status line
     // The provider's current policy comes from this step's telemetry response.
   }
   expect(JSON.stringify(statuses)).toContain('no auto mode: actions run unreviewed');
+});
+
+test('review status belongs to the main loop and is cleared when switching to Claude', async ($, on) => {
+  mock.clock(on);
+  mock.env(on, { MULTI_GATEWAY_TOKEN: 'secret', MULTI_MOD_GATEWAY_URL: 'http://127.0.0.1:4000' });
+  on('session.id', () => ({ value: 's' }));
+  on('http.fetch', () => ({
+    value: {
+      ok: true,
+      status: 200,
+      headers: {},
+      text: JSON.stringify({ reviewStatement: 'review-policy' }),
+    },
+  }));
+  const statuses: Array<string | undefined> = [];
+  on('ui.status', (_$, event) => {
+    statuses.push(event.text);
+    return { value: undefined };
+  });
+  on('turn.step', async function* (_$, event) {
+    yield { kind: 'text', index: 0, text: 'done' };
+    return stepResult(event);
+  });
+  const step = async (model: string, agentId?: string) => {
+    for await (const _chunk of $.turn.step({
+      turnId: 't',
+      index: 0,
+      model,
+      agentId,
+      messageCount: 1,
+    })) {
+      // Complete the core step so the hook sees real model transitions.
+    }
+  };
+  await step('multi/openai/test');
+  expect(statuses).toEqual(['multi/openai/test · review-policy']);
+  await step('multi/zen/test', 'worker');
+  await step('claude-sonnet-5', 'worker');
+  expect(statuses.length).toBe(1);
+  await step('claude-sonnet-5');
+  expect(statuses).toEqual(['multi/openai/test · review-policy', undefined]);
 });
