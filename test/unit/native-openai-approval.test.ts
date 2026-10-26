@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import type { GatewayFetch } from '../../plugins/multi-core/src/gateway/fetch.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import {
@@ -101,7 +102,7 @@ test('runtime reviewer investigates with bounded read-only tools and uses provid
   assert.deepEqual(JSON.parse(requests[0].input[0].content).original_request, context.request);
 });
 
-test('reviewer errors, invalid output, foreign providers, and exhausted investigation cannot approve', async (t) => {
+test('reviewer errors, invalid output, and exhausted investigation cannot approve', async (t) => {
   const { cwd, authFile } = await fixture(t);
   for (const fetchImpl of [
     async () => new Response('unavailable', { status: 503 }),
@@ -129,15 +130,6 @@ test('reviewer errors, invalid output, foreign providers, and exhausted investig
     return sse(verdict());
   });
   await assert.rejects(bridge({ ...context, worker: true }, new AbortController().signal));
-  await assert.rejects(
-    bridge(
-      {
-        ...context,
-        request: { messages: [{ role: 'user', content: '界'.repeat(400000) }] },
-      },
-      new AbortController().signal,
-    ),
-  );
   const abort = new AbortController();
   abort.abort();
   await assert.rejects(bridge(context, abort.signal));
@@ -229,4 +221,109 @@ test('required review without an eligible reviewer fails instead of forwarding a
     body.error.message,
     'Native gateway: Anthropic is not signed in. Select an external model.',
   );
+});
+
+test('long main and worker evidence drops schemas and keeps system heads and recent messages within budget', async (t) => {
+  const { cwd, authFile } = await fixture(t);
+  const evidence: Array<Record<string, unknown>> = [];
+  const bridge = await createOpenAIReviewer(authFile, cwd, async (_url, init) => {
+    const body = JSON.parse(String(init.body));
+    const text = body.input[0].content;
+    assert(Buffer.byteLength(text) <= 1048576);
+    assert.doesNotMatch(body.instructions, /supplied transcript|worker transcript/);
+    evidence.push(JSON.parse(text));
+    return sse(verdict());
+  });
+  const messages = Array.from({ length: 80 }, (_, index) => ({
+    role: 'user',
+    content: `${'\u0000"\\界'.repeat(5000)}RECENT_${index}`,
+  }));
+  const request = {
+    system: `SYSTEM_HEAD${'界'.repeat(500000)}`,
+    messages,
+    tools: [{ name: 'Bash', description: 'SCHEMA_ONLY'.repeat(200000), input_schema: {} }],
+  };
+  for (const worker of [false, true]) {
+    const result = await bridge(
+      { ...context, worker, request, rootRequest: request },
+      new AbortController().signal,
+    );
+    assert.equal(result.outcome, 'allow');
+  }
+  assert.equal(
+    Object.hasOwn(evidence[0], 'root_request'),
+    false,
+    'main-loop evidence appears only once',
+  );
+  for (const entry of evidence) {
+    const original = entry.original_request as {
+      system: { json_head: string };
+      messages: unknown[];
+      omitted_messages: number;
+      tools?: unknown;
+    };
+    assert.equal(original.tools, undefined);
+    assert.match(original.system.json_head, /SYSTEM_HEAD/);
+    assert.match(JSON.stringify(original.messages.at(-1)), /RECENT_79/);
+    assert(original.omitted_messages > 0);
+    assert.deepEqual(entry.planned_action, { Bash: { command: 'node task.js' } });
+  }
+  assert(Object.hasOwn(evidence[1], 'root_request'));
+});
+
+test('all reviewer instances share four slots, cancel queued calls and release slots on failure or abort', async (t) => {
+  const { cwd, authFile } = await fixture(t);
+  const gate = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
+  let active = 0;
+  let peak = 0;
+  let calls = 0;
+  const fetchImpl: GatewayFetch = async (_url, init) => {
+    calls++;
+    const body = JSON.parse(String(init.body));
+    const fail = JSON.parse(body.input[0].content).planned_action.Bash.command === 'FAIL';
+    active++;
+    peak = Math.max(peak, active);
+    if (calls === 4) {
+      entered.resolve();
+    }
+    const aborted = Promise.withResolvers<never>();
+    const abort = () => aborted.reject(init.signal.reason);
+    init.signal.addEventListener('abort', abort, { once: true });
+    try {
+      await Promise.race([gate.promise, aborted.promise]);
+      return fail ? new Response('', { status: 503 }) : sse(verdict());
+    } finally {
+      active--;
+      init.signal.removeEventListener('abort', abort);
+    }
+  };
+  const reviewers = await Promise.all([
+    createOpenAIReviewer(authFile, cwd, fetchImpl),
+    createOpenAIReviewer(authFile, cwd, fetchImpl),
+  ]);
+  const aborts = Array.from({ length: 10 }, () => new AbortController());
+  const settled = Promise.allSettled(
+    aborts.map((abort, index) =>
+      reviewers[index % 2](
+        {
+          ...context,
+          tool: { ...context.tool, input: { command: index === 0 ? 'FAIL' : 'allow' } },
+        },
+        abort.signal,
+      ),
+    ),
+  );
+  await entered.promise;
+  assert.equal(calls, 4);
+  aborts[6].abort(new Error('cancelled while queued'));
+  aborts[1].abort(new Error('cancelled while active'));
+  await setImmediate();
+  gate.resolve();
+  const results = await settled;
+  assert.equal(peak, 4);
+  assert.equal(calls, 9, 'the cancelled queued call never reached Codex');
+  assert.equal(active, 0);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 3);
+  assert.equal((await reviewers[0](context, new AbortController().signal)).outcome, 'allow');
 });

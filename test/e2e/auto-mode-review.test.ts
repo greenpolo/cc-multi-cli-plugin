@@ -109,7 +109,7 @@ async function gateway(t: test.TestContext, options: Partial<GatewayOptions> = {
       headers: { 'x-multi-gateway-token': 'test', 'content-type': 'application/json', ...headers },
       body: JSON.stringify(body),
     });
-  return { post, reviews, traces, base };
+  return { post, reviews, traces, base, server };
 }
 
 function postcondition(reply: ServedReply) {
@@ -320,6 +320,10 @@ test('OpenAI worker reviews receive the main request; later private classifier t
   assert.equal(await passthrough.text(), 'unchanged-classifier-response');
   assert.deepEqual(upstreamBodies, [JSON.stringify(classifier)]);
   assert.equal(f.reviews.length, 2);
+  const mainEvidence = JSON.parse(
+    String((f.reviews[0].input as Array<{ content: string }>)[0].content),
+  );
+  assert.equal(mainEvidence.root_request, undefined);
 });
 
 test('Zen Chat and Responses finalise per-mode verdicts without borrowing the OpenAI reviewer', async (t) => {
@@ -397,4 +401,105 @@ test('missing OpenAI reviewer remains autonomous in Auto, refuses Plan and state
   const state = (await telemetry.json()) as { reviewStatement: string };
   assert.match(state.reviewStatement, /OpenAI reviewer unavailable.*actions run unreviewed/);
   assert.equal(f.reviews.length, 0);
+});
+
+test('stop sequences cancel upstream generation before review without cancelling the reviewer', async (t) => {
+  let upstreamSignal: AbortSignal | undefined;
+  let reviewed = false;
+  const f = await gateway(t, {
+    fetchImpl: async (_url, init) => {
+      upstreamSignal = init.signal;
+      const output = [
+        { type: 'response.created', response: { id: 'stop-test', usage: null } },
+        {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { ...tool('approved'), arguments: '' },
+        },
+        { type: 'response.output_item.done', output_index: 0, item: tool('approved') },
+        {
+          type: 'response.output_item.added',
+          output_index: 1,
+          item: { type: 'message', id: 'text-stop', content: [] },
+        },
+        { type: 'response.output_text.delta', output_index: 1, delta: 'Done STOP excess' },
+        {
+          type: 'response.completed',
+          response: {
+            id: 'stop-test',
+            status: 'completed',
+            output: [],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        },
+      ];
+      return new Response(output.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''));
+    },
+    reviewers: {
+      openai: async (_input, signal) => {
+        reviewed = true;
+        assert.equal(upstreamSignal?.aborted, true);
+        assert.equal(signal.aborted, false);
+        return { model: 'stub-reviewer', outcome: 'allow' };
+      },
+    },
+  });
+  const response = await f.post({ ...request, stop_sequences: ['STOP'] });
+  const raw = await response.text();
+  assert.equal(response.status, 200, raw);
+  const reply = JSON.parse(raw) as ServedReply;
+  assert.equal(reply.stop_reason, 'stop_sequence');
+  assert.equal(postcondition(reply).approved.outcome, 'not_flagged');
+  assert.equal(reviewed, true);
+});
+
+test('a failure while delivering a keepalive failure drops the transport without an unhandled rejection', async (t) => {
+  const f = await gateway(t, {
+    jsonKeepAliveMs: 1,
+    fetchImpl: async () => {
+      await setTimeout(20);
+      throw new Error('upstream failed');
+    },
+  });
+  let breakDelivery = true;
+  f.server.on('request', (_req, res) => {
+    if (breakDelivery) {
+      breakDelivery = false;
+      Object.defineProperty(res, 'end', {
+        value: () => {
+          throw new Error('failure delivery broke');
+        },
+      });
+    }
+  });
+  await assert.rejects(async () => {
+    await (await f.post(request)).text();
+  }, /terminated|closed|fetch failed/);
+  const second = await f.post(request);
+  assert.equal(second.status, 200);
+  assert.deepEqual(postcondition((await second.json()) as ServedReply), {});
+});
+
+test('signed-out Claude leaves external Auto available and refuses every Anthropic-only request locally', async (t) => {
+  const f = await gateway(t, { blockAnthropic: true });
+  const external = await f.post(request);
+  assert.equal(external.status, 200);
+  assert.equal(
+    postcondition((await external.json()) as ServedReply).approved.outcome,
+    'not_flagged',
+  );
+  for (const content of [
+    'native Claude inference',
+    'always-local handback review',
+    'workflow gate review',
+    'sandbox network review',
+  ]) {
+    const local = await f.post({ model: 'claude-sonnet-5', messages: [{ role: 'user', content }] });
+    assert.equal(local.status, 400);
+    assert.match(await local.text(), /Anthropic is not signed in/);
+  }
+  assert.equal(
+    f.traces.some((event) => event.route === 'anthropic'),
+    false,
+  );
 });

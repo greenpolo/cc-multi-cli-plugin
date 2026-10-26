@@ -286,7 +286,7 @@ export function createNativeGateway({
       reviewer,
       exchange.signal,
       {
-        rootRequest: rootRequests.get(exchange.identity.session),
+        rootRequest: exchange.agentId ? rootRequests.get(exchange.identity.session) : undefined,
         cwd,
         worker: Boolean(exchange.agentId),
       },
@@ -585,7 +585,11 @@ export function createNativeGateway({
     }
     onEvent(prepared.requestEvent(agentId));
     exchange.keepAlive();
-    const upstream = await prepared.send(signal, fetchImpl);
+    const upstreamAbort = new AbortController();
+    const upstream = await prepared.send(
+      AbortSignal.any([signal, upstreamAbort.signal]),
+      fetchImpl,
+    );
     if (!upstream.ok) {
       // Do not print upstream bodies or credentials in gateway diagnostics.
       onEvent(prepared.failureEvent(upstream.status, agentId));
@@ -602,14 +606,14 @@ export function createNativeGateway({
     }
     exchange.startStream();
     const result = await prepared.translate(upstream.body, body.stream ? emit : undefined);
+    if (result.stop_reason === 'stop_sequence') {
+      upstreamAbort.abort();
+    }
     onEvent({
       ...completionEvent(exchange, result, prepared.route, prepared.endpoint),
       ...prepared.completion,
     });
     await serveReply(exchange, result);
-    if (result.stop_reason === 'stop_sequence') {
-      exchange.abort.abort();
-    }
   }
   function prepareHosted(exchange: ProviderRequest, route: 'openai' | 'zen'): PreparedRequest {
     const { req, url, body, identity, agentId } = exchange;
@@ -826,10 +830,19 @@ export function createNativeGateway({
     emit: TerminalEmit,
     model: string,
   ) {
-    if (jsonStarted && exchange) {
-      await serveReply(exchange, failureMessage(error, model));
-    } else {
-      failResponse(res, emit, error);
+    try {
+      if (res.destroyed) {
+        return;
+      }
+      if (jsonStarted && exchange) {
+        await serveReply(exchange, failureMessage(error, model));
+      } else {
+        failResponse(res, emit, error);
+      }
+    } catch {
+      // A broken failure delivery cannot be reported through the same transport.
+      // Drop it without a second reply or an unhandled request-listener rejection.
+      res.destroy();
     }
   }
   return http.createServer(async (req, res) => {
