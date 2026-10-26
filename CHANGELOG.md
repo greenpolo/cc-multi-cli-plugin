@@ -19,7 +19,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 - **Make the gateway the Auto-mode arbiter** ([#20](https://github.com/greenpolo/cc-multi-cli-plugin/issues/20)).
   Every served tool call receives an evaluated verdict before its reply completes,
   including display rows, handbacks, replay and keepalive failures. OpenAI reviews
-  actions inline on the originating ChatGPT plan; denial, failure and timeout
+  actions inline on the originating ChatGPT plan, under the user's
+  `autoMode` and permission rules; denial, failure and timeout
   block with a reason. Read-only calls skip review. Zen, Antigravity, Grok and
   OpenAI without a reviewer discovered at launch run Auto unreviewed and say so;
   in Plan, direct providers without a reviewer refuse non-read-only actions.
