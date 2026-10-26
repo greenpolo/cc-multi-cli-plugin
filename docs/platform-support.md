@@ -52,9 +52,7 @@ Run from a fresh checkout after `npm ci`.
 | `npm run test:live:zen` | Zen tools, cache usage, and resume | `OPENCODE_API_KEY` or OpenCode `/connect` |
 | `npm run test:live:cursor` | Cursor tools, continuation, disk resume, non-Fast execution | Cursor SDK login and `--cursor-login` |
 | `npm run test:live:auto-mode` | OpenAI Auto review and routing | Claude and Codex login |
-| `npm run test:live:provider-approval -- --launcher` | Provider review and Claude terminal approval | Codex, Claude, Python 3 on POSIX |
 | `npm run test:live:reviewer` | OpenAI review allow/deny behavior | Codex login |
-| `npm run test:live:approval-worker` | OpenAI worker permissions | Codex login and Claude launcher |
 | `npm run test:live:permissions` | Modes, denials, effects, and attribution | Provider login, Python 3, Node 24 |
 | `npm run test:live:antigravity` | `agy` tools, continuation, and saved resume | `agy` login, `--antigravity-setup`, advertised model |
 | `npm run test:live:grok` | Grok tools, denial, continuation, and saved resume | Grok Build login and an advertised model |
@@ -85,9 +83,7 @@ registered with the interactive logon type.
    npm run test:live:zen
    npm run test:live:compaction
    npm run test:live:auto-mode
-   npm run test:live:provider-approval -- --launcher
    npm run test:live:reviewer
-   npm run test:live:approval-worker
    npm run test:live:permissions
    node plugins/multi-core/src/launcher.ts --antigravity-setup
    npm run test:live:antigravity

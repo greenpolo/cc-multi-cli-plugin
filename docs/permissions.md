@@ -6,8 +6,10 @@ Claude Code's permission mode reaches every provider. Select it before the promp
 
 Claude Code's permission mode is the single control at prompt boundaries. Direct
 models retain Claude's permission checks; native harnesses translate supported
-modes and reject unsupported ones. Auto does not imply a reviewer exists:
-Antigravity has none, and Cursor can fall back when its classifier is unavailable.
+modes and reject unsupported ones. Auto does not imply a reviewer exists. Zen, Antigravity and Grok have none:
+actions run unreviewed, and the status line says "no auto mode: actions run
+unreviewed". Cursor reviews its own native actions and fails open when its
+classifier is unavailable.
 Plan restricts work to provider-supported plan capabilities. Bypass disables
 automatic review where supported while retaining explicit capability restrictions.
 Claude ask rules remain part of Claude's own tool permission checks.
@@ -18,15 +20,15 @@ Cursor, Antigravity and Grok load the full settings-policy snapshot at their pro
 or lazily when a direct-model conversation requests a harness worker. Worker modes inherit or resolve from the parent
 context according to the worker definition, except that a parent in Plan keeps
 every worker in Plan, including one spawned earlier and resumed later. OpenAI
-automatic review also reads the mode Claude reports with each pending action, so
-entering or leaving Plan inside a turn applies to the next reviewed action. A
+automatic review reads `classifier_context.permission_mode` in each model request,
+so the request itself determines Plan restrictions. A
 missing or unsupported mode fails explicitly.
 
 ## Provider enforcement
 
 | Provider or action | What enforces the permission |
 | --- | --- |
-| OpenAI direct models | Claude Code's Read, Grep, Glob, Bash, Edit, and Write tools run the tool loop. The originating OpenAI account supplies GPT review for GPT actions when automatic review is requested. |
+| OpenAI direct models | Claude Code's Read, Grep, Glob, Bash, Edit, and Write tools run the tool loop. The originating OpenAI account reviews tool uses inline before the reply completes. Read-only tools on the core skip list need no review. Reviewer failure or timeout refuses the action; discovery failure at launch leaves Auto unreviewed, with that statement in the status line. |
 | Zen direct models | Claude Code runs and authorizes the tools. Zen auto mode is unreviewed like bypass; plan mode refuses actions that need review. Zen has no independent reviewer and never uses the OpenAI reviewer. |
 | Cursor native harness | Native review belongs to the originating Cursor account and run. Cursor receives the prompt-boundary mode and capability restrictions. See [docs/cursor.md](cursor.md). |
 | Antigravity native harness | A namespaced global pre-tool hook enforces Claude's denials while the native CLI runs. See [docs/antigravity.md](antigravity.md). |
@@ -55,9 +57,27 @@ gateway. Direct adapters omit deferred schemas until their names appear in a
 tool reference, previous tool use, or an explicit named choice, and translate
 tool references into provider-compatible context.
 
+## Gateway verdicts
+
+For every gateway-served reply requested with `safeguards`, core supplies an
+`evaluated` verdict for every tool use before the final stream events, including
+display rows, handbacks and empty failure replies. It never sends `unavailable`
+or `skipped`, which would send a served tool call to Claude's local classifier.
+OpenAI investigations run at most four at a time per reply, with a 60-second
+budget per tool. An explicit read-only list (Read, Glob, Grep, LS, ToolSearch and
+MCP resource readers) skips reviewer calls. Plan blocks file-edit tools before
+review and asks the reviewer to permit only read-only actions.
+
+Every harness's `SubagentHandback` is `not_flagged`, including Cursor. The report
+and any embedded instructions reach the parent without a separate handback
+review. Native capability restrictions still govern the actions taken inside the
+harness. Anthropic traffic, including Claude's own classifier requests, passes
+through unchanged; Multi does not parse private classifier prompts or review
+Claude's own actions. These verdicts do not bypass Claude's explicit deny rules.
+
 ## Explicit failures
 
-Cursor, Antigravity and Grok admission fails explicitly for unsupported modes, unknown workers, untranslatable policies, and unavailable permission context. Multi does not apply these harness checks to Claude, OpenAI, or Zen workers. OpenAI automatic review also fails when the originating OpenAI account has no GPT reviewer, when the action origin is ambiguous, or when review evidence is malformed or unavailable. The gateway does not substitute Claude or the working model for a missing GPT reviewer.
+Cursor, Antigravity and Grok admission fails explicitly for unsupported modes, unknown workers, untranslatable policies, and unavailable permission context. Multi does not apply these harness checks to Claude, OpenAI, or Zen workers. If the OpenAI reviewer is unavailable at launch, Auto remains available and actions run unreviewed. Plan refuses actions without a reviewer. Once a reviewer is enabled, a failed or timed-out review, malformed evidence, or unavailable evidence produces a `flagged` verdict with a plain explanation. The gateway never substitutes Claude or the working model for the account reviewer.
 
 ## Managed policy sources
 

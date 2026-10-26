@@ -22,8 +22,8 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-core/src/gateway/executable.ts`, `process-tree.ts` | Resolves executables and manages child processes. |
 | `plugins/multi-core/src/gateway/atomic-write.ts`, `state-lock.ts` | Protects files and serializes native state. |
 | `plugins/multi-core/src/gateway/harness-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Admits harness settings (`checkHarnessSettings`, `mergePermissions`), maps prompt and worker permissions, and resolves the Agent tool's `model` against each provider's worker catalog. |
-| `plugins/multi-core/src/gateway/approval.ts`, `permission-hook.ts` | Approval protocol and capability checks. |
-| `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `tool-observer.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, tool observation, and the nested-`claude` environment restore. |
+| `plugins/multi-core/src/gateway/verdicts.ts`, `provider.ts` | Core verdict contract, Reviewer interface, and provider auto-review policy. `server.ts` alone finalises served replies and terminal events. |
+| `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, and the nested-`claude` environment restore. |
 | `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. |
 | `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, notices, and failure classifier (`harness-failure.ts`) shared by Cursor, Antigravity, and Grok; the CLI harness base (`harness-cli.ts`), process runner, and text prompt preparation shared by Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
@@ -51,7 +51,8 @@ changes to those boundaries need corresponding implementation and verification.
 
 - Claude's permission mode controls every provider at prompt boundaries.
 - Each provider owns its login, reviewer, execution state, and credentials.
-- Fail explicitly on unsupported modes, unknown workers, ambiguous ownership, or missing review.
+- Fail explicitly on unsupported modes, unknown workers, or ambiguous ownership.
+- A provider without a reviewer runs auto mode unreviewed and says so; plan mode still refuses actions.
 - Never replay external tool events as executable Claude tools.
 - Native state is never rewound, and uncertain actions are never rerun blindly.
 - Antigravity native children and MCP are denied. Grok denies native subagents and MCP execution, and verifies the toolset the CLI announces.
@@ -84,9 +85,7 @@ executable and the Mods rollout flag forced on, without provider inference. It i
 | `npm run test:live:cursor` | Cursor SDK tools, continuation, and disk resume | Cursor SDK login |
 | `npm run test:live:openai-instructions` | Requested planning/delegation and Plan restrictions (three-request budget) | Codex login |
 | `npm run test:live:auto-mode` | Native Auto mode | Provider login under test |
-| `npm run test:live:provider-approval` | Provider approval | Provider login under test |
 | `npm run test:live:reviewer` | OpenAI reviewer allow/deny and inspection | Codex login |
-| `npm run test:live:approval-worker` | Worker approval | Provider login under test |
 | `npm run test:live:permissions` | Native permissions | Claude and provider login |
 | `npm run test:live:antigravity` | Antigravity CLI harness | `agy` login |
 | `npm run test:live:grok` | Grok Build CLI harness | Grok Build login |

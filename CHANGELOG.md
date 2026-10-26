@@ -6,6 +6,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Make the gateway the Auto-mode arbiter** ([#20](https://github.com/greenpolo/cc-multi-cli-plugin/issues/20)).
+  Every served tool call receives an evaluated verdict before its reply completes,
+  including display rows, handbacks, replay and keepalive failures. OpenAI reviews
+  actions inline on the originating ChatGPT plan; denial, failure and timeout
+  block with a reason. Read-only calls skip review. Zen, Antigravity, Grok and
+  OpenAI without a reviewer discovered at launch run Auto unreviewed and say so;
+  Plan refuses actions without review. Cursor keeps native review and its
+  fail-open behavior. All harness handbacks pass without a separate review.
+  Removed private classifier parsing, pending-action attribution and the
+  `/multi/permission` route. Native records now replay content events only;
+  old terminal-event replay records are refused explicitly.
+
 - **Run GPT-6.1 Sol on OpenAI.** Codex now serves `gpt-6.1-sol` on ChatGPT
   plans, so the OpenAI picker row and `model: gpt-6.1-sol` on a `multi-openai`
   worker run it in place of the previous-generation `gpt-6-sol`. The default

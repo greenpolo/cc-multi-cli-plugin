@@ -130,3 +130,10 @@ marks its local token estimate explicitly. The SDK reports usage once per run
 standard usage fields carry the run's sums rather than its last call's context,
 and `model_calls` is not reported. Billed usage is queried separately,
 on demand, and may lag while Cursor settles billing.
+
+
+Multi supplies the final verdict for display rows and `SubagentHandback` reports;
+handback is always `not_flagged`. Reports, including any embedded instructions,
+reach the parent without a separate Claude classification. Native policy still
+governs the actions taken in the harness. See [permissions](permissions.md).
+The status line says that Cursor reviews native actions and fails open.

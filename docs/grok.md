@@ -168,3 +168,11 @@ fails explicitly when a policy did not take effect. The CLI's sandbox profiles
 rely on Landlock and Seatbelt and are unavailable on Windows; Multi does not use
 them. Images, PDF attachments, strict output schemas, explicit tool choice and
 stop sequences are not supported through this bridge.
+
+
+Multi supplies the final verdict for display rows and `SubagentHandback` reports;
+handback is always `not_flagged`. Reports, including any embedded instructions,
+reach the parent without a separate Claude classification. Native policy still
+governs the actions taken in the harness. See [permissions](permissions.md).
+The status line says "no auto mode: actions run unreviewed". Auto runs
+unreviewed while retaining explicit restrictions; Plan refuses actions.

@@ -77,7 +77,7 @@ the session's `/effort`, validated by the provider.
 | Provider | Tool execution | Review | State ownership | Authentication |
 | --- | --- | --- | --- | --- |
 | OpenAI | Claude Code tools and loop | OpenAI account reviewer | Gateway and provider reasoning state | Codex login |
-| Zen | Claude Code tools and loop | Claude-backed review where available | Gateway and Zen reasoning/cache state | Zen API key |
+| Zen | Claude Code tools and loop | No reviewer; Auto runs unreviewed | Gateway and Zen reasoning/cache state | Zen API key |
 | Cursor | Cursor SDK loop | Cursor native review | Cursor SDK, scoped by run | Cursor SDK login |
 | Antigravity | `agy` CLI loop | No reviewer | Antigravity native history and cache | `agy` login |
 | Grok | `grok` CLI loop | No reviewer | Grok native sessions on disk | Grok Build account login |
@@ -87,7 +87,9 @@ identity and let Claude Code run the tool loop. Full settings translation runs
 at Cursor, Antigravity, and Grok prompts, or when a direct-model conversation requests
 a harness worker. OpenAI
 review stays with the originating OpenAI account. Zen never borrows Codex
-review. Missing GPT review fails explicitly.
+review. If discovery cannot find the OpenAI reviewer at launch, Auto runs OpenAI
+unreviewed and the status line says so. A discovered reviewer failing on a call
+refuses that action with an evaluated verdict.
 
 Cursor, Antigravity and Grok are harness integrations. Their SDK or CLI executes
 tools, keeps native state, and applies provider authentication. Each finished native
@@ -126,12 +128,14 @@ than queued against a native conversation that has moved on.
 ## Permissions
 
 Claude's permission mode controls each provider at prompt boundaries through the
-UserPromptSubmit and SubagentStart hooks. Worker tool calls are attributed
-through the Mods `tool.call` hook, with the session's permission mode.
+UserPromptSubmit and SubagentStart hooks. Direct-model review uses the mode in
+the request's `classifier_context.permission_mode`; Mods record the workspace
+and parent request identity at prompt boundaries.
 Harness settings admission is `gateway/harness-settings.ts`. The gateway intersects worker rules,
 provider capabilities, project settings, and platform policy. Unsupported modes,
-unknown workers, untranslatable policies, and unavailable required reviewers fail
-explicitly. Plan denies shell and edit capabilities. Bypass disables Cursor native
+unknown workers, untranslatable policies, and unavailable permission context fail
+explicitly. A provider without a reviewer runs Auto unreviewed and says so;
+Plan refuses its actions. Plan denies shell and edit capabilities. Bypass disables Cursor native
 Auto review while retaining explicit restrictions. See [docs/permissions.md](docs/permissions.md).
 
 Native harness actions do not enter Claude's PreToolUse or PermissionRequest
@@ -144,9 +148,27 @@ rule, and its announced toolset is verified because that CLI accepts an unknown
 removal silently; its MCP tools stay visible to the model and are documented as
 such. Explicit native workspace selection is required.
 
-Auto-mode classifier requests for Claude's own actions go to Anthropic unless a
-provider-owned pending action positively matches; only a request routed to
-provider review keeps the session mismatch check.
+The gateway is the verdict arbiter for every reply it serves. `provider.ts` holds
+one policy table: OpenAI uses its injected account reviewer, Cursor reviews native
+actions and fails open, and Zen, Antigravity and Grok run Auto unreviewed. The
+status line displays that table's statement. `verdicts.ts` owns the `Reviewer`
+interface, read-only skip list, Plan checks and failure-to-flagged rule.
+`server.ts` alone finalises a `ServedReply` and emits `message_delta` and
+`message_stop`. Whenever a request carries `safeguards`, its completed reply has
+an available result map covering every tool id, even on empty and keepalive
+failure replies. Builders cannot set results or emit terminal events. A broken
+stream ends with an error without claiming completion. Failure text is filtered
+so it cannot disable server verdicts in Claude Code.
+
+OpenAI reviews independent tools with at most four concurrent investigations per
+reply, each bounded at 60 seconds. Read, Glob, Grep and other explicit read-only
+tools pass without reviewer calls. The provider owns its guardian policy and
+read-only filesystem investigation. The core retains a bounded map of the latest
+tool-bearing main requests for worker authorization, and resolves cwd from the
+prompt snapshot with launcher cwd as fallback. Claude's private classifier
+prompts are never parsed or intercepted: Anthropic responses pass through byte
+for byte. Every harness's `SubagentHandback` receives `not_flagged`: reports,
+including any embedded instructions, reach the parent without another review.
 
 Claude's launcher enables on-demand tool discovery for the local gateway. Direct
 provider adapters omit deferred tool schemas until Claude discovers or uses
@@ -190,8 +212,11 @@ busy records. Every harness maps `HarnessBusyError` to a deterministic 400.
 `ExchangeRegistry` (`gateway/harness-exchange.ts`) lets identical requests observe
 one native run before a second lease is attempted. Its typed metadata remains
 provider-owned. `harness-completion.ts` archives a previous reply before the next
-native dispatch can replace it, then commits the new response and replay events
-in one atomic session write before emitting terminal events. Provider usage and
+native dispatch can replace it, then commits the new response and content-only replay events
+in one atomic session write before returning to the gateway finaliser. Each serve
+computes verdicts from its current request; native records carry no verdicts or
+terminal events. Old records containing terminal replay events are rejected
+explicitly rather than replaying stale verdicts. Provider usage and
 native recovery decisions stay in the adapters.
 
 Cursor upgrades preserve v2 native agents and pending run IDs. The store holds
@@ -234,7 +259,8 @@ features requested by the maintainer.
 - Never replay observed external tool events as Claude tool calls.
 - Apply Claude permission mode and explicit capability restrictions at prompt boundaries.
 - Propagate cancellation and expose progress, completion, and failure.
-- Fail on ambiguous ownership, unsupported policy, unknown workers, or missing review.
+- Fail on ambiguous ownership, unsupported policy, or unknown workers.
+- A provider without a reviewer runs Auto unreviewed and says so; Plan refuses actions.
 - Never borrow another provider's reviewer or infer billing from a model name.
 - Never rewind native state or repeat uncertain actions.
 - Isolate every session, worker, provider, workspace, and credential context.

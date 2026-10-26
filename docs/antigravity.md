@@ -153,3 +153,11 @@ choices, strict output schemas, and stop sequences are unsupported. Native
 compaction is owned by `agy`; Claude compaction summaries run with all mapped
 native tools denied and preserve native history. Native counters and local prompt
 estimates are reported separately.
+
+
+Multi supplies the final verdict for display rows and `SubagentHandback` reports;
+handback is always `not_flagged`. Reports, including any embedded instructions,
+reach the parent without a separate Claude classification. Native policy still
+governs the actions taken in the harness. See [permissions](permissions.md).
+The status line says "no auto mode: actions run unreviewed". Auto runs
+unreviewed while retaining explicit restrictions; Plan refuses actions.

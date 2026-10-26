@@ -42,7 +42,7 @@ change it.
 
 ## Execution
 
-Claude Code executes tools and applies its permission mode. Zen has no independent model-based reviewer. Claude-backed classification remains available when Claude access is present. Zen never borrows OpenAI reviewer capability.
+Claude Code executes tools and applies its permission mode. Zen has no independent model-based reviewer. Auto runs tools unreviewed, and the status line says "no auto mode: actions run unreviewed". Plan refuses actions. Core supplies evaluated verdicts, so Zen tool calls do not spend Claude quota on a local classifier. Zen never borrows OpenAI reviewer capability.
 
 ## Caching and continuation
 
