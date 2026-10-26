@@ -42,7 +42,7 @@ import {
 } from '../../multi-grok/src/models.ts';
 import { GROK_TOOLS, grokPermissionPolicy } from '../../multi-grok/src/permissions.ts';
 import { grokUsageReader } from '../../multi-grok/src/usage-adapter.ts';
-import { createOpenAIApproval, discoverOpenAIReviewer } from '../../multi-openai/src/approval.ts';
+import { createOpenAIReviewer, discoverOpenAIReviewer } from '../../multi-openai/src/approval.ts';
 import { readCodexAuth } from '../../multi-openai/src/auth.ts';
 import {
   MODELS,
@@ -226,11 +226,9 @@ async function main() {
     { workers },
   );
   await permissionModes.precompute(process.cwd());
-  const { approvalBridge, approvalProviders } = await discoverApprovals(
-    authFile,
-    cursorModels.length > 0,
-    openaiReview,
-  );
+  const reviewers = {
+    openai: openaiReview ? await createOpenAIReviewer(authFile, process.cwd()) : undefined,
+  };
   const receipts = new ReceiptLedger({
     file: process.env.MULTI_RECEIPTS_FILE
       ? path.resolve(process.env.MULTI_RECEIPTS_FILE)
@@ -253,11 +251,10 @@ async function main() {
     zen: zenKey ? { apiKey: zenKey } : undefined,
     usageReaders,
     permissionModes,
-    approvalBridge,
+    reviewers,
     // A launch inside another Multi session forwards to the user's own upstream, not the outer gateway.
     anthropicBaseUrl: withoutGateway(process.env).ANTHROPIC_BASE_URL || undefined,
     blockAnthropic: !anthropic,
-    guardAuto: true,
     onEvent: traceEvent,
   });
   await new Promise<void>((resolve, reject) => {
@@ -269,11 +266,10 @@ async function main() {
     throw new Error('Gateway did not bind a local port.');
   }
   const settingsFile = path.join(settingsDir, 'settings.json');
-  const { selectedModel, modelArgument } = await initialSelection(args, settings, anthropic);
+  const { modelArgument } = await initialSelection(args, settings, anthropic);
   if (modelArgument) {
     applyModelArgument(args, modelArgument);
   }
-  configureApproval(settings, approvalProviders, selectedModel, { antigravity, grok }, anthropic);
   await writeFile(settingsFile, JSON.stringify(settings), { mode: 0o600 });
   const definitions = JSON.stringify(agents);
   const baseEnvironment = gatewayEnvironment(address.port, token, anthropic);
@@ -684,10 +680,10 @@ async function discoverOpenAI(authFile: string) {
     try {
       openaiReview = await discoverOpenAIReviewer(authFile);
     } catch {
-      /* Missing capability disables auto mode; inference remains available. */
+      /* Missing capability leaves auto mode unreviewed; inference remains available. */
     }
     if (!openaiReview) {
-      console.error('OpenAI automatic reviewer unavailable; auto mode is disabled.');
+      console.error('OpenAI reviewer unavailable; actions in auto mode run unreviewed.');
     }
   }
   return { codexSignedIn, openaiReview };
@@ -942,52 +938,6 @@ function filterPicker(
     chosen.add(option);
   }
   settings.modelPicker.options = [...chosen];
-}
-
-function approvalProvider(model: string | undefined): 'openai' | 'cursor' | undefined {
-  if (model?.startsWith('multi/openai/')) {
-    return 'openai';
-  }
-  if (model?.startsWith('multi/cursor/')) {
-    return 'cursor';
-  }
-  return undefined;
-}
-
-async function discoverApprovals(
-  authFile: string,
-  cursorAvailable: boolean,
-  openaiReview: boolean,
-) {
-  const approvalProviders: ('openai' | 'cursor')[] = cursorAvailable ? ['cursor'] : [];
-  if (openaiReview) {
-    approvalProviders.push('openai');
-  }
-  return {
-    approvalProviders,
-    approvalBridge: openaiReview ? await createOpenAIApproval(authFile, process.cwd()) : undefined,
-  };
-}
-
-function configureApproval(
-  settings: LaunchSettings,
-  providers: readonly ('openai' | 'cursor')[],
-  selectedModel?: string,
-  harnesses: Record<string, unknown> = {},
-  anthropic = false,
-) {
-  const provider = approvalProvider(selectedModel);
-  // Antigravity and Grok run their own loop and bring no reviewer of their own.
-  const nativeHarness = Object.entries(harnesses).some(
-    ([name, harness]) => harness && selectedModel?.startsWith(`multi/${name}/`),
-  );
-  // Auto mode is a Claude session capability. Keep it available when Claude is
-  // authenticated, even if the initial model has no external reviewer; the
-  // gateway still rejects unsupported external review requests, while a later
-  // switch back to Claude can use its native reviewer.
-  if (!anthropic && !nativeHarness && (!provider || !providers.includes(provider))) {
-    settings.permissions = { ...settings.permissions, disableAutoMode: 'disable' };
-  }
 }
 
 async function handleCommand(command?: string) {

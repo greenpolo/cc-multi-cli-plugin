@@ -334,3 +334,45 @@ test('the gateway session key is captured, echoed, and cleared at session end', 
   await step('t3');
   expect(sent.at(-1)?.key).toBe(undefined);
 });
+
+test('a provider step shows the gateway auto-review statement in the status line', async ($, on) => {
+  mock.clock(on);
+  mock.env(on, { MULTI_GATEWAY_TOKEN: 'secret', MULTI_MOD_GATEWAY_URL: 'http://127.0.0.1:4000' });
+  on('session.id', () => ({ value: 's' }));
+  on('http.fetch', () => ({
+    value: {
+      ok: true,
+      status: 200,
+      headers: {},
+      text: JSON.stringify({
+        accepted: true,
+        reviewStatement: 'no auto mode: actions run unreviewed',
+      }),
+    },
+  }));
+  const statuses: unknown[] = [];
+  on('ui.status', (_$, event) => {
+    statuses.push(event);
+    return { value: undefined };
+  });
+  on('turn.step', async function* (_$, event) {
+    yield { kind: 'text', index: 0, text: 'done' };
+    return {
+      turnId: event.turnId,
+      index: 0,
+      answer: 'done',
+      toolUses: [],
+      stopReason: 'end_turn',
+      usage: null,
+    };
+  });
+  for await (const _chunk of $.turn.step({
+    turnId: 't',
+    index: 0,
+    model: 'multi/zen/test',
+    messageCount: 1,
+  })) {
+    // The provider's current policy comes from this step's telemetry response.
+  }
+  expect(JSON.stringify(statuses)).toContain('no auto mode: actions run unreviewed');
+});

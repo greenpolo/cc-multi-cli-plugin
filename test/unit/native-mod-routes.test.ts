@@ -10,14 +10,12 @@ async function start(
   t: test.TestContext,
   permissionModes?: PermissionModes,
   antigravity?: Parameters<typeof createNativeGateway>[0]['antigravity'],
-  guardAuto?: boolean,
 ) {
   const server = createNativeGateway({
     token: 'mod-token',
     authFile: 'unused',
     permissionModes,
     antigravity,
-    guardAuto,
     modBridge: new ModBridge(),
   });
   t.after(() => {
@@ -83,13 +81,13 @@ test('PermissionModes refuses native resolution until an acknowledged prompt sna
   assert.equal(modes.resolve('session').permissionMode, 'plan');
 });
 
-test('permission observations neither prepare settings nor grant harness admission', async (t) => {
+test('retired permission route is absent and cannot grant harness admission', async (t) => {
   let discoveries = 0;
   const modes = new PermissionModes(async () => {
     discoveries++;
     return {};
   });
-  const base = await start(t, modes, undefined, true);
+  const base = await start(t, modes);
   const response = await request(base, '/multi/permission', {
     hook_event_name: 'PreToolUse',
     session_id: 'native',
@@ -98,8 +96,7 @@ test('permission observations neither prepare settings nor grant harness admissi
     tool_name: 'Read',
     tool_use_id: 'tool-1',
   });
-  assert.equal(response.status, 200);
-  assert.deepEqual(response.body, {});
+  assert.equal(response.status, 404);
   assert.equal(discoveries, 0);
   assert.throws(() => modes.resolveHarness('native'), /unavailable/);
 });

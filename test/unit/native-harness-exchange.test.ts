@@ -116,7 +116,7 @@ test('a retained exchange stays addressable and an ordinary one is dropped', asy
 test('a completed identical request replays from the session record', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-exchange-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const events: HarnessEvent[] = [['message_stop', {}]];
+  const events: HarnessEvent[] = [['ping', {}]];
   const { emit, events: seen } = collector();
   const replayed = await replayPersisted({
     stateDirectory: directory,
@@ -134,7 +134,7 @@ test('a completed identical request replays from its response file', async (t) =
   const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-exchange-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = path.join(directory, `${key}.response.json`);
-  const events: HarnessEvent[] = [['message_stop', {}]];
+  const events: HarnessEvent[] = [['ping', {}]];
   const response = { ...answer(), multi_usage: { source: 'provider' as const } };
   await atomicJson(file, { response, events }, 'linux');
 

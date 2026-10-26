@@ -491,21 +491,6 @@ test('a Claude tool call posts nothing to the gateway', async ($, on) => {
   expect(sent.length).toBe(0);
 });
 
-test('a provider model tool call is attributed to the gateway reviewer', async ($, on) => {
-  mock.clock(on);
-  const sent = catalogGateway(on);
-  on('session.model', () => ({ value: 'multi/openai/gpt-6-astra' }));
-  on('tool.call', () => ({ result: 'ran' }));
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_1' } as never);
-  expect(sent.map((item) => item.url.replace(/^.*(?=\/multi)/, ''))).toEqual(['/multi/permission']);
-  expect(sent[0]?.body).toEqual({
-    session_id: 's',
-    tool_use_id: 'toolu_1',
-    tool_name: 'Bash',
-    cwd: '/workspace',
-  });
-});
-
 /** A gateway whose offer answers name the model each agent type runs on. */
 function pinnedGateway(
   on: On,
@@ -633,56 +618,4 @@ test('a subagent registers with the gateway while any loop of the session runs a
   const afterStep = sent.length;
   await $.classic.SubagentStart(start);
   expect(sent.slice(afterStep).some((url) => url.endsWith('/multi/mod/worker'))).toBe(true);
-});
-
-test('a provider worker tool call is attributed to the reviewer with its agent id', async ($, on) => {
-  mock.clock(on);
-  const bodies: Array<Record<string, unknown>> = [];
-  const sent = pinnedGateway(on, {}, bodies);
-  on('tool.call', () => ({ result: 'ran' }));
-  on('ui.status', () => ({ value: undefined }));
-  on('classic.UserPromptSubmit', () => ({}));
-  on('turn.step', async function* (_$, event) {
-    yield { kind: 'text', index: 0, text: 'ok' };
-    return {
-      turnId: event.turnId,
-      index: 0,
-      answer: 'ok',
-      toolUses: [],
-      stopReason: 'end_turn',
-      usage: null,
-    };
-  });
-  await $.classic.UserPromptSubmit({
-    prompt: 'go',
-    permission_mode: 'auto',
-    session_id: 's',
-    cwd: '/workspace',
-  });
-  for await (const _chunk of $.turn.step({
-    turnId: 't',
-    agentId: 'provider-worker',
-    index: 0,
-    model: 'multi/openai/gpt-6-astra',
-    messageCount: 1,
-  })) {
-    // The hooks learn the worker's model from its step.
-  }
-  sent.length = 0;
-  bodies.length = 0;
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_w', agentId: 'provider-worker' } as never);
-  const index = sent.findIndex((url) => url.endsWith('/multi/permission'));
-  expect(index).toBeGreaterThanOrEqual(0);
-  // The Claude session's own mode (the engine hands a tool call none) comes from its snapshot.
-  expect(bodies[index]).toEqual({
-    session_id: 's',
-    tool_use_id: 'toolu_w',
-    tool_name: 'Bash',
-    cwd: '/workspace',
-    permission_mode: 'auto',
-  });
-  // The main loop is on Claude: its own call costs the gateway nothing.
-  sent.length = 0;
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_main' } as never);
-  expect(sent).toEqual([]);
 });

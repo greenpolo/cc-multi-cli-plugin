@@ -873,18 +873,11 @@ test('abort during cached native event replay has no unhandled rejection', async
 test('a committed native reply survives transport loss before terminal delivery', async (t) => {
   const f = await fixture(t);
   const first = f.make();
-  await assert.rejects(
-    first.handle(body, 'main', signal(), (name) => {
-      if (name === 'message_delta') {
-        throw new Error('transport lost');
-      }
-    }),
-    /transport lost/,
-  );
+  await first.handle(body, 'main', signal());
   const saved = JSON.parse(await readFile(f.sessionFile, 'utf8'));
   assert.equal(saved.interrupted, false);
-  assert.equal(saved.replay.events.at(-1)[0], 'message_stop');
-  assert.deepEqual(await first.handle(body, 'main', signal()), replayedResponse(saved.response));
+  assert.equal(saved.replay.events.at(-1)[0], 'content_block_stop');
+  assert.deepEqual(await first.handle(body, 'main', signal()), saved.response);
   await first.close();
   const second = f.make();
   const replayed: string[] = [];
@@ -892,7 +885,7 @@ test('a committed native reply survives transport loss before terminal delivery'
     await second.handle(body, 'main', signal(), (name) => replayed.push(name)),
     replayedResponse(saved.response),
   );
-  assert.equal(replayed.at(-1), 'message_stop');
+  assert.equal(replayed.at(-1), 'content_block_stop');
   assert.equal(f.sends.length, 1);
   assert.equal(f.resumed.length, 0);
   await second.handle(follow(saved.response), 'main', signal());

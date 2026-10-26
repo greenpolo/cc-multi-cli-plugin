@@ -102,7 +102,6 @@ export function prepareOpenAIRequest(
         toolNames: toolNames ?? originalToolNames(body),
         stopSequences: body.stop_sequences,
         inputTokens: inputTokens(),
-        safeguards: body.safeguards,
       }),
   };
 }

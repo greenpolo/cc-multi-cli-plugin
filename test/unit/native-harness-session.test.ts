@@ -42,7 +42,7 @@ function answer(text = 'done'): MessagesResponse {
   };
 }
 
-const events: HarnessEvent[] = [['message_stop', {}]];
+const events: HarnessEvent[] = [['ping', {}]];
 
 async function store(t: test.TestContext) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-session-'));
@@ -392,6 +392,7 @@ test('persisted state is validated before it is trusted', async (t) => {
   assert.equal(optionalCount(1.5), false);
 
   assert.ok(validMessagesResponse(answer()));
+  assert.equal(validMessagesResponse({ ...answer(), safeguard_results: [] }), false);
   assert.equal(validMessagesResponse({ ...answer(), role: 'user' }), false);
   assert.equal(validMessagesResponse({ ...answer(), usage: { input_tokens: 1 } }), false);
   assert.equal(
@@ -403,6 +404,8 @@ test('persisted state is validated before it is trusted', async (t) => {
   assert.equal(validReplay({ key: 'nope', events }), false);
   assert.equal(validReplay({ key, events: [['not_an_event', {}]] }), false);
   assert.equal(validReplay({ key, events: [['message_stop']] }), false);
+  assert.equal(validReplay({ key, events: [['message_stop', {}]] }), false);
+  assert.equal(validReplay({ key, events: [['message_delta', { delta: {} }]] }), false);
 
   assert.ok(validPersistedResponse({ response: answer(), events }));
   assert.equal(validPersistedResponse({ response: answer() }), false);

@@ -4,10 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
-import {
-  type ApprovalContext,
-  NativeApprovalBridge,
-} from '../../plugins/multi-core/src/gateway/approval.ts';
 import type { GatewayFetch } from '../../plugins/multi-core/src/gateway/fetch.ts';
 import type {
   MessagesRequest,
@@ -197,7 +193,7 @@ test('Responses stream preserves native tool arguments, usage and stop reason', 
   assert.deepEqual(call.input, { file_path: 'fixture' });
   assert.equal(result.usage.input_tokens, 60);
   assert.equal(result.usage.cache_read_input_tokens, 40);
-  assert.equal(sent.at(-1)?.type, 'message_stop');
+  assert.equal(sent.at(-1)?.type, 'content_block_stop');
   const partial = sent.flatMap(({ value }) =>
     'index' in value && 'delta' in value && value.delta.type === 'input_json_delta'
       ? [value.delta.partial_json]
@@ -1019,8 +1015,6 @@ test('parallel calls with delayed names emit complete, sequential Claude blocks'
       'content_block_start',
       'content_block_delta',
       'content_block_stop',
-      'message_delta',
-      'message_stop',
     ],
   );
 });
@@ -1446,152 +1440,4 @@ test('provider routing sends each external model to one handler route', async (t
     );
     assert.deepEqual(touched, [row.hit], row.label);
   }
-});
-
-test('OpenAI streaming records tool memory from SSE observation, not rememberResult', async (t) => {
-  const streamSession = JSON.stringify({ session_id: 'stream-tool-session' });
-  const bufferedSession = JSON.stringify({ session_id: 'buffered-tool-session' });
-  const command = 'node stream-tool-memory.js';
-  const toolId = 'call_stream_tool_memory';
-  const toolItem: SseEvent = {
-    type: 'function_call',
-    call_id: toolId,
-    name: 'Bash',
-    arguments: JSON.stringify({ command }),
-  };
-  const upstream: GatewayFetch = async () => new Response(sse(events(toolItem)));
-  let reviews = 0;
-  const bridge = new NativeApprovalBridge(async () => {
-    reviews++;
-    return { outcome: 'allow', model: 'codex-auto-review' };
-  });
-  const call = await gateway(t, upstream, {
-    guardAuto: true,
-    approvalBridge: bridge,
-    blockAnthropic: true,
-  });
-  const inference = {
-    model,
-    metadata: { user_id: bufferedSession },
-    messages: [{ role: 'user', content: command }],
-    tools: [
-      {
-        name: 'Bash',
-        input_schema: { type: 'object', properties: { command: { type: 'string' } } },
-      },
-    ],
-  };
-  const classify = (streamed: boolean) =>
-    call(
-      {
-        model: 'claude-sonnet-5',
-        metadata: { user_id: streamed ? streamSession : bufferedSession },
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: '<transcript>\n' },
-              { type: 'text', text: `${JSON.stringify({ Bash: command })}\n` },
-              { type: 'text', text: '</transcript>\n' },
-              { type: 'text', text: 'Stage 1 does NOT apply user intent\n<severity>N</severity>' },
-            ],
-          },
-        ],
-      },
-      streamed ? { 'x-claude-code-agent-id': 'stream-worker' } : {},
-    );
-
-  const buffered = await call({ ...inference, stream: false });
-  assert.equal(buffered.status, 200);
-  const bufferedMessage = await readMessage(buffered);
-  const bufferedTool = bufferedMessage.content.find((block) => block.type === 'tool_use');
-  assert(bufferedTool?.type === 'tool_use');
-  assert.equal(bufferedTool.id, toolId);
-  assert.equal((await classify(false)).status, 200);
-  assert.equal(reviews, 1);
-
-  const worker = { 'x-claude-code-agent-id': 'stream-worker' };
-  const streamed = await call({ ...inference, stream: true }, worker);
-  assert.equal(streamed.status, 200);
-  assert.match(streamed.headers.get('content-type') ?? '', /event-stream/);
-  await streamed.text();
-  assert.equal((await classify(true)).status, 400);
-  assert.equal(reviews, 1);
-});
-
-test('plan mode binds OpenAI review and denies planned edits without review', async (t) => {
-  const session = 'plan-review-session';
-  const modes = new PermissionModes(async () => ({}));
-  const prompt = (mode: string) =>
-    modes.recordModSession(session, { permissionMode: mode as 'default' });
-  const contexts: (ApprovalContext | undefined)[] = [];
-  const bridge = new NativeApprovalBridge(async (_input, _signal, context) => {
-    contexts.push(context);
-    return { outcome: 'allow', model: 'codex-auto-review' };
-  });
-  const call = await gateway(t, async () => new Response(sse(textEvents)), {
-    approvalBridge: bridge,
-    permissionModes: modes,
-  });
-  const metadata = { user_id: JSON.stringify({ session_id: session }) };
-  const classify = async (action: Record<string, unknown>) => {
-    const response = await call({
-      model: 'claude-sonnet-5',
-      metadata,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: '<transcript>\n' },
-            { type: 'text', text: `${JSON.stringify(action)}\n` },
-            { type: 'text', text: '</transcript>\n' },
-            { type: 'text', text: 'Stage 1 does NOT apply user intent\n<severity>N</severity>' },
-          ],
-        },
-      ],
-    });
-    assert.equal(response.status, 200);
-    return JSON.stringify(await response.json());
-  };
-  await prompt('plan');
-  const inference = await call({
-    model,
-    metadata,
-    stream: false,
-    messages: [{ role: 'user', content: 'plan' }],
-    tools: [{ name: 'Bash', input_schema: { type: 'object' } }],
-  });
-  assert.equal(inference.status, 200);
-  await inference.text();
-
-  assert.match(await classify({ Bash: 'node -p 1' }), /<severity>0</);
-  assert.equal(contexts.at(-1)?.planMode, true);
-  const denied = await classify({ Write: { file_path: 'edit.txt', content: 'edited' } });
-  assert.match(denied, /<severity>100</);
-  assert.match(denied, /multi-plan-mode/);
-  assert.equal(contexts.length, 1);
-
-  await prompt('auto');
-  await classify({ Write: { file_path: 'edit.txt', content: 'edited' } });
-  assert.equal(contexts.length, 2);
-  assert.equal(contexts.at(-1)?.planMode, undefined);
-  const safeguarded = await call({
-    model,
-    metadata,
-    stream: false,
-    messages: [{ role: 'user', content: 'plan from classifier context' }],
-    tools: [{ name: 'Bash', input_schema: { type: 'object' } }],
-    safeguards: [
-      {
-        type: 'dangerous_tool_use',
-        classifier_context: { permission_mode: 'plan' },
-      },
-    ],
-  });
-  assert.equal(safeguarded.status, 200);
-  await safeguarded.text();
-  await classify({ Bash: 'node -p 1' });
-  assert.equal(contexts.at(-1)?.requestPermissionMode, 'plan');
-  assert.equal(contexts.at(-1)?.planMode, true);
-  assert.throws(() => modes.planning('unknown-session'), /permission mode is unavailable/);
 });

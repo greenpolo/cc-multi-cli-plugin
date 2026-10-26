@@ -400,6 +400,7 @@ export function validMessagesResponse(
   }
   const response = value as Partial<MessagesResponse>;
   return (
+    value.safeguard_results === undefined &&
     typeof response.id === 'string' &&
     response.type === 'message' &&
     response.role === 'assistant' &&
@@ -460,8 +461,6 @@ function validEvent(value: unknown): value is HarnessEvent {
       'content_block_start',
       'content_block_delta',
       'content_block_stop',
-      'message_delta',
-      'message_stop',
       'ping',
       'error',
     ].includes(name) &&

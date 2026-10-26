@@ -13,6 +13,7 @@ import { HarnessResponse } from '../../plugins/multi-core/src/gateway/harness-re
 import type {
   MessagesRequest,
   MessagesResponse,
+  ServedReply,
 } from '../../plugins/multi-core/src/gateway/messages.ts';
 import type { NativeHarness } from '../../plugins/multi-core/src/gateway/native-harness.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
@@ -32,7 +33,7 @@ async function gateway(t: test.TestContext, rows: boolean) {
     async handle(body, _scope, _signal, emit) {
       inputs.push(body);
       runs++;
-      const response = new HarnessResponse(model, 1, emit ?? (() => {}), body.safeguards);
+      const response = new HarnessResponse(model, 1, emit ?? (() => {}));
       response.text(`[Cursor] notice\nreport ${runs}`);
       if (rows) {
         response.displayRow({
@@ -44,9 +45,6 @@ async function gateway(t: test.TestContext, rows: boolean) {
         response.text(`\nfinal ${runs}`);
       }
       saved = response.finish(undefined);
-      for (const [name, value] of response.takeTerminalEvents()) {
-        emit?.(name, value);
-      }
       return saved;
     },
     async recordedResponse() {
@@ -90,10 +88,7 @@ function delivery(response: MessagesResponse) {
   assert.equal(block?.type, 'tool_use');
   assert.equal(block.name, 'SubagentHandback');
   assert.equal(response.stop_reason, 'tool_use');
-  assert.deepEqual(response.safeguard_results?.[0].status.tool_uses[block.id], {
-    type: 'unavailable',
-    reason: 'error',
-  });
+
   return block;
 }
 
@@ -108,8 +103,12 @@ test('a harness answer without rows sends its full report through handback in JS
   const source = await gateway(t, false);
   const first = (await (
     await source.send([{ role: 'user', content: 'work' }])
-  ).json()) as MessagesResponse;
+  ).json()) as ServedReply;
   const block = delivery(first);
+  assert.deepEqual(first.safeguard_results?.[0].status.tool_uses[block.id], {
+    type: 'evaluated',
+    outcome: 'not_flagged',
+  });
   assert.deepEqual(block.input, { message: '[Cursor] notice\nreport 1' });
   assert.deepEqual(source.saved()?.content, [{ type: 'text', text: '[Cursor] notice\nreport 1' }]);
   assert.equal(
@@ -140,7 +139,7 @@ test('rows defer the delivery to the follow-up, including streamed follow-ups', 
   const source = await gateway(t, true);
   const first = (await (
     await source.send([{ role: 'user', content: 'work' }])
-  ).json()) as MessagesResponse;
+  ).json()) as ServedReply;
   assert.equal(first.stop_reason, 'end_turn');
   assert.equal(
     first.content.some((block) => block.type === 'tool_use' && block.name === 'SubagentHandback'),
@@ -153,7 +152,7 @@ test('rows defer the delivery to the follow-up, including streamed follow-ups', 
     { role: 'assistant', content: first.content },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: row.id, content: 'done' }] },
   ];
-  const followed = (await (await source.send(messages)).json()) as MessagesResponse;
+  const followed = (await (await source.send(messages)).json()) as ServedReply;
   assert.equal((delivery(followed).input as { message: string }).message, '\nfinal 1');
   const events = streamEvents(await (await source.send(messages, true, true)).text());
   const terminal = events.find((event) => event.type === 'message_delta');
@@ -189,8 +188,12 @@ test('handback result and enforcement bounce are answered locally; resume strips
   const source = await gateway(t, false);
   const first = (await (
     await source.send([{ role: 'user', content: 'work' }])
-  ).json()) as MessagesResponse;
+  ).json()) as ServedReply;
   const block = delivery(first);
+  assert.deepEqual(first.safeguard_results?.[0].status.tool_uses[block.id], {
+    type: 'evaluated',
+    outcome: 'not_flagged',
+  });
   const history = [
     { role: 'user', content: 'work' },
     { role: 'assistant', content: first.content },
@@ -199,7 +202,7 @@ test('handback result and enforcement bounce are answered locally; resume strips
       content: [{ type: 'tool_result', tool_use_id: block.id, content: 'delivered' }],
     },
   ];
-  const resultOnly = (await (await source.send(history)).json()) as MessagesResponse;
+  const resultOnly = (await (await source.send(history)).json()) as ServedReply;
   assert.equal(
     (delivery(resultOnly).input as { message: string }).message,
     '[Cursor] notice\nreport 1',
@@ -209,7 +212,7 @@ test('handback result and enforcement bounce are answered locally; resume strips
       { role: 'user', content: 'work' },
       { role: 'user', content: '[handback-send-enforce] Your report has not been delivered.' },
     ])
-  ).json()) as MessagesResponse;
+  ).json()) as ServedReply;
   assert.equal(
     (delivery(bounced).input as { message: string }).message,
     '[Cursor] notice\nreport 1',
@@ -236,7 +239,7 @@ test('without an offered handback tool, the harness answer stays an end turn', a
   const source = await gateway(t, false);
   const response = (await (
     await source.send([{ role: 'user', content: 'work' }], false)
-  ).json()) as MessagesResponse;
+  ).json()) as ServedReply;
   assert.equal(response.stop_reason, 'end_turn');
   assert.deepEqual(response.content, [{ type: 'text', text: '[Cursor] notice\nreport 1' }]);
 });
@@ -262,7 +265,7 @@ test('an empty native answer gets a report and remains a resumable assistant tur
     stop_sequence: null,
     usage: { input_tokens: 1, output_tokens: 0 },
   };
-  const delivered = withHandback(recorded, '', safeguards);
+  const delivered = withHandback(recorded, '');
   const block = delivery(delivered);
   assert.deepEqual(block.input, { message: 'Native run finished.' });
   const next = withoutHarnessHandback({

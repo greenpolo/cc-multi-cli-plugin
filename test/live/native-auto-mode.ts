@@ -298,7 +298,7 @@ try {
           assert(
             traces.some(
               (trace) =>
-                trace.route === 'approval' &&
+                trace.route === 'review' &&
                 trace.model === 'codex-auto-review' &&
                 trace.stage === 1 &&
                 trace.outcome === (kind === 'ALLOW' ? 'allow' : 'deny') &&

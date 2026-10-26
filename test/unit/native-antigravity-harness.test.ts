@@ -150,7 +150,7 @@ test('Antigravity replays completed requests and resumes native conversation', a
   assert.equal(first.content[0].type, 'text');
   assert.match(first.content[0].text, /hello/);
   assert.equal(setupResult.calls[0].effort, 'low');
-  assert.deepEqual(events.slice(-2), ['message_delta', 'message_stop']);
+  assert.equal(events.at(-1), 'content_block_stop');
   const replay = await harness.handle(
     request,
     'session/worker',

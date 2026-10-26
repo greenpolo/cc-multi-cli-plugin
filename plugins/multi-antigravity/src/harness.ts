@@ -223,12 +223,7 @@ export class AntigravityHarness extends CliHarness<Saved, AntigravityModel> {
       const nativeDenied = deniedForRun(policy, context);
       const nativeAllowed = allowedForRun(policy, context);
       const notice = noticeForRun(policy, context);
-      const response = new HarnessResponse(
-        body.model ?? model.model,
-        prepared.inputTokens,
-        emit,
-        body.safeguards,
-      );
+      const response = new HarnessResponse(body.model ?? model.model, prepared.inputTokens, emit);
       const policyIdentity = digest({
         denied: nativeDenied,
         allowed: nativeAllowed ?? null,
@@ -300,16 +295,11 @@ export class AntigravityHarness extends CliHarness<Saved, AntigravityModel> {
         await this.store.save(session);
         throw new AntigravityProviderError(result.error ?? `Antigravity run ${result.status}`);
       }
-      return await this.commit(
-        session,
-        response,
-        result,
-        exchange,
-        key,
-        model,
-        { streamed, summary: actions.text(calls.count), calls },
-        emit,
-      );
+      return await this.commit(session, response, result, exchange, key, model, {
+        streamed,
+        summary: actions.text(calls.count),
+        calls,
+      });
     } catch (error) {
       // The run ended without a terminal result (abort, kill, or a CLI/parse
       // failure). If agy ever reported a conversation id for this attempt, the
@@ -334,7 +324,6 @@ export class AntigravityHarness extends CliHarness<Saved, AntigravityModel> {
     key: string,
     model: AntigravityModel,
     text: { streamed: string; summary: string; calls: HarnessModelCalls },
-    emit: Emit,
   ): Promise<MessagesResponse> {
     response.text(terminalSuffix(text.streamed, result.response));
     response.text(text.summary);
@@ -348,11 +337,9 @@ export class AntigravityHarness extends CliHarness<Saved, AntigravityModel> {
     return commitHarnessResponse({
       session,
       store: this.store,
-      response,
       finished,
       exchange,
       key,
-      emit,
       update: (saved) => {
         saved.conversationId = result.conversation_id;
         saved.interrupted = false;

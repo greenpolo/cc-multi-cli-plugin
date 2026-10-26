@@ -7,7 +7,6 @@ import type {
   MessagesResponse,
   RequestMessage,
 } from './messages.ts';
-import { safeguardResults } from './safeguards.ts';
 
 const HANDBACK_TOOL = 'SubagentHandback';
 const enforcement = /^\[handback-send-enforce\]/;
@@ -154,11 +153,7 @@ export function recordedReport(response: MessagesResponse | undefined): string |
   return text || fallback;
 }
 
-export function withHandback(
-  response: MessagesResponse,
-  report: string,
-  safeguards: unknown,
-): MessagesResponse {
+export function withHandback(response: MessagesResponse, report: string): MessagesResponse {
   // This call delivers the gateway's own reply; it is not a replay of a native tool event.
   const block = {
     type: 'tool_use' as const,
@@ -167,30 +162,7 @@ export function withHandback(
     input: { message: report || fallback },
   };
   const content = [...response.content, block];
-  const existing = response.safeguard_results ?? safeguardResults(safeguards, content, 'native');
-  const safeguard_results = existing
-    ? ([
-        {
-          type: 'dangerous_tool_use' as const,
-          status: {
-            type: 'available' as const,
-            tool_uses: {
-              ...existing[0].status.tool_uses,
-              // Nothing reviewed the report, so auto mode's own classifier does.
-              [block.id]: { type: 'unavailable' as const, reason: 'error' as const },
-            },
-          },
-        },
-      ] as const)
-    : undefined;
-  return {
-    ...response,
-    content,
-    stop_reason: 'tool_use',
-    ...(safeguard_results
-      ? { safeguard_results: [...safeguard_results] as MessagesResponse['safeguard_results'] }
-      : {}),
-  };
+  return { ...response, content, stop_reason: 'tool_use' };
 }
 
 /** Append the delivery block after streamed text, before the terminal event. */

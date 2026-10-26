@@ -5,7 +5,7 @@ import { register as registerCompaction } from './compact.ts';
 import { isActive, postJson, type Wire } from './gateway.ts';
 import { register as registerLifecycle } from './lifecycle.ts';
 import { type PromptSnapshot, policyClient, recordPrompt, snapshotKey } from './policy.ts';
-import { isHarnessModel, isMultiModel } from './provider.ts';
+import { isHarnessModel } from './provider.ts';
 import {
   callDisplayRow,
   isDisplayTool,
@@ -33,10 +33,6 @@ const wire = ($: EngineInterface): Wire => ({
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
 const policy = atom({ plugin: 'multi-core', key: 'policy' } as const, {} as MultiCorePolicy);
-const agentModels = atom(
-  { plugin: 'multi-core', key: 'agentModels' } as const,
-  {} as Record<string, string>,
-);
 const displayTools = atom(
   { plugin: 'multi-core', key: 'displayTools' } as const,
   { registered: [] } as MultiCoreDisplayTools,
@@ -61,12 +57,11 @@ export const register: Register = (on, options) => {
   registerWorkers(on, options);
   registerRows(on);
   // One hook for every tool call (a module hooks an event once without a matcher): a
-  // display row is answered here, any other call is attributed to its provider's reviewer.
+  // display row is answered here; other calls continue through the engine.
   on('tool.call', async ($, event, next) => {
     if (isDisplayTool(event.tool)) {
       return callDisplayRow(rowsClient($), event);
     }
-    await attributeToolCall($, event);
     return next(event);
   });
   on('session.start', async ($, event, next) => {
@@ -164,37 +159,4 @@ function snapshotOf(event: PromptEvent): PromptSnapshot {
     cwd: event.cwd,
     permissionMode: event.permission_mode,
   });
-}
-
-/**
- * Reviewer attribution for a provider's tool call: the gateway learns the session, call,
- * and workspace it needs to match the reviewer request to it. A Claude loop's tool call
- * is Claude's own and costs no gateway call. The reply never decides the call. It runs
- * from `tool.call`, which carries the calling loop's agentId (`classic.PreToolUse` does
- * not, so it could not tell a provider worker's call from the session's own).
- */
-async function attributeToolCall(
-  $: EngineInterface,
-  event: { tool: string; tool_use_id?: string; agentId?: string },
-) {
-  try {
-    const model =
-      event.agentId === undefined
-        ? await $.session.model()
-        : (await read($, agentModels))[event.agentId];
-    if (!isMultiModel(model) || !(await isActive(wire($)))) {
-      return;
-    }
-    // The engine hands a tool call no permission mode: the prompt-boundary snapshot has it.
-    const mode = (await read($, policy)).prompt?.permissionMode;
-    await postJson(wire($), '/multi/permission', {
-      session_id: await $.session.id(),
-      tool_use_id: event.tool_use_id,
-      tool_name: event.tool,
-      cwd: await $.session.cwd(),
-      ...(mode === undefined ? {} : { permission_mode: mode }),
-    });
-  } catch {
-    // Attribution is best effort; Claude's own checks decide the call.
-  }
 }

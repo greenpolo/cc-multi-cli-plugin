@@ -142,10 +142,13 @@ async function prepareStep(
   if (isMultiModel(event.model)) {
     // The gateway reads a Multi request's model and effort from this record, so it is
     // sent before the request; a Claude step costs the gateway nothing.
-    await postJson(wire($), '/multi/mod/telemetry', {
+    const state = await postJson(wire($), '/multi/mod/telemetry', {
       ...event,
       sessionId: await $.session.id(),
     });
+    if (typeof state?.reviewStatement === 'string') {
+      $.ui.status(`${event.model} · ${state.reviewStatement}`);
+    }
   }
   if (isHarnessModel(event.model)) {
     await startPoll($, key, event.agentId);

@@ -65,8 +65,6 @@ export function prepareZenRequest(
         signaturePrefix: prepared.signaturePrefix,
         requireUsage: true,
         inputTokens: prepared.inputTokens,
-        safeguards: body.safeguards,
-        safeguardProvider: 'zen' as const,
       };
       const translate = prepared.endpoint === 'responses' ? fromResponses : fromChat;
       return translate(stream, String(body.model), emit, options);

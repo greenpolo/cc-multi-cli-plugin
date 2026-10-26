@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Emit, StreamEventBody } from '../../plugins/multi-core/src/gateway/messages.ts';
 import { fromResponses, toResponses } from '../../plugins/multi-core/src/gateway/responses.ts';
-import { safeguardResults } from '../../plugins/multi-core/src/gateway/safeguards.ts';
 
 const model = 'multi/openai/gpt-6-astra';
 const created = { type: 'response.created', response: { id: 'resp' } };
@@ -79,93 +78,19 @@ test('terminal-only text, reasoning and tool calls are recovered with usage and 
 
 test('message_start carries the local input estimate until the provider reports real usage', async () => {
   const { events, emit } = capture();
-  await fromResponses(stream([created, terminal([text])]), model, emit, { inputTokens: 1234 });
+  const result = await fromResponses(stream([created, terminal([text])]), model, emit, {
+    inputTokens: 1234,
+  });
   const bodies = Object.fromEntries(events.map((event) => [event.type, event.value]));
   const start = bodies.message_start as { message: { usage: unknown } };
   assert.deepEqual(start.message.usage, { input_tokens: 1234, output_tokens: 0 });
-  const delta = bodies.message_delta as { usage: unknown };
-  assert.deepEqual(delta.usage, {
+  assert.equal(bodies.message_delta, undefined);
+  assert.deepEqual(result.usage, {
     input_tokens: 60,
     cache_read_input_tokens: 40,
     cache_creation_input_tokens: 0,
     output_tokens: 20,
   });
-});
-
-test('OpenAI reports unavailable per tool and an empty map without tools, including buffered replies', async () => {
-  const safeguards = [
-    { type: 'dangerous_tool_use', classifier_context: { permission_mode: 'auto' } },
-  ];
-  const seen = capture();
-  const result = await fromResponses(stream([created, terminal([tool])]), model, seen.emit, {
-    safeguards,
-  });
-  const expected = [
-    {
-      type: 'dangerous_tool_use',
-      status: {
-        type: 'available',
-        tool_uses: { call_a: { type: 'unavailable', reason: 'error' } },
-      },
-    },
-  ];
-  assert.deepEqual(result.safeguard_results, expected);
-  const delta = seen.events.find((event) => event.type === 'message_delta')?.value;
-  assert.deepEqual((delta as { delta?: unknown } | undefined)?.delta, {
-    stop_reason: 'tool_use',
-    stop_sequence: null,
-    safeguard_results: expected,
-  });
-  const empty = await fromResponses(stream([created, terminal([text])]), model, undefined, {
-    safeguards,
-  });
-  assert.deepEqual(empty.safeguard_results?.[0].status.tool_uses, {});
-  for (const malformed of [undefined, {}, [null], [{ type: 'dangerous_tool_use' }, 7]]) {
-    const omitted = await fromResponses(stream([created, terminal([tool])]), model, undefined, {
-      safeguards: malformed,
-    });
-    assert.equal(omitted.safeguard_results, undefined);
-  }
-});
-
-test('Zen Responses uses Zen verdicts instead of OpenAI review fallback', async () => {
-  const result = await fromResponses(stream([created, terminal([tool])]), model, undefined, {
-    safeguards: [{ type: 'dangerous_tool_use', classifier_context: { permission_mode: 'plan' } }],
-    safeguardProvider: 'zen',
-  });
-  assert.deepEqual(result.safeguard_results, [
-    {
-      type: 'dangerous_tool_use',
-      status: {
-        type: 'available',
-        tool_uses: {
-          call_a: {
-            type: 'evaluated',
-            outcome: 'flagged',
-            explanation: 'Plan mode: Zen has no reviewer, so actions that need review are refused.',
-          },
-        },
-      },
-    },
-  ]);
-});
-
-test('a __proto__ tool ID remains an own property after safeguard serialization', () => {
-  const result = safeguardResults(
-    [{ type: 'dangerous_tool_use' }],
-    [{ type: 'tool_use', id: '__proto__', name: 'Read', input: {} }],
-    'openai',
-  );
-  const encoded = JSON.stringify(result);
-  const decoded = JSON.parse(encoded) as [{ status: { tool_uses: Record<string, unknown> } }];
-  assert.equal(Object.hasOwn(decoded[0].status.tool_uses, '__proto__'), true);
-  assert.deepEqual(
-    Object.getOwnPropertyDescriptor(decoded[0].status.tool_uses, '__proto__')?.value,
-    {
-      type: 'unavailable',
-      reason: 'error',
-    },
-  );
 });
 
 test('terminal output finishes partial arguments and interleaved calls in output order exactly once', async () => {
@@ -187,7 +112,7 @@ test('terminal output finishes partial arguments and interleaved calls in output
     [{ file_path: 'a' }, { file_path: 'b' }],
   );
   assert.equal(seen.events.filter((event) => event.type === 'content_block_start').length, 2);
-  assert.equal(seen.events.filter((event) => event.type === 'message_stop').length, 1);
+  assert.equal(seen.events.filter((event) => event.type === 'message_stop').length, 0);
 });
 
 test('terminal confirmation of already streamed calls does not emit duplicate tools', async () => {
@@ -266,7 +191,7 @@ test('terminal reasoning ciphertext may rotate without changing visible reasonin
   );
   assert('encrypted_content' in next.input[0]);
   assert.equal(next.input[0].encrypted_content, 'opaque');
-  assert(seen.events.some((event) => event.type === 'message_stop'));
+  assert(!seen.events.some((event) => event.type === 'message_stop'));
   const changed = { ...reasoning, summary: [{ type: 'summary_text', text: 'Changed' }] };
   await assert.rejects(
     translate([created, itemEvent('done', reasoning), terminal([changed])]),
@@ -416,5 +341,5 @@ test('a stop sequence hit mid-stream still waits for the terminal event to recor
     output_tokens: 20,
   });
   assert.equal(result.multi_usage?.source, 'provider');
-  assert.equal(events.filter((event) => event.type === 'message_stop').length, 1);
+  assert.equal(events.filter((event) => event.type === 'message_stop').length, 0);
 });

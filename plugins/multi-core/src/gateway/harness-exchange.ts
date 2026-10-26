@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { type ContentBlockCheck, readJson, validPersistedResponse } from './harness-session.ts';
-import type { Emit, MessagesResponse, StreamEventBody, StreamEventName } from './messages.ts';
+import type { ContentEventBody, ContentEventName, Emit, MessagesResponse } from './messages.ts';
 
 /** One recorded Anthropic stream event, replayable verbatim. */
-export type HarnessEvent = [StreamEventName, StreamEventBody];
+export type HarnessEvent = [ContentEventName, ContentEventBody];
 
 /**
  * One in-flight native turn. `meta` carries provider-owned run facts (Cursor's

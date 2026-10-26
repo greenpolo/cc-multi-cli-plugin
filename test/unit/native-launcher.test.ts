@@ -40,7 +40,7 @@ function windowsHome(root: string): NodeJS.ProcessEnv {
   };
 }
 
-test('launcher preserves native auth, disables unavailable auto mode, and merges caller settings', {
+test('launcher preserves native auth, keeps unreviewed auto mode available, and merges caller settings', {
   skip: process.platform === 'win32',
 }, async (t) => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'launcher-test-'));
@@ -113,10 +113,7 @@ const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'ut
     );
     assert.equal(result.toolSearch, auth === 'api' ? 'false' : 'true');
     assert.deepEqual(result.settings.permissions.deny, ['Bash(denied)']);
-    assert.equal(
-      result.settings.permissions.disableAutoMode,
-      auth === 'no' ? 'disable' : undefined,
-    );
+    assert.equal(result.settings.permissions.disableAutoMode, undefined);
     assert.equal(
       result.hasLocalToken,
       true,
@@ -210,7 +207,7 @@ const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'ut
     [],
     'Keep the native saved model instead of forcing a launcher default',
   );
-  assert.equal(saved.settings.permissions.disableAutoMode, 'disable');
+  assert.equal(saved.settings.permissions?.disableAutoMode, undefined);
 });
 
 test('Zen credentials add picker models and named workers without leaking the key to Claude', {
@@ -282,7 +279,7 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
   // One Zen worker: its models are the picker's, never a type per model or effort.
   assert.deepEqual(result.agents, ['multi-zen']);
   assert.equal(result.zenKeyInChild, undefined);
-  assert.equal(result.settings.permissions.disableAutoMode, 'disable');
+  assert.equal(result.settings.permissions?.disableAutoMode, undefined);
   assert(result.args.includes('--dangerously-skip-permissions'));
   assert.deepEqual(result.models, ['multi/zen/gpt-5.6-luna']);
   const disabled = await promisify(execFile)(process.execPath, [launcher], {
