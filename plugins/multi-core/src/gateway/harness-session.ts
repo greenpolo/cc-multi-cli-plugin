@@ -5,6 +5,7 @@ import path from 'node:path';
 import { atomicWriteFile } from './atomic-write.ts';
 import { isDisplayTool } from './display-rows.ts';
 import type { HarnessEvent } from './harness-exchange.ts';
+import { migrateHarnessSession } from './harness-migration.ts';
 import type { MessagesResponse } from './messages.ts';
 import { isRecord } from './record.ts';
 import { lockStateFile } from './state-lock.ts';
@@ -226,7 +227,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
       const restored = this.restore
         ? await this.restore({ identity, files, read: readJson })
         : { saved: await readJson(file) };
-      return this.validateSaved(restored.saved, identity)?.response;
+      return this.validateSaved(migrateHarnessSession(restored.saved), identity)?.response;
     } catch {
       return undefined;
     }
@@ -254,7 +255,8 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
         ? await this.restore({ identity, files: uniqueFiles, read: readJson })
         : { saved: await readJson(file) };
       this.assertOpen();
-      const selected = this.validateSaved(restored.saved, identity);
+      const migrated = migrateHarnessSession(restored.saved);
+      const selected = this.validateSaved(migrated, identity);
       if (selected === undefined && restored.saved !== undefined) {
         await preserveUnsupportedRecord(file, restored.saved);
       }
@@ -270,7 +272,7 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
         },
       };
       this.owned.set(session, owned);
-      if (restored.migrated === true && selected !== undefined) {
+      if ((restored.migrated === true || migrated !== restored.saved) && selected !== undefined) {
         await this.save(session);
       }
       if (this.closing) {

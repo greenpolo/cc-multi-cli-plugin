@@ -439,3 +439,59 @@ test('an unsupported-version record is copied aside before the fresh record repl
   assert.equal(JSON.parse(await readFile(file, 'utf8')).sessionId, 'fresh');
   assert.ok((await readdir(directory)).includes(path.basename(`${file}.unsupported-v2`)));
 });
+
+test('legacy verdicts migrate under the session lock without changing native or pending state', async (t) => {
+  const { directory } = await store(t);
+  for (const provider of ['Cursor', 'Antigravity', 'Grok']) {
+    const identity = `${provider}-worker`;
+    const made = new HarnessSessionStore<Saved>({
+      provider,
+      stateDirectory: path.join(directory, provider),
+      platform: 'linux',
+      version: 1,
+      fresh: (id) => ({ version: 1, provider, identity: id, interrupted: false }),
+      validate: () => true,
+      runtime: () => ({}),
+      restore: async ({ files, read }) => ({ saved: await read(files[0]) }),
+    });
+    t.after(() => made.closeAll());
+    const original = await made.acquireLease(identity);
+    const file = original.session.file;
+    await original.release();
+    await made.evictIdle(original.session);
+    const response = { ...answer(), safeguard_results: [{ stale: true }] };
+    const legacy = {
+      version: 1,
+      provider,
+      identity,
+      interrupted: true,
+      sessionId: 'native-session',
+      pendingRun: { key, runId: 'native-pending', safeguarded: true },
+      response,
+      replay: {
+        key,
+        events: [
+          ['message_start', { message: response }],
+          ...events,
+          ['message_delta', { delta: { safeguard_results: [] } }],
+          ['message_stop', {}],
+        ],
+      },
+    };
+    await atomicJson(file, legacy, 'linux');
+    const recorded = await made.recordedResponse(identity);
+    assert.deepEqual(recorded, answer());
+    const lease = await made.acquireLease(identity);
+    assert.equal(lease.session.saved.sessionId, 'native-session');
+    assert.equal(lease.session.saved.interrupted, true);
+    const migrated = JSON.parse(await readFile(file, 'utf8'));
+    assert.deepEqual(migrated.pendingRun, legacy.pendingRun);
+    assert.deepEqual(migrated.response, answer());
+    assert.deepEqual(migrated.replay.events, [['message_start', { message: answer() }], ...events]);
+    await lease.release();
+    await made.evictIdle(lease.session);
+    const reopened = await made.acquireLease(identity);
+    assert.deepEqual(reopened.session.saved, migrated);
+    await reopened.release();
+  }
+});

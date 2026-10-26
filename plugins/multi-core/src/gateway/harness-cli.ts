@@ -193,6 +193,7 @@ export abstract class CliHarness<Saved extends HarnessSessionBase, Selection> {
         stateDirectory: this.stateDirectory,
         key: turn.key,
         saved: session.saved,
+        platform: this.platform,
         emit,
         provider: this.tag,
       });

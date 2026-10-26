@@ -1,5 +1,11 @@
 import path from 'node:path';
-import { type ContentBlockCheck, readJson, validPersistedResponse } from './harness-session.ts';
+import { migrateHarnessReply } from './harness-migration.ts';
+import {
+  atomicJson,
+  type ContentBlockCheck,
+  readJson,
+  validPersistedResponse,
+} from './harness-session.ts';
 import type { ContentEventBody, ContentEventName, Emit, MessagesResponse } from './messages.ts';
 
 /** One recorded Anthropic stream event, replayable verbatim. */
@@ -141,6 +147,7 @@ export class ExchangeRegistry<M extends object = Record<string, unknown>> {
 export async function replayPersisted(args: {
   stateDirectory: string;
   key: string;
+  platform?: NodeJS.Platform;
   saved?: { replay?: { key: string; events: HarnessEvent[] }; response?: MessagesResponse };
   emit: Emit;
   provider: string;
@@ -148,15 +155,20 @@ export async function replayPersisted(args: {
   validContentBlock?: ContentBlockCheck;
 }): Promise<MessagesResponse | undefined> {
   const { saved, key } = args;
-  const persisted =
+  const archive = path.join(args.stateDirectory, `${key}.response.json`);
+  const raw =
     saved?.replay?.key === key
       ? { response: saved.response, events: saved.replay.events }
-      : await readJson(path.join(args.stateDirectory, `${key}.response.json`));
+      : await readJson(archive);
+  const persisted = migrateHarnessReply(raw);
   if (persisted === undefined) {
     return undefined;
   }
   if (!validPersistedResponse(persisted, args.validContentBlock)) {
     throw new Error(`Invalid persisted ${args.provider} response`);
+  }
+  if (persisted !== raw && saved?.replay?.key !== key) {
+    await atomicJson(archive, persisted, args.platform ?? process.platform);
   }
   for (const event of persisted.events) {
     args.emit(...event);

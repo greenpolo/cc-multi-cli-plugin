@@ -465,6 +465,7 @@ export class CursorHarness {
         stateDirectory: this.stateDirectory,
         key,
         saved: session.saved,
+        platform: this.platform,
         emit,
         provider: 'Cursor',
         validContentBlock: cursorContentBlock,

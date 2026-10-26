@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import type { ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -17,6 +18,7 @@ import type {
   MessagesResponse,
 } from '../../plugins/multi-core/src/gateway/messages.ts';
 import type { PermissionContext } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
+import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import { lockStateFile } from '../../plugins/multi-core/src/gateway/state-lock.ts';
 import { CursorProviderError } from '../../plugins/multi-cursor/src/errors.ts';
 import {
@@ -873,22 +875,64 @@ test('abort during cached native event replay has no unhandled rejection', async
 test('a committed native reply survives transport loss before terminal delivery', async (t) => {
   const f = await fixture(t);
   const first = f.make();
-  await first.handle(body, 'main', signal());
-  const saved = JSON.parse(await readFile(f.sessionFile, 'utf8'));
+  const scope = JSON.stringify(['transport-session', 'main']);
+  const sessionFile = path.join(
+    f.directory,
+    'state',
+    `${createHash('sha256')
+      .update(JSON.stringify(JSON.stringify([f.directory, scope])))
+      .digest('hex')}.session.json`,
+  );
+  let response: ServerResponse | undefined;
+  let lost = false;
+  const server = createNativeGateway({
+    token: 'transport-test',
+    authFile: 'unused',
+    cursor: first,
+    onEvent: (event) => {
+      if (event.route === 'cursor' && event.usage && !lost) {
+        lost = true;
+        response?.destroy(); // Native completion is durable; terminal delivery loses its socket.
+      }
+    },
+  });
+  server.on('request', (_req, res) => {
+    response = res;
+  });
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  await assert.rejects(async () => {
+    const reply = await fetch(`http://127.0.0.1:${address.port}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'x-multi-gateway-token': 'transport-test',
+        'x-claude-code-session-id': 'transport-session',
+      },
+      body: JSON.stringify({ ...body, stream: true }),
+    });
+    await reply.text();
+  }, /fetch failed|terminated|closed/);
+  assert.equal(lost, true);
+  const saved = JSON.parse(await readFile(sessionFile, 'utf8'));
   assert.equal(saved.interrupted, false);
   assert.equal(saved.replay.events.at(-1)[0], 'content_block_stop');
-  assert.deepEqual(await first.handle(body, 'main', signal()), saved.response);
+  assert.deepEqual((await first.handle(body, scope, signal())).content, saved.response.content);
   await first.close();
   const second = f.make();
   const replayed: string[] = [];
   assert.deepEqual(
-    await second.handle(body, 'main', signal(), (name) => replayed.push(name)),
+    await second.handle(body, scope, signal(), (name) => replayed.push(name)),
     replayedResponse(saved.response),
   );
   assert.equal(replayed.at(-1), 'content_block_stop');
   assert.equal(f.sends.length, 1);
   assert.equal(f.resumed.length, 0);
-  await second.handle(follow(saved.response), 'main', signal());
+  await second.handle(follow(saved.response), scope, signal());
   assert.deepEqual(f.resumed, ['agent-1']);
   assert.equal(f.sends.length, 2);
 });
@@ -1327,4 +1371,31 @@ test('settled exchange eviction replays disk replies without repeating native wo
   }
   assert.deepEqual(await harness.handle(body, 'main', signal()), replayedResponse(first));
   assert.equal(f.sends.length, 257);
+});
+
+test('an upgraded Cursor record migrates verdict transport and resumes the same native agent', async (t) => {
+  const f = await fixture(t);
+  const first = f.make();
+  await first.handle(body, 'main', signal());
+  await first.close();
+  const legacy = JSON.parse(await readFile(f.sessionFile, 'utf8'));
+  legacy.response.safeguard_results = [{ stale: true }];
+  legacy.replay.events.push(
+    ['message_delta', { delta: { safeguard_results: [] } }],
+    ['message_stop', {}],
+  );
+  await writeFile(f.sessionFile, JSON.stringify(legacy));
+  const second = f.make();
+  const events: string[] = [];
+  const reply = await second.handle(body, 'main', signal(), (name) => events.push(name));
+  assert.deepEqual(reply.content, legacy.response.content);
+  assert.equal(events.includes('message_delta') || events.includes('message_stop'), false);
+  assert.equal(f.sends.length, 1);
+  assert.equal(f.resumed.length, 0);
+  const migrated = JSON.parse(await readFile(f.sessionFile, 'utf8'));
+  assert.equal(migrated.agentId, legacy.agentId);
+  assert.equal(Object.hasOwn(migrated.response, 'safeguard_results'), false);
+  await second.handle(follow(reply), 'main', signal());
+  assert.deepEqual(f.resumed, ['agent-1']);
+  assert.equal(f.sends.length, 2);
 });

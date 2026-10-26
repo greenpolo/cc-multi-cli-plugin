@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -246,4 +246,40 @@ test('a concurrency cap refuses new keys but still observes an identical in-flig
   leave.abort(new Error('leave'));
   await assert.rejects(observed, /leave/);
   await assert.rejects(registry.observe(second, AbortSignal.timeout(20)), /timed out|Timeout/i);
+});
+
+test('legacy archived replies migrate once and replay only content without re-execution', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'legacy-archive-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, `${key}.response.json`);
+  await atomicJson(
+    file,
+    {
+      response: { ...answer(), safeguard_results: [{ stale: true }] },
+      events: [
+        ...collector().events,
+        ['content_block_stop', { index: 0 }],
+        ['message_delta', { delta: {} }],
+        ['message_stop', {}],
+      ],
+    },
+    'linux',
+  );
+  const seen = collector();
+  const result = await replayPersisted({
+    stateDirectory: directory,
+    key,
+    emit: seen.emit,
+    provider: 'Native',
+    platform: 'linux',
+  });
+  assert.deepEqual(seen.events, [['content_block_stop', { index: 0 }]]);
+  assert.deepEqual(result?.content, answer().content);
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(Object.hasOwn(saved.response, 'safeguard_results'), false);
+  assert.deepEqual(saved.events, seen.events);
+  assert.deepEqual(
+    await replayPersisted({ stateDirectory: directory, key, emit: () => {}, provider: 'Native' }),
+    result,
+  );
 });
