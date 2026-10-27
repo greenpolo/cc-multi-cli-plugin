@@ -60,11 +60,47 @@ function interactive(run: (driver: TtyDriver) => Promise<void>) {
   };
 }
 
+/** The visible screen; a capture also carries scrollback. */
+async function visible(driver: TtyDriver) {
+  return (await driver.capture()).split('\n').slice(-40).join('\n');
+}
+
+/** The input box: the lines between the last two rules. A sent prompt moves above it. */
+async function inputBox(driver: TtyDriver) {
+  const lines = (await visible(driver)).split('\n');
+  const rules = lines.flatMap((line, index) => (line.startsWith('─') ? [index] : []));
+  return rules.length < 2 ? '' : lines.slice(rules.at(-2), rules.at(-1)).join('\n');
+}
+
 async function submit(driver: TtyDriver, prompt: string) {
   await driver.send(prompt);
-  // Claude's paste debounce can consume an immediate Enter as a newline.
-  await setTimeout(150);
-  await driver.key('Enter');
+  // Claude's paste debounce can consume an immediate Enter, more often under load,
+  // leaving the prompt in the input box. Enter again submits it; it never repeats it.
+  const head = prompt.slice(0, 24);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await setTimeout(150);
+    await driver.key('Enter');
+    await setTimeout(350);
+    if (!(await inputBox(driver)).includes(head)) {
+      return;
+    }
+  }
+  assert.fail(`The prompt was never submitted\n${await visible(driver)}`);
+}
+
+/**
+ * Accept a dialog's highlighted option. Claude Code ignores keys for a moment after a
+ * dialog opens, so the keystroke that closed one dialog cannot answer the next.
+ */
+async function accept(driver: TtyDriver, dialog: RegExp) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await driver.key('Enter');
+    await setTimeout(300);
+    if (!dialog.test(await visible(driver))) {
+      return;
+    }
+  }
+  assert.fail(`The dialog did not accept Enter\n${await visible(driver)}`);
 }
 
 for (const approve of [false, true]) {
@@ -218,11 +254,9 @@ test('interactive plan: approve ExitPlanMode before the edit executes', async (t
         await driver.send(String(option[1]));
         await setTimeout(150);
         await driver.key('Enter');
-        await driver.waitFor(
-          /Do you want to create|Allow.*Write|Do you want to make this edit/i,
-          15000,
-        );
-        await driver.key('Enter');
+        const edit = /Do you want to create|Allow.*Write|Do you want to make this edit/i;
+        await driver.waitFor(edit, 15000);
+        await accept(driver, edit);
         await driver.waitFor(/● TTY_PLAN_DONE/, 20000);
       }),
     },
