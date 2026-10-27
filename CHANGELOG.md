@@ -6,6 +6,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Message a stopped native worker right away.** A message sent to a Cursor,
+  Antigravity or Grok worker just after it was stopped now waits for the stopped
+  run to record its interruption, instead of failing with "A different request is
+  already running". A new prompt during a live run is still refused.
+
 - **Name a provider worker model without a paid review per spawn.** The gateway
   carries the Agent call's model to worker admission before Claude Code sees the
   call, preserving server verdicts without a hook input rewrite.

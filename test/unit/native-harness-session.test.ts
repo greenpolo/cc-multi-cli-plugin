@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout } from 'node:timers/promises';
 import type { HarnessEvent } from '../../plugins/multi-core/src/gateway/harness-exchange.ts';
 import {
   atomicJson,
@@ -494,4 +495,22 @@ test('legacy verdicts migrate under the session lock without changing native or 
     assert.deepEqual(reopened.session.saved, migrated);
     await reopened.release();
   }
+});
+
+test('a turn after a cancelled one waits for its release instead of being refused', async (t) => {
+  const { made } = await store(t);
+  const cancelled = new AbortController();
+  const lease = await made.acquireLease('worker-cancel', cancelled.signal);
+  cancelled.abort();
+  let acquired = false;
+  const next = made.acquireLease('worker-cancel').then((value) => {
+    acquired = true;
+    return value;
+  });
+  await setTimeout(20);
+  assert.equal(acquired, false, 'The next turn must not start while the cancelled one records');
+  await lease.release();
+  const again = await next;
+  assert.equal(again.session, lease.session);
+  await again.release();
 });

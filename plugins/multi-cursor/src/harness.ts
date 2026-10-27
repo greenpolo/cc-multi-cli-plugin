@@ -455,7 +455,7 @@ export class CursorHarness {
     context: PermissionContext,
     observeProgress?: NativeProgressObserver,
   ): Promise<MessagesResponse> {
-    const lease = await this.takeTurn(scope);
+    const lease = await this.takeTurn(scope, exchange.controller.signal);
     const session = lease.session;
     try {
       if (session.saved.interrupted) {
@@ -568,9 +568,9 @@ export class CursorHarness {
   }
 
   /** One turn at a time per agent: a prompt that arrives during a run is refused. */
-  private async takeTurn(scope: string): Promise<TurnLease> {
+  private async takeTurn(scope: string, signal: AbortSignal): Promise<TurnLease> {
     try {
-      return await this.store.acquireLease(this.identity(scope));
+      return await this.store.acquireLease(this.identity(scope), signal);
     } catch (error) {
       throw error instanceof HarnessBusyError ? new CursorProviderError(error) : error;
     }

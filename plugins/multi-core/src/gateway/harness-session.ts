@@ -44,9 +44,14 @@ export type HarnessTurnLease<S extends HarnessSessionBase, R extends object = ob
 
 type OwnedSession = {
   busy: boolean;
+  /** The running turn: its cancellation signal, and when its lease is released. */
+  holder?: { signal?: AbortSignal; released: Promise<void> };
   releases: Array<() => Promise<void>>;
   unlock?: Promise<void>;
 };
+
+/** How long a new turn waits for a cancelled turn to finish recording its interruption. */
+const CANCELLED_TURN_WAIT_MS = 10000;
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -131,8 +136,14 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
     this.restore = options.restore;
   }
 
-  /** One turn at a time per agent: take the record and mark it busy, or refuse. */
-  async acquireLease(identity: string): Promise<HarnessTurnLease<S, R>> {
+  /**
+   * One turn at a time per agent: take the record and mark it busy, or refuse. A turn
+   * whose `signal` was aborted is already ending, so the next one waits for it to
+   * record its interruption (bounded) instead of being refused; that is not a queue.
+   */
+  async acquireLease(identity: string, signal?: AbortSignal): Promise<HarnessTurnLease<S, R>> {
+    this.assertOpen();
+    await this.cancelledTurnEnded(identity);
     this.assertOpen();
     const current = this.records.get(identity);
     if (current?.busy || this.loading.has(identity)) {
@@ -146,6 +157,8 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
       this.assertOpen();
       const owned = this.mustOwn(session);
       owned.busy = true;
+      const ended = Promise.withResolvers<void>();
+      owned.holder = { signal, released: ended.promise };
       let released = false;
       return {
         session,
@@ -155,6 +168,8 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
           }
           released = true;
           owned.busy = false;
+          owned.holder = undefined;
+          ended.resolve();
           if (this.closing) {
             await this.releaseLock(session);
             this.records.delete(identity);
@@ -163,6 +178,24 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
       };
     } finally {
       this.loading.delete(identity);
+    }
+  }
+
+  private async cancelledTurnEnded(identity: string): Promise<void> {
+    const current = this.records.get(identity);
+    const holder = current ? this.owned.get(current)?.holder : undefined;
+    if (!holder?.signal?.aborted) {
+      return;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const waited = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, CANCELLED_TURN_WAIT_MS);
+      timer.unref();
+    });
+    try {
+      await Promise.race([holder.released, waited]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
