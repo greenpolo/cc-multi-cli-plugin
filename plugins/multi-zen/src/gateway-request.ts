@@ -58,8 +58,9 @@ export function prepareZenRequest(
         signal,
         redirect: 'error',
       }),
-    translate: (stream, emit) => {
+    translate: (stream, emit, rememberWorkerModel) => {
       const options = {
+        rememberWorkerModel,
         toolNames: originalToolNames(body),
         stopSequences: body.stop_sequences,
         signaturePrefix: prepared.signaturePrefix,

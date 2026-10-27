@@ -10,6 +10,7 @@ import type {
 } from './messages.ts';
 import { isRecord } from './record.ts';
 import { callId, toolName } from './tools.ts';
+import { type RememberWorkerModel, stripWorkerModel } from './worker-models.ts';
 
 // Anthropic Messages <-> OpenAI Responses, for native Claude Code workers.
 /** Signature prefix OpenAI reasoning state carries; other providers pass their own. */
@@ -573,6 +574,7 @@ function outputValue(item: ResponsesOutputItem): unknown {
 }
 
 export interface ResponseOptions {
+  rememberWorkerModel?: RememberWorkerModel;
   toolNames?: ReadonlyMap<string, string>;
   stopSequences?: readonly string[];
   signaturePrefix?: string;
@@ -853,7 +855,9 @@ class ResponseStream {
     if (this.content.some((block) => block.type === 'tool_use' && block.id === id)) {
       throw new Error('OpenAI repeated a tool call ID');
     }
-    return { type: 'tool_use', id, name, input };
+    const block = { type: 'tool_use' as const, id, name, input };
+    stripWorkerModel(block, this.options.rememberWorkerModel ?? (() => {}));
+    return block;
   }
 
   private beginBlock(slot: OutputSlot) {

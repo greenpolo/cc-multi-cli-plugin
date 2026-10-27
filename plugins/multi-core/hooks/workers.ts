@@ -1,5 +1,6 @@
 import type { AgentSpawnInput, EngineInterface, Register } from 'claude-code';
 import { atom, read, update } from 'claude-code';
+import { isProviderWorker } from '../src/gateway/provider-workers.ts';
 import type { MultiCoreDisplayTools, MultiCorePolicy } from '../types/multi-core.d.ts';
 import {
   accepted,
@@ -12,8 +13,8 @@ import {
 import { ensureHarnessPolicy, policyClient } from './policy.ts';
 import { isHarnessModel, isMultiModel } from './provider.ts';
 import { type RowsClient, syncDisplayTools } from './rows.ts';
-import { defined, rememberBounded, withBounded, withItem } from './state.ts';
-import { isProviderWorker, labelled, register as registerWorkerRows } from './worker-rows.ts';
+import { defined, withBounded, withItem } from './state.ts';
+import { labelled, register as registerWorkerRows } from './worker-rows.ts';
 
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
@@ -73,14 +74,6 @@ function reportable(reason: string) {
 
 type SpawnEvent = AgentSpawnInput;
 
-/**
- * The model an Agent call named for a provider worker, by tool_use_id. The Agent tool's
- * schema only admits Claude aliases, so `tool.call` (which runs before the engine checks
- * the input) takes the value out and `agent.spawn` resolves it against the catalog. It
- * lives from that `tool.call` to its `agent.spawn`, inside one call, so it is not state.
- */
-const requestedModels = new Map<string, string>();
-
 const providerGuidance =
   "\n\nFor a multi-* agent type (multi-cursor, multi-openai, ...), `model` names one of that provider's models from the type's description, not a Claude alias; omit it for the provider's default.";
 
@@ -93,21 +86,6 @@ export const register = (on: Parameters<Register>[0], _options: Parameters<Regis
       return described;
     }
     return { ...described, description: `${described.description}${providerGuidance}` };
-  });
-  on('tool.call', { tool: 'Agent' }, async ($, event, next) => {
-    if (event.tool !== 'Agent' || event.model === undefined) {
-      return next(event);
-    }
-    if (!isProviderWorker(event.subagent_type) || !(await isActive(wire($)))) {
-      return next(event);
-    }
-    rememberBounded(requestedModels, event.tool_use_id, String(event.model));
-    const { model: _named, ...call } = event;
-    try {
-      return await next(call);
-    } finally {
-      requestedModels.delete(event.tool_use_id);
-    }
   });
   on('agent.offer', async ($, event, next) => {
     if (!(await isActive(wire($)))) {
@@ -226,6 +204,7 @@ async function markOffered($: EngineInterface, agent: string, isOffered: boolean
 async function spawnPayload($: EngineInterface, event: SpawnEvent) {
   return {
     sessionId: await $.session.id(),
+    toolUseId: event.tool_use_id,
     parentAgentId: event.parentAgentId,
     permissionMode: event.permissionMode,
     subagentType: event.subagentType,
@@ -247,8 +226,7 @@ async function providerSpawn(
   event: SpawnEvent,
 ): Promise<{ deny: string } | { event: SpawnEvent; selection: GatewayResponse | undefined }> {
   const provider = isProviderWorker(event.subagentType) && !event.fork;
-  const named = provider ? (requestedModels.get(event.tool_use_id) ?? event.model) : event.model;
-  const payload = { ...(await spawnPayload($, event)), model: named };
+  const payload = await spawnPayload($, event);
   const selection = await postJson(wire($), '/multi/mod/worker-model', payload);
   if (!provider) {
     return { event, selection };

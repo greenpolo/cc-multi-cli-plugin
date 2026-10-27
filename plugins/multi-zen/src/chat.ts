@@ -10,6 +10,10 @@ import type {
 import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { prefixSafeLength, readSse } from '../../multi-core/src/gateway/responses.ts';
 import { callId, toolName } from '../../multi-core/src/gateway/tools.ts';
+import {
+  type RememberWorkerModel,
+  stripWorkerModel,
+} from '../../multi-core/src/gateway/worker-models.ts';
 
 const SIGNATURE_PREFIX = 'multi-zen-chat:';
 export const ZEN_RESPONSES_SIGNATURE_PREFIX = 'multi-zen-responses:';
@@ -604,6 +608,7 @@ function finishReason(value: unknown): StopReason | undefined {
 }
 
 export interface ChatResponseOptions {
+  rememberWorkerModel?: RememberWorkerModel;
   toolNames?: ReadonlyMap<string, string>;
   stopSequences?: readonly string[];
   /** Local input estimate for message_start; Chat Completions report usage last. */
@@ -973,13 +978,14 @@ class ChatAccumulator {
       if (this.content.some((item) => item.type === 'tool_use' && item.id === block.id)) {
         throw new Error('Zen repeated a tool call ID');
       }
+      stripWorkerModel(block, this.options.rememberWorkerModel ?? (() => {}));
       const index = this.content.length;
       this.content.push(block);
       slot.closed = true;
       this.emit('content_block_start', { index, content_block: { ...block, input: {} } });
       this.emit('content_block_delta', {
         index,
-        delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
+        delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) },
       });
       this.emit('content_block_stop', { index });
     }

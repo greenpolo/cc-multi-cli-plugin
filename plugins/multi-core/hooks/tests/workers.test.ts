@@ -257,7 +257,7 @@ function catalogGateway(on: On) {
       value: { ok: status === 200, status, headers: {}, text: JSON.stringify(value) },
     });
     if (event.url.endsWith('/multi/mod/worker-model')) {
-      const named = body?.model ?? 'default';
+      const named = body?.toolUseId === 'toolu_named' ? 'composer-2.5' : (body?.model ?? 'default');
       const known = ['default', 'composer-2.5', 'multi/cursor/composer-2.5'];
       if (body?.subagentType === 'multi-cursor' && !known.includes(String(named))) {
         return reply(400, {
@@ -275,9 +275,9 @@ function catalogGateway(on: On) {
   return sent;
 }
 
-test('an Agent call names the model: tool.call takes it out before the schema check', async ($, on) => {
+test('Agent tool.call forwards gateway-normalized inputs without a rewrite', async ($, on) => {
   mock.clock(on);
-  catalogGateway(on);
+  const sent = catalogGateway(on);
   const reached: Array<Record<string, unknown>> = [];
   on('tool.call', (_$, event) => {
     reached.push(event as Record<string, unknown>);
@@ -289,9 +289,8 @@ test('an Agent call names the model: tool.call takes it out before the schema ch
     description: 'Fix tests',
     prompt: 'task',
     subagent_type: 'multi-cursor',
-    model: 'composer-2.5',
   } as never);
-  // The Agent tool's schema admits only Claude aliases: a provider id must not reach it.
+  // The gateway already removed the provider model; the hook forwards the call unchanged.
   expect(reached[0]?.model).toBeUndefined();
   expect(reached[0]?.subagent_type).toBe('multi-cursor');
   // Other agent types keep their Claude alias.
@@ -304,9 +303,13 @@ test('an Agent call names the model: tool.call takes it out before the schema ch
     model: 'haiku',
   } as never);
   expect(reached[1]?.model).toBe('haiku');
+  // Even a provider call containing an alias is never rewritten inside tool.call.
+  await $.tool.call({ ...reached[0], model: 'haiku' } as never);
+  expect(reached[2]?.model).toBe('haiku');
+  expect(sent.length).toBe(0);
 });
 
-test('agent.spawn resolves a provider worker model and runs the rewrite', async ($, on) => {
+test('agent.spawn retrieves a removed model by tool use id and labels the spawn', async ($, on) => {
   mock.clock(on);
   const sent = catalogGateway(on);
   const spawned: Array<string | undefined> = [];
@@ -320,14 +323,15 @@ test('agent.spawn resolves a provider worker model and runs the rewrite', async 
     prompt: 'task',
     description: 'Fix tests',
     subagentType: 'multi-cursor',
-    model: 'composer-2.5',
+    tool_use_id: 'toolu_named',
   } as never);
   expect(named.agentId).toBe('agent-1');
   expect(spawned[0]).toBe('multi/cursor/composer-2.5');
   // The running-agents list and the notification show the task's description.
   expect(descriptions[0]).toBe('Fix tests · Cursor · composer-2.5');
   const resolution = sent.find((item) => item.url.endsWith('/multi/mod/worker-model'));
-  expect(resolution?.body?.model).toBe('composer-2.5');
+  expect(resolution?.body?.model).toBeUndefined();
+  expect(resolution?.body?.toolUseId).toBe('toolu_named');
   // Admission sees the resolved model, not the short id.
   const admission = sent.filter((item) => item.url.endsWith('/multi/mod/worker')).at(-1);
   expect(admission?.body?.model).toBe('multi/cursor/composer-2.5');

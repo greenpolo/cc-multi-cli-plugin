@@ -65,6 +65,12 @@ import { ReceiptLedger } from './receipts.ts';
 import { isRecord } from './record.ts';
 import { forAnthropic } from './responses.ts';
 import { type Reviewer, verdictsFor } from './verdicts.ts';
+import {
+  stripWorkerJson,
+  stripWorkerModel,
+  stripWorkerSse,
+  WorkerModels,
+} from './worker-models.ts';
 
 /** Other providers' reasoning signatures mean nothing to Anthropic and are stripped. */
 const FOREIGN_SIGNATURE_PREFIXES = [...openaiSignaturePrefixes, ...zenSignaturePrefixes];
@@ -250,6 +256,7 @@ export function createNativeGateway({
   const anthropicOrigin = parseAnthropicBase(anthropicBaseUrl);
   const anthropicUrl = (url: URL) => anthropicOrigin + url.pathname + url.search;
   const modKeys = new ModSessionKeys();
+  const workerModels = new WorkerModels();
   const fallbackSession = randomUUID();
   const harnesses: Record<HarnessProvider, NativeHarness | undefined> = {
     cursor,
@@ -267,6 +274,9 @@ export function createNativeGateway({
   const rootRequests = new Map<string, MessagesRequest>();
 
   async function serveReply(exchange: ProviderRequest, reply: MessagesResponse) {
+    for (const block of reply.content) {
+      stripWorkerModel(block, workerModels.remember(exchange.identity.session));
+    }
     const provider = providerRoute(exchange.body.model);
     if (provider === 'anthropic') {
       throw new Error('Cannot finalise an upstream reply');
@@ -605,7 +615,11 @@ export function createNativeGateway({
       throw new Error(`${prepared.label} returned no response stream.`);
     }
     exchange.startStream();
-    const result = await prepared.translate(upstream.body, body.stream ? emit : undefined);
+    const result = await prepared.translate(
+      upstream.body,
+      body.stream ? emit : undefined,
+      workerModels.remember(exchange.identity.session),
+    );
     if (result.stop_reason === 'stop_sequence') {
       upstreamAbort.abort();
     }
@@ -654,7 +668,7 @@ export function createNativeGateway({
         redirect: 'error',
       });
       onEvent({ route: 'anthropic', status: upstream.status, model: body.model });
-      await relayAnthropic(upstream, res);
+      await relayAnthropic(upstream, res, exchange);
     } catch (error) {
       // Anthropic failures are not rebranded: Claude Code sees a dropped connection. The
       // reason still reaches the event stream, so a gateway bug is not silent.
@@ -662,16 +676,36 @@ export function createNativeGateway({
       res.destroy();
     }
   }
-  async function relayAnthropic(upstream: Response, res: http.ServerResponse) {
+  async function relayAnthropic(
+    upstream: Response,
+    res: http.ServerResponse,
+    exchange?: ProviderRequest,
+  ) {
     const responseHeaders = Object.fromEntries(upstream.headers);
     for (const name of STRIPPED_RESPONSE_HEADERS) {
       delete responseHeaders[name];
     }
+    const normalize = upstream.status === 200 && exchange?.url.pathname === '/v1/messages';
+    const contentType = upstream.headers.get('content-type') ?? '';
+    const remember = workerModels.remember(exchange?.identity.session ?? '');
+    if (normalize && contentType.includes('application/json')) {
+      const raw = Buffer.from(await upstream.arrayBuffer());
+      const body = stripWorkerJson(raw, remember);
+      responseHeaders['content-length'] = String(body.length);
+      res.writeHead(upstream.status, responseHeaders);
+      res.end(body);
+      return;
+    }
     res.writeHead(upstream.status, responseHeaders);
-    if (upstream.body) {
-      await pipeline(Readable.fromWeb(upstream.body), res);
-    } else {
+    if (!upstream.body) {
       res.end();
+      return;
+    }
+    const source = Readable.fromWeb(upstream.body);
+    if (normalize && contentType.includes('text/event-stream')) {
+      await pipeline(Readable.from(stripWorkerSse(source, remember)), res);
+    } else {
+      await pipeline(source, res);
     }
   }
   /** Any /v1 request the gateway does not route itself goes to Anthropic as raw bytes. */
@@ -804,8 +838,10 @@ export function createNativeGateway({
     }
     return handleModRoute(req, res, url, parsed, {
       bridge: modBridge,
+      workerModels,
       forgetReviewContext: (session) => {
         rootRequests.delete(session);
+        workerModels.forgetSession(session);
       },
       reviewStatement: (model) => {
         const provider = providerRoute(model);

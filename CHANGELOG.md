@@ -6,6 +6,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Name a provider worker model without a paid review per spawn.** The gateway
+  carries the Agent call's model to worker admission before Claude Code sees the
+  call, preserving server verdicts without a hook input rewrite.
+
 - **Preserve sessions and keep Auto review bounded after upgrade.** Existing native
   sessions and archived replies migrate away from retired verdicts and terminal
   events without changing native history or repeating actions. OpenAI review

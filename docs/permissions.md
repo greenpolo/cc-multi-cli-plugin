@@ -77,8 +77,13 @@ workers. Completed harness rows also pass when the request mode is missing. The 
 and any embedded instructions reach the parent without a separate handback
 review. Native capability restrictions still govern the actions taken inside the
 harness. Anthropic traffic, including Claude's own classifier requests, passes
-through unchanged; Multi does not parse private classifier prompts or review
-Claude's own actions. These verdicts do not bypass Claude's explicit deny rules.
+through unchanged with one exception: successful `/v1/messages` replies have a
+string `input.model` removed from Agent calls to Multi provider worker types. The
+gateway records the selection for `agent.spawn` and preserves the tool id and
+server verdict, so no `tool.call` input rewrite triggers a paid local classifier
+for a named-model spawn. Non-provider calls, errors and other routes retain their
+bytes. Multi does not parse private classifier prompts or review Claude's own
+actions. These verdicts do not bypass Claude's explicit deny rules.
 
 ## Explicit failures
 

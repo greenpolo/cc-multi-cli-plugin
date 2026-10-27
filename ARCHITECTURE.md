@@ -38,10 +38,15 @@ Claude Code session (/model, workers, prompts)
 ## Request flow
 
 Claude Code sends Anthropic Messages traffic and provider requests to the gateway.
-The gateway passes Anthropic traffic through untouched (every path other than
-Messages and `/multi/*` is forwarded as raw bytes, and a failed upstream
-connection is dropped so Claude Code's own retry runs) and translates
-direct-provider requests. It honors `HTTPS_PROXY` and forwards to a caller-set
+The gateway passes Anthropic traffic through untouched except for a successful
+`/v1/messages` reply's Agent calls naming a Multi provider worker and a string
+`model`: it removes `input.model` before Claude Code sees the call, preserving
+Anthropic's verdicts. In SSE only that Agent block's JSON deltas wait until its
+stop frame; other frames retain their bytes. JSON replies update content-length.
+Every path other than Messages and `/multi/*` is forwarded as raw bytes, and a
+failed upstream connection is dropped so Claude Code's own retry runs. The gateway
+also translates direct-provider requests. It honors `HTTPS_PROXY` and forwards to
+a caller-set
 `ANTHROPIC_BASE_URL`. A `claude` started by a command inside the session gets
 the session-start environment back (`nested-env.ts`, a PATH shim and the
 bootstrap), so it never routes through the session gateway. Hosted-API
@@ -63,10 +68,14 @@ The Agent tool offers exactly one type per signed-in or enabled provider:
 `/model` picker, so `--models`, `MULTI_MODELS`, and the provider-specific
 `_EXTRA_MODELS`/`_MODELS` environment variables bound them. The Agent tool's
 `model` parameter names a model as a short id (`composer-2.5`, `gpt-6-luna`) or
-the full `multi/<provider>/<id>`; a Multi mod hook takes it out before Claude's
-Agent schema check and resolves it against the catalog at spawn, rewriting the
-spawn to the full id. An unknown id, another provider's model, a Claude alias,
-or an effort-suffixed name (`gpt-6-luna-high`) refuses the spawn, naming the
+the full `multi/<provider>/<id>`; the gateway removes it before Claude's Agent
+schema check, and a Multi mod hook resolves the recorded selection against the
+catalog at spawn, setting the spawn to the full id. The gateway keeps up to 2,048 selections, keyed by session
+and tool_use id, and retains them through denied or retried spawns. Only replies
+without session identity use globally unique tool_use ids as a lookup fallback.
+Session end clears identified records. Built replies normalize before emitting
+or saving content, so streams and saved replies agree. An unknown id, another
+provider's model, a Claude alias, or an effort-suffixed name (`gpt-6-luna-high`) refuses the spawn, naming the
 provider's available models. Omitting `model` runs the provider default.
 Effort is never part of a type or model name: OpenAI and Zen workers carry one
 provider-wide default effort, while Cursor, Antigravity, and Grok workers apply

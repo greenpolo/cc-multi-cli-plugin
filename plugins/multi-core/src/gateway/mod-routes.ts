@@ -8,6 +8,7 @@ import type { PermissionContext, PermissionModes } from './mode-hook.ts';
 import type { ProviderUsageDashboard } from './provider-usage.ts';
 import type { ReceiptLedger } from './receipts.ts';
 import { isRecord } from './record.ts';
+import type { WorkerModels } from './worker-models.ts';
 
 function text(value: unknown, name: string) {
   if (typeof value !== 'string' || value.length === 0 || value.length > 512) {
@@ -34,6 +35,7 @@ function method(req: IncomingMessage, expected: string) {
 /** The gateway state the mod control plane reads and acts on. */
 export interface ModRouteContext {
   bridge: ModBridge;
+  workerModels?: WorkerModels;
   reviewStatement?: (model: string) => string | undefined;
   forgetReviewContext?: (session: string) => void;
   permissionModes?: PermissionModes;
@@ -167,7 +169,10 @@ async function handlePostRoute(
       if (!permissionModes) {
         throw new Error('Worker catalog is unavailable');
       }
-      return reply(res, permissionModes.workerSelection(parsed));
+      return reply(
+        res,
+        permissionModes.workerSelection(context.workerModels?.selection(parsed) ?? parsed),
+      );
     case '/multi/mod/worker':
       return await workerRoute(res, parsed, key, bridge, permissionModes);
     default:
