@@ -40,9 +40,9 @@ variants fail explicitly.
 Workers: the Agent tool's `multi-antigravity` type runs any row above, except
 an id that only adds an effort suffix to another listed row (`<base>-high`
 beside `<base>`) — that stays selectable through `/effort`, not through
-`model`. Pass `model: <id>` (for example `model: gemini-3.8-flash`) to pick a
+`model`. Pass `model: <id>` (for example `model: gemini-4-argon`) to pick a
 model, or omit `model` to run the newest Gemini generation, Pro before Flash
-at the same version (for example `gemini-3.8-flash` when 3.8 is newest).
+at the same version (for example `gemini-4-argon` when 4 is newest).
 Effort is never part of the model name: the session's `/effort` applies, and
 Antigravity picks its advertised low/medium/high variant from it.
 

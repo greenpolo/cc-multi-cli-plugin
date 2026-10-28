@@ -19,7 +19,7 @@ Use `/model multi/openai/<model-id>` or choose a row in `/model`. Use `/effort <
 | --- | --- |
 | OpenAI · `gpt-6.1-sol` | `gpt-6.1-sol` |
 | OpenAI · `gpt-6-astra` | `gpt-6-astra` |
-| OpenAI · `gpt-5.6-terra` | `gpt-5.6-terra` |
+| OpenAI · `gpt-6.1-terra` | `gpt-6.1-terra` |
 | OpenAI · `gpt-6-luna` | `gpt-6-luna` |
 
 Picker rows include `behavesAs` metadata for Claude client compatibility. This metadata selects a Claude profile for picker behavior and does not change the `multi/openai/...` ID or claim provider equivalence.

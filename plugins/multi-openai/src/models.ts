@@ -3,7 +3,7 @@ import type { Effort } from '../../multi-core/src/gateway/responses.ts';
 export const MODELS = {
   'openai-sol': 'gpt-6.1-sol',
   'openai-astra': 'gpt-6-astra',
-  'openai-terra': 'gpt-5.6-terra',
+  'openai-terra': 'gpt-6.1-terra',
   'openai-luna': 'gpt-6-luna',
 };
 

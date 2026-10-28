@@ -6,7 +6,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## 0.4.0 — 2026-10-28
 
-Gateway Auto-mode arbiter, GPT-6.1 Sol by default and resilient startup
+Gateway Auto-mode arbiter, GPT-6.1 Terra and Sol, Gemini 4 Argon and resilient startup
+
+- **Run GPT-6.1 Terra and Gemini 4 Argon.** The OpenAI Terra picker row and
+  `model: gpt-6.1-terra` on a `multi-openai` worker now run `gpt-6.1-terra`, which
+  Codex serves on ChatGPT plans, in place of `gpt-5.6-terra`. A `multi-antigravity`
+  worker that names no model now runs `gemini-4-argon`, the newest Gemini
+  generation `agy` lists.
 
 - **Release from one command.** `npm run release -- <version> --summary "<line>"`
   sets every plugin and marketplace version, the multi-core pins and the lockfile,
