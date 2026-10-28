@@ -34,8 +34,9 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-grok/src/` | Grok Build CLI harness, models, requests, permissions, and login state. |
 | `test/unit/` | Offline unit tests for gateway and provider behavior. |
 | `test/live/` | Opt-in checks against native CLIs and provider services. |
-| `scripts/` | Development utilities, including banner generation. |
+| `scripts/` | Development utilities: banner generation, release versioning (`versioning.ts`), and the release CLIs. |
 | `.github/workflows/ci.yml` | Runs `npm run check` on Node 24 across Linux, macOS, and Windows. |
+| `.github/workflows/release.yml` | Tags `v<version>` and publishes its GitHub release when a new version reaches `main`. |
 | `package.json`, `biome.json`, `knip.json` | Scripts, lint rules, and entry/project analysis. |
 
 Keep provider authentication and catalogs in provider folders. Keep shared protocol
@@ -69,8 +70,8 @@ when gateway data or actions are needed; local rendering changes need no new rou
 
 ## Verification
 
-Run `npm run check`. It checks the generated banner, Biome lint, Knip, strict
-type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
+Run `npm run check`. It checks the generated banner, version consistency, Biome
+lint, Knip, strict type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
 test suite. Use Node 24.12 or newer and avoid `DEP0190` warnings.
 
 For Claude Mods hook or surface changes, also run `npm run test:mod`. It type-checks
@@ -93,6 +94,24 @@ executable and the Mods rollout flag forced on, without provider inference. It i
 
 The definition of done is passing relevant checks, no `DEP0190` warnings, and an
 updated `CHANGELOG.md` for user-facing changes.
+
+### Releasing
+
+`package.json` owns the version. Release on a branch with
+`npm run release -- <version> --summary "<one line>"`: it refuses a version that
+is not semver or not greater than the current one, sets every manifest version,
+`package-lock.json`, the `~<version>` multi-core pins and the Codex client version,
+and renames `## Unreleased` to `## <version> — <date>`. The summary becomes the line
+under that heading; omit `--summary` if `## Unreleased` already opens with a
+one-line paragraph. No empty `## Unreleased` is left, matching earlier releases; the
+next user-facing change adds it back above the newest release. Never edit versions
+by hand: `npm run check:versions` (part of `npm run check`) fails when any field,
+pin, or the CHANGELOG section disagrees with `package.json`.
+
+Merging to `main` runs `.github/workflows/release.yml`. If tag `v<version>` does
+not exist, it creates the tag and a GitHub release titled `v<version> — <summary>`,
+with the rest of that CHANGELOG section as notes. A run whose tag exists does
+nothing, so rerun it from the Actions tab (`workflow_dispatch`) after a failure.
 
 ## Code style
 

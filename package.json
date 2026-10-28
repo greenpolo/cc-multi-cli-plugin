@@ -1,6 +1,6 @@
 {
   "name": "cc-multi-cli-plugin",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin providing a native model gateway that runs external models inside one Claude Code session.",
@@ -25,9 +25,11 @@
     "lint": "biome check --error-on-warnings .",
     "lint:fix": "biome check --write .",
     "check:unused": "knip",
-    "check": "npm run banner:check && npm run lint && npm run check:unused && npm test",
+    "check": "npm run banner:check && npm run check:versions && npm run lint && npm run check:unused && npm test",
     "banner:generate": "node scripts/banner.mjs",
     "banner:check": "node scripts/banner.mjs --check",
+    "check:versions": "node scripts/check-versions.ts",
+    "release": "node scripts/release.ts",
     "test:live:install": "node test/live/native-install.ts",
     "typecheck:mod": "tsc -p plugins/multi-core"
   },

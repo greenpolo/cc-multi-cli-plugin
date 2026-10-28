@@ -77,7 +77,7 @@ export async function readCodexUsage(
   send({
     id: 1,
     method: 'initialize',
-    params: { clientInfo: { name: 'cc_multi_usage', version: '0.3.0' } },
+    params: { clientInfo: { name: 'cc_multi_usage', version: '0.4.0' } },
   });
   try {
     return await quotaResponse(lines, send, () => {

@@ -9,6 +9,6 @@
     "plugins/multi-core/src/account.ts",
     "plugins/multi-core/src/install/bootstrap.ts"
   ],
-  "project": ["plugins/*/src/**/*.ts", "test/**/*.ts"],
+  "project": ["plugins/*/src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
   "ignore": ["plugins/multi-core/hooks/**/*.ts"]
 }

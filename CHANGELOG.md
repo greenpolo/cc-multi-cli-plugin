@@ -4,7 +4,15 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
-## Unreleased
+## 0.4.0 — 2026-10-28
+
+Gateway Auto-mode arbiter, GPT-6.1 Sol by default and resilient startup
+
+- **Release from one command.** `npm run release -- <version> --summary "<line>"`
+  sets every plugin and marketplace version, the multi-core pins and the lockfile,
+  and turns `## Unreleased` into the dated release section. `npm run check` now
+  fails when any of them disagrees with `package.json`, and merging a new version
+  to `main` tags it and publishes the GitHub release from its CHANGELOG section.
 
 - **Message a stopped native worker right away.** A message sent to a Cursor,
   Antigravity or Grok worker just after it was stopped now waits for the stopped
