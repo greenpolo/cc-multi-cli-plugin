@@ -183,7 +183,7 @@ export abstract class CliHarness<Saved extends HarnessSessionBase, Selection> {
     try {
       // A first-load race is a deterministic conflict, so it must leave here as
       // this provider's own failure: a bare busy error reads as a retryable 502.
-      lease = await this.store.acquireLease(turn.identity);
+      lease = await this.store.acquireLease(turn.identity, exchange.controller.signal);
     } catch (error) {
       throw this.providerError(error);
     }
@@ -193,6 +193,7 @@ export abstract class CliHarness<Saved extends HarnessSessionBase, Selection> {
         stateDirectory: this.stateDirectory,
         key: turn.key,
         saved: session.saved,
+        platform: this.platform,
         emit,
         provider: this.tag,
       });

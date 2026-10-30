@@ -133,3 +133,8 @@ test('the default worker model prefers Flash over Flash-Lite whatever order agy 
     'gemini-3.8-pro',
   );
 });
+
+test('the default worker model moves to a new Gemini generation without a Pro suffix', () => {
+  const ids = ['gemini-3.8-flash', 'gemini-4-argon', 'gemini-3.8-pro'];
+  assert.equal(antigravityDefaultWorkerModel(ids), 'gemini-4-argon');
+});

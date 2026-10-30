@@ -40,7 +40,7 @@ function windowsHome(root: string): NodeJS.ProcessEnv {
   };
 }
 
-test('launcher preserves native auth, disables unavailable auto mode, and merges caller settings', {
+test('launcher preserves native auth, keeps unreviewed auto mode available, and merges caller settings', {
   skip: process.platform === 'win32',
 }, async (t) => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'launcher-test-'));
@@ -113,10 +113,7 @@ const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'ut
     );
     assert.equal(result.toolSearch, auth === 'api' ? 'false' : 'true');
     assert.deepEqual(result.settings.permissions.deny, ['Bash(denied)']);
-    assert.equal(
-      result.settings.permissions.disableAutoMode,
-      auth === 'no' ? 'disable' : undefined,
-    );
+    assert.equal(result.settings.permissions.disableAutoMode, undefined);
     assert.equal(
       result.hasLocalToken,
       true,
@@ -210,7 +207,7 @@ const settings=JSON.parse(fs.readFileSync(args[args.indexOf('--settings')+1],'ut
     [],
     'Keep the native saved model instead of forcing a launcher default',
   );
-  assert.equal(saved.settings.permissions.disableAutoMode, 'disable');
+  assert.equal(saved.settings.permissions?.disableAutoMode, undefined);
 });
 
 test('Zen credentials add picker models and named workers without leaking the key to Claude', {
@@ -282,7 +279,7 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
   // One Zen worker: its models are the picker's, never a type per model or effort.
   assert.deepEqual(result.agents, ['multi-zen']);
   assert.equal(result.zenKeyInChild, undefined);
-  assert.equal(result.settings.permissions.disableAutoMode, 'disable');
+  assert.equal(result.settings.permissions?.disableAutoMode, undefined);
   assert(result.args.includes('--dangerously-skip-permissions'));
   assert.deepEqual(result.models, ['multi/zen/gpt-5.6-luna']);
   const disabled = await promisify(execFile)(process.execPath, [launcher], {
@@ -568,7 +565,7 @@ test('launcher registers one worker per provider from the picker rows', () => {
   );
   const rows = [
     'multi/openai/gpt-6-luna',
-    'multi/openai/gpt-6-astra',
+    'multi/openai/gpt-6.1-sol',
     ...cursorPickerOptions(cursor).map(({ model }) => model),
     'multi/cursor/composer-2.5/effort=high',
     'multi/antigravity/gemini-3.1-pro[1m]',
@@ -586,7 +583,7 @@ test('launcher registers one worker per provider from the picker rows', () => {
     'multi-antigravity',
   ]);
   // Each default is the provider's newest or native default, not the first row.
-  assert.equal(agents['multi-openai'].model, 'multi/openai/gpt-6-astra');
+  assert.equal(agents['multi-openai'].model, 'multi/openai/gpt-6.1-sol');
   assert.equal(agents['multi-openai'].effort, 'medium');
   assert.equal(agents['multi-zen'].model, 'multi/zen/deepseek-v4.1-flash');
   assert.equal(agents['multi-zen'].effort, 'medium');
@@ -599,7 +596,7 @@ test('launcher registers one worker per provider from the picker rows', () => {
   );
   assert.equal(
     agents['multi-openai'].description,
-    "OpenAI worker (Claude Code's tools). Pass model (gpt-6-luna, gpt-6-astra) or omit it for gpt-6-astra.",
+    "OpenAI worker (Claude Code's tools). Pass model (gpt-6-luna, gpt-6.1-sol) or omit it for gpt-6.1-sol.",
   );
   assert.deepEqual(agents['multi-openai'].tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
   assert.equal(agents['multi-cursor'].tools.at(-1), 'mcp__multi-core');

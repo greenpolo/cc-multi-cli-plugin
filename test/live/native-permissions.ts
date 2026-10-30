@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, stripVTControlCharacters } from 'node:util';
-import { hookCommand } from '../../plugins/multi-core/src/gateway/permission-hook.ts';
+import { hookCommand } from '../../plugins/multi-antigravity/src/hooks.ts';
 import { isolatedEnvironment } from './environment.ts';
 import type { HookInput, TranscriptEntry } from './native-events.ts';
 import { pty, skipIfPtyUnsupported } from './native-pty.ts';

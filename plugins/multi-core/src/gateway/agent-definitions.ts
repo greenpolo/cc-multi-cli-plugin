@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseDocument } from 'yaml';
 import { executableInvocation, resolveExecutable } from './executable.ts';
+import { isRecord } from './record.ts';
 
 export interface WorkerPermissions {
   model?: string;
@@ -290,28 +291,62 @@ async function pluginAgents(
   return permissions;
 }
 
+const reportedMalformed = new Set<string>();
+
+/**
+ * One unreadable plugin agent must not disable every provider: it keeps its name but
+ * carries a native permission error, so only a native worker of that type is refused.
+ */
 async function pluginDefinition(file: string): Promise<[string, WorkerPermissions]> {
   const source = await readFile(file, 'utf8');
   if (Buffer.byteLength(source) > MAX_AGENT_BYTES) {
     throw new Error(`Agent definition ${file} exceeds size limit`);
   }
   const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  const document = parseDocument(frontmatter?.[1] ?? '');
-  if (document.errors.length) {
-    throw new Error(`Malformed plugin agent ${file}`);
+  const value = lenientFrontmatter(frontmatter?.[1] ?? '');
+  const name = typeof value?.name === 'string' ? value.name : path.basename(file, '.md');
+  try {
+    if (!value) {
+      throw new Error(`Malformed plugin agent ${file}`);
+    }
+    // Claude ignores plugin permissionMode, hooks and mcpServers by design.
+    return [
+      name,
+      {
+        tools: toolList(value.tools, file, 'tools'),
+        disallowedTools: toolList(value.disallowedTools, file, 'disallowedTools'),
+      },
+    ];
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!reportedMalformed.has(file)) {
+      reportedMalformed.add(file);
+      process.stderr.write(`Multi: ${reason}; native workers of that type are refused.\n`);
+    }
+    return [name, { nativePermissionError: `${reason}: Multi cannot read its tool rules` }];
   }
-  const definition = document.toJS();
-  const value =
-    definition && typeof definition === 'object' && !Array.isArray(definition) ? definition : {};
-  const name = typeof value.name === 'string' ? value.name : path.basename(file, '.md');
-  // Claude ignores plugin permissionMode, hooks and mcpServers by design.
-  return [
-    name,
-    {
-      tools: toolList(value.tools, file, 'tools'),
-      disallowedTools: toolList(value.disallowedTools, file, 'disallowedTools'),
-    },
-  ];
+}
+
+/**
+ * Strict YAML first; on failure, retry with each plain top-level scalar quoted, which
+ * repairs the common case of an unquoted `: ` inside a description that Claude Code
+ * itself accepts. Returns undefined when neither parse succeeds.
+ */
+function lenientFrontmatter(source: string): Record<string, unknown> | undefined {
+  let document = parseDocument(source);
+  if (document.errors.length) {
+    document = parseDocument(
+      source.replace(
+        /^([A-Za-z_][\w-]*):[ \t]+([^\s"'[{|>&*!#].*?)[ \t]*$/gm,
+        (_, key: string, value: string) => `${key}: ${JSON.stringify(value)}`,
+      ),
+    );
+  }
+  if (document.errors.length) {
+    return undefined;
+  }
+  const value: unknown = document.toJS();
+  return isRecord(value) ? value : {};
 }
 
 function isMissingExecutable(error: unknown): boolean {

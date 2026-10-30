@@ -22,8 +22,8 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-core/src/gateway/executable.ts`, `process-tree.ts` | Resolves executables and manages child processes. |
 | `plugins/multi-core/src/gateway/atomic-write.ts`, `state-lock.ts` | Protects files and serializes native state. |
 | `plugins/multi-core/src/gateway/harness-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Admits harness settings (`checkHarnessSettings`, `mergePermissions`), maps prompt and worker permissions, and resolves the Agent tool's `model` against each provider's worker catalog. |
-| `plugins/multi-core/src/gateway/approval.ts`, `permission-hook.ts` | Approval protocol and capability checks. |
-| `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `tool-observer.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, tool observation, and the nested-`claude` environment restore. |
+| `plugins/multi-core/src/gateway/verdicts.ts`, `provider.ts` | Core verdict contract, Reviewer interface, and provider auto-review policy. `server.ts` alone finalises served replies and terminal events. |
+| `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, and the nested-`claude` environment restore. |
 | `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. |
 | `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, notices, and failure classifier (`harness-failure.ts`) shared by Cursor, Antigravity, and Grok; the CLI harness base (`harness-cli.ts`), process runner, and text prompt preparation shared by Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
@@ -34,8 +34,9 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-grok/src/` | Grok Build CLI harness, models, requests, permissions, and login state. |
 | `test/unit/` | Offline unit tests for gateway and provider behavior. |
 | `test/live/` | Opt-in checks against native CLIs and provider services. |
-| `scripts/` | Development utilities, including banner generation. |
+| `scripts/` | Development utilities: banner generation, release versioning (`versioning.ts`), and the release CLIs. |
 | `.github/workflows/ci.yml` | Runs `npm run check` on Node 24 across Linux, macOS, and Windows. |
+| `.github/workflows/release.yml` | Tags `v<version>` and publishes its GitHub release when a new version reaches `main`. |
 | `package.json`, `biome.json`, `knip.json` | Scripts, lint rules, and entry/project analysis. |
 
 Keep provider authentication and catalogs in provider folders. Keep shared protocol
@@ -51,7 +52,8 @@ changes to those boundaries need corresponding implementation and verification.
 
 - Claude's permission mode controls every provider at prompt boundaries.
 - Each provider owns its login, reviewer, execution state, and credentials.
-- Fail explicitly on unsupported modes, unknown workers, ambiguous ownership, or missing review.
+- Fail explicitly on unsupported modes, unknown workers, or ambiguous ownership.
+- A provider without a reviewer runs auto mode unreviewed and says so; plan mode still refuses actions.
 - Never replay external tool events as executable Claude tools.
 - Native state is never rewound, and uncertain actions are never rerun blindly.
 - Antigravity native children and MCP are denied. Grok denies native subagents and MCP execution, and verifies the toolset the CLI announces.
@@ -68,8 +70,8 @@ when gateway data or actions are needed; local rendering changes need no new rou
 
 ## Verification
 
-Run `npm run check`. It checks the generated banner, Biome lint, Knip, strict
-type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
+Run `npm run check`. It checks the generated banner, version consistency, Biome
+lint, Knip, strict type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
 test suite. Use Node 24.12 or newer and avoid `DEP0190` warnings.
 
 For Claude Mods hook or surface changes, also run `npm run test:mod`. It type-checks
@@ -84,9 +86,7 @@ executable and the Mods rollout flag forced on, without provider inference. It i
 | `npm run test:live:cursor` | Cursor SDK tools, continuation, and disk resume | Cursor SDK login |
 | `npm run test:live:openai-instructions` | Requested planning/delegation and Plan restrictions (three-request budget) | Codex login |
 | `npm run test:live:auto-mode` | Native Auto mode | Provider login under test |
-| `npm run test:live:provider-approval` | Provider approval | Provider login under test |
 | `npm run test:live:reviewer` | OpenAI reviewer allow/deny and inspection | Codex login |
-| `npm run test:live:approval-worker` | Worker approval | Provider login under test |
 | `npm run test:live:permissions` | Native permissions | Claude and provider login |
 | `npm run test:live:antigravity` | Antigravity CLI harness | `agy` login |
 | `npm run test:live:grok` | Grok Build CLI harness | Grok Build login |
@@ -94,6 +94,24 @@ executable and the Mods rollout flag forced on, without provider inference. It i
 
 The definition of done is passing relevant checks, no `DEP0190` warnings, and an
 updated `CHANGELOG.md` for user-facing changes.
+
+### Releasing
+
+`package.json` owns the version. Release on a branch with
+`npm run release -- <version> --summary "<one line>"`: it refuses a version that
+is not semver or not greater than the current one, sets every manifest version,
+`package-lock.json`, the `~<version>` multi-core pins and the Codex client version,
+and renames `## Unreleased` to `## <version> — <date>`. The summary becomes the line
+under that heading; omit `--summary` if `## Unreleased` already opens with a
+one-line paragraph. No empty `## Unreleased` is left, matching earlier releases; the
+next user-facing change adds it back above the newest release. Never edit versions
+by hand: `npm run check:versions` (part of `npm run check`) fails when any field,
+pin, or the CHANGELOG section disagrees with `package.json`.
+
+Merging to `main` runs `.github/workflows/release.yml`. If tag `v<version>` does
+not exist, it creates the tag and a GitHub release titled `v<version> — <summary>`,
+with the rest of that CHANGELOG section as notes. A run whose tag exists does
+nothing, so rerun it from the Actions tab (`workflow_dispatch`) after a failure.
 
 ## Code style
 

@@ -10,7 +10,8 @@ for (const provider of ['anthropic', 'openai'] as const) {
     const script: UpstreamScript = () => ({
       text:
         ++calls === 2
-          ? 'COMPACT_SUMMARY_731: The release password is violet-otter-731. No tools were used.'
+          ? // Claude Code asks once more when a summary reply has no <summary> block.
+            '<summary>COMPACT_SUMMARY_731: The release password is violet-otter-731. No tools were used.</summary>'
           : 'The release password is violet-otter-731.',
     });
     const scenario: Scenario = {

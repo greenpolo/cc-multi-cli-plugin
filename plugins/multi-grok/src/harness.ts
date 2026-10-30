@@ -151,7 +151,6 @@ export class GrokHarness extends CliHarness<GrokSaved, GrokSelection> {
       body.model ?? selection.model.model,
       prepared.inputTokens,
       emit,
-      body.safeguards,
     );
     const policyIdentity = digest(policy);
     writeNotices(response, {
@@ -267,7 +266,7 @@ export class GrokHarness extends CliHarness<GrokSaved, GrokSelection> {
     actions: NativeActionTracker;
     calls: HarnessModelCalls;
   }): Promise<MessagesResponse> {
-    const { session, response, outcome, selection, key, exchange, emit, actions, calls } = run;
+    const { session, response, outcome, selection, key, exchange, actions, calls } = run;
     const result = outcome.result;
     // The CLI owns the identity it reports; a mismatch would silently fork history.
     if (session.saved.sessionId !== undefined && result.sessionId !== session.saved.sessionId) {
@@ -294,11 +293,9 @@ export class GrokHarness extends CliHarness<GrokSaved, GrokSelection> {
     return commitHarnessResponse({
       session,
       store: this.store,
-      response,
       finished,
       exchange,
       key,
-      emit,
       update: (saved) => {
         saved.sessionId = result.sessionId;
         saved.interrupted = false;

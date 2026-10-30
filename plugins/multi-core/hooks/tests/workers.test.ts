@@ -257,7 +257,7 @@ function catalogGateway(on: On) {
       value: { ok: status === 200, status, headers: {}, text: JSON.stringify(value) },
     });
     if (event.url.endsWith('/multi/mod/worker-model')) {
-      const named = body?.model ?? 'default';
+      const named = body?.toolUseId === 'toolu_named' ? 'composer-2.5' : (body?.model ?? 'default');
       const known = ['default', 'composer-2.5', 'multi/cursor/composer-2.5'];
       if (body?.subagentType === 'multi-cursor' && !known.includes(String(named))) {
         return reply(400, {
@@ -275,9 +275,9 @@ function catalogGateway(on: On) {
   return sent;
 }
 
-test('an Agent call names the model: tool.call takes it out before the schema check', async ($, on) => {
+test('Agent tool.call forwards gateway-normalized inputs without a rewrite', async ($, on) => {
   mock.clock(on);
-  catalogGateway(on);
+  const sent = catalogGateway(on);
   const reached: Array<Record<string, unknown>> = [];
   on('tool.call', (_$, event) => {
     reached.push(event as Record<string, unknown>);
@@ -289,9 +289,8 @@ test('an Agent call names the model: tool.call takes it out before the schema ch
     description: 'Fix tests',
     prompt: 'task',
     subagent_type: 'multi-cursor',
-    model: 'composer-2.5',
   } as never);
-  // The Agent tool's schema admits only Claude aliases: a provider id must not reach it.
+  // The gateway already removed the provider model; the hook forwards the call unchanged.
   expect(reached[0]?.model).toBeUndefined();
   expect(reached[0]?.subagent_type).toBe('multi-cursor');
   // Other agent types keep their Claude alias.
@@ -304,9 +303,13 @@ test('an Agent call names the model: tool.call takes it out before the schema ch
     model: 'haiku',
   } as never);
   expect(reached[1]?.model).toBe('haiku');
+  // Even a provider call containing an alias is never rewritten inside tool.call.
+  await $.tool.call({ ...reached[0], model: 'haiku' } as never);
+  expect(reached[2]?.model).toBe('haiku');
+  expect(sent.length).toBe(0);
 });
 
-test('agent.spawn resolves a provider worker model and runs the rewrite', async ($, on) => {
+test('agent.spawn retrieves a removed model by tool use id and labels the spawn', async ($, on) => {
   mock.clock(on);
   const sent = catalogGateway(on);
   const spawned: Array<string | undefined> = [];
@@ -320,14 +323,15 @@ test('agent.spawn resolves a provider worker model and runs the rewrite', async 
     prompt: 'task',
     description: 'Fix tests',
     subagentType: 'multi-cursor',
-    model: 'composer-2.5',
+    tool_use_id: 'toolu_named',
   } as never);
   expect(named.agentId).toBe('agent-1');
   expect(spawned[0]).toBe('multi/cursor/composer-2.5');
   // The running-agents list and the notification show the task's description.
   expect(descriptions[0]).toBe('Fix tests · Cursor · composer-2.5');
   const resolution = sent.find((item) => item.url.endsWith('/multi/mod/worker-model'));
-  expect(resolution?.body?.model).toBe('composer-2.5');
+  expect(resolution?.body?.model).toBeUndefined();
+  expect(resolution?.body?.toolUseId).toBe('toolu_named');
   // Admission sees the resolved model, not the short id.
   const admission = sent.filter((item) => item.url.endsWith('/multi/mod/worker')).at(-1);
   expect(admission?.body?.model).toBe('multi/cursor/composer-2.5');
@@ -491,21 +495,6 @@ test('a Claude tool call posts nothing to the gateway', async ($, on) => {
   expect(sent.length).toBe(0);
 });
 
-test('a provider model tool call is attributed to the gateway reviewer', async ($, on) => {
-  mock.clock(on);
-  const sent = catalogGateway(on);
-  on('session.model', () => ({ value: 'multi/openai/gpt-6-astra' }));
-  on('tool.call', () => ({ result: 'ran' }));
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_1' } as never);
-  expect(sent.map((item) => item.url.replace(/^.*(?=\/multi)/, ''))).toEqual(['/multi/permission']);
-  expect(sent[0]?.body).toEqual({
-    session_id: 's',
-    tool_use_id: 'toolu_1',
-    tool_name: 'Bash',
-    cwd: '/workspace',
-  });
-});
-
 /** A gateway whose offer answers name the model each agent type runs on. */
 function pinnedGateway(
   on: On,
@@ -633,56 +622,4 @@ test('a subagent registers with the gateway while any loop of the session runs a
   const afterStep = sent.length;
   await $.classic.SubagentStart(start);
   expect(sent.slice(afterStep).some((url) => url.endsWith('/multi/mod/worker'))).toBe(true);
-});
-
-test('a provider worker tool call is attributed to the reviewer with its agent id', async ($, on) => {
-  mock.clock(on);
-  const bodies: Array<Record<string, unknown>> = [];
-  const sent = pinnedGateway(on, {}, bodies);
-  on('tool.call', () => ({ result: 'ran' }));
-  on('ui.status', () => ({ value: undefined }));
-  on('classic.UserPromptSubmit', () => ({}));
-  on('turn.step', async function* (_$, event) {
-    yield { kind: 'text', index: 0, text: 'ok' };
-    return {
-      turnId: event.turnId,
-      index: 0,
-      answer: 'ok',
-      toolUses: [],
-      stopReason: 'end_turn',
-      usage: null,
-    };
-  });
-  await $.classic.UserPromptSubmit({
-    prompt: 'go',
-    permission_mode: 'auto',
-    session_id: 's',
-    cwd: '/workspace',
-  });
-  for await (const _chunk of $.turn.step({
-    turnId: 't',
-    agentId: 'provider-worker',
-    index: 0,
-    model: 'multi/openai/gpt-6-astra',
-    messageCount: 1,
-  })) {
-    // The hooks learn the worker's model from its step.
-  }
-  sent.length = 0;
-  bodies.length = 0;
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_w', agentId: 'provider-worker' } as never);
-  const index = sent.findIndex((url) => url.endsWith('/multi/permission'));
-  expect(index).toBeGreaterThanOrEqual(0);
-  // The Claude session's own mode (the engine hands a tool call none) comes from its snapshot.
-  expect(bodies[index]).toEqual({
-    session_id: 's',
-    tool_use_id: 'toolu_w',
-    tool_name: 'Bash',
-    cwd: '/workspace',
-    permission_mode: 'auto',
-  });
-  // The main loop is on Claude: its own call costs the gateway nothing.
-  sent.length = 0;
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_main' } as never);
-  expect(sent).toEqual([]);
 });

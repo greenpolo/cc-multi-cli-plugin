@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout } from 'node:timers/promises';
 import type { HarnessEvent } from '../../plugins/multi-core/src/gateway/harness-exchange.ts';
 import {
   atomicJson,
@@ -42,7 +43,7 @@ function answer(text = 'done'): MessagesResponse {
   };
 }
 
-const events: HarnessEvent[] = [['message_stop', {}]];
+const events: HarnessEvent[] = [['ping', {}]];
 
 async function store(t: test.TestContext) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-session-'));
@@ -392,6 +393,7 @@ test('persisted state is validated before it is trusted', async (t) => {
   assert.equal(optionalCount(1.5), false);
 
   assert.ok(validMessagesResponse(answer()));
+  assert.equal(validMessagesResponse({ ...answer(), safeguard_results: [] }), false);
   assert.equal(validMessagesResponse({ ...answer(), role: 'user' }), false);
   assert.equal(validMessagesResponse({ ...answer(), usage: { input_tokens: 1 } }), false);
   assert.equal(
@@ -403,6 +405,8 @@ test('persisted state is validated before it is trusted', async (t) => {
   assert.equal(validReplay({ key: 'nope', events }), false);
   assert.equal(validReplay({ key, events: [['not_an_event', {}]] }), false);
   assert.equal(validReplay({ key, events: [['message_stop']] }), false);
+  assert.equal(validReplay({ key, events: [['message_stop', {}]] }), false);
+  assert.equal(validReplay({ key, events: [['message_delta', { delta: {} }]] }), false);
 
   assert.ok(validPersistedResponse({ response: answer(), events }));
   assert.equal(validPersistedResponse({ response: answer() }), false);
@@ -435,4 +439,78 @@ test('an unsupported-version record is copied aside before the fresh record repl
   assert.equal(await readFile(`${file}.unsupported-v2`, 'utf8'), original);
   assert.equal(JSON.parse(await readFile(file, 'utf8')).sessionId, 'fresh');
   assert.ok((await readdir(directory)).includes(path.basename(`${file}.unsupported-v2`)));
+});
+
+test('legacy verdicts migrate under the session lock without changing native or pending state', async (t) => {
+  const { directory } = await store(t);
+  for (const provider of ['Cursor', 'Antigravity', 'Grok']) {
+    const identity = `${provider}-worker`;
+    const made = new HarnessSessionStore<Saved>({
+      provider,
+      stateDirectory: path.join(directory, provider),
+      platform: 'linux',
+      version: 1,
+      fresh: (id) => ({ version: 1, provider, identity: id, interrupted: false }),
+      validate: () => true,
+      runtime: () => ({}),
+      restore: async ({ files, read }) => ({ saved: await read(files[0]) }),
+    });
+    t.after(() => made.closeAll());
+    const original = await made.acquireLease(identity);
+    const file = original.session.file;
+    await original.release();
+    await made.evictIdle(original.session);
+    const response = { ...answer(), safeguard_results: [{ stale: true }] };
+    const legacy = {
+      version: 1,
+      provider,
+      identity,
+      interrupted: true,
+      sessionId: 'native-session',
+      pendingRun: { key, runId: 'native-pending', safeguarded: true },
+      response,
+      replay: {
+        key,
+        events: [
+          ['message_start', { message: response }],
+          ...events,
+          ['message_delta', { delta: { safeguard_results: [] } }],
+          ['message_stop', {}],
+        ],
+      },
+    };
+    await atomicJson(file, legacy, 'linux');
+    const recorded = await made.recordedResponse(identity);
+    assert.deepEqual(recorded, answer());
+    const lease = await made.acquireLease(identity);
+    assert.equal(lease.session.saved.sessionId, 'native-session');
+    assert.equal(lease.session.saved.interrupted, true);
+    const migrated = JSON.parse(await readFile(file, 'utf8'));
+    assert.deepEqual(migrated.pendingRun, legacy.pendingRun);
+    assert.deepEqual(migrated.response, answer());
+    assert.deepEqual(migrated.replay.events, [['message_start', { message: answer() }], ...events]);
+    await lease.release();
+    await made.evictIdle(lease.session);
+    const reopened = await made.acquireLease(identity);
+    assert.deepEqual(reopened.session.saved, migrated);
+    await reopened.release();
+  }
+});
+
+test('a turn after a cancelled one waits for its release instead of being refused', async (t) => {
+  const { made } = await store(t);
+  const cancelled = new AbortController();
+  const lease = await made.acquireLease('worker-cancel', cancelled.signal);
+  cancelled.abort();
+  let acquired = false;
+  const next = made.acquireLease('worker-cancel').then((value) => {
+    acquired = true;
+    return value;
+  });
+  await setTimeout(20);
+  assert.equal(acquired, false, 'The next turn must not start while the cancelled one records');
+  await lease.release();
+  const again = await next;
+  assert.equal(again.session, lease.session);
+  await again.release();
 });

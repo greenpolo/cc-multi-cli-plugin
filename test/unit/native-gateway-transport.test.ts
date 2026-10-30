@@ -15,7 +15,7 @@ async function listen(t: TestContext, options: Partial<Parameters<typeof createN
   const server = createNativeGateway({
     token: TOKEN,
     authFile: '/nonexistent/auth.json',
-    guardAuto: true,
+
     ...options,
   });
   await new Promise<void>((resolve, reject) => {
@@ -119,7 +119,7 @@ test('a gateway failure on a native request is reported as a diagnostic, not hid
   );
 });
 
-test('a long observed tool_use line stops observation with a diagnostic and passes through', async (t) => {
+test('a long tool_use line passes through byte for byte without observation', async (t) => {
   const events: GatewayEvent[] = [];
   const big = 'x'.repeat(9 * 1024 * 1024);
   const body = `event: content_block_delta\ndata: ${big}\n`;
@@ -139,7 +139,10 @@ test('a long observed tool_use line stops observation with a diagnostic and pass
     }),
   });
   assert.equal((await response.text()).length, body.length + '\nevent: ping\ndata: {}\n\n'.length);
-  assert(events.some((event) => event.diagnostic?.includes('exceeds 8 MiB')));
+  assert.equal(
+    events.some((event) => event.diagnostic),
+    false,
+  );
 });
 
 test('a non-streamed provider reply that outlasts the delay sends headers and keeps alive', async (t) => {

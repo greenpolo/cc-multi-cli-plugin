@@ -4,6 +4,7 @@
 
 import type { GatewayFetch } from './fetch.ts';
 import type { Emit, MessagesRequest, MessagesResponse } from './messages.ts';
+import type { RememberWorkerModel } from './worker-models.ts';
 
 /** The provider rejected or could not renew the credentials; answered as HTTP 401. */
 export class ProviderAuthError extends Error {}
@@ -57,5 +58,9 @@ export interface PreparedRequest {
   requestEvent(agentId?: string): ProviderEvent;
   failureEvent(status: number, agentId?: string): ProviderEvent;
   send(signal: AbortSignal, fetchImpl: GatewayFetch): Promise<Response>;
-  translate(stream: ReadableStream<Uint8Array>, emit: Emit | undefined): Promise<MessagesResponse>;
+  translate(
+    stream: ReadableStream<Uint8Array>,
+    emit: Emit | undefined,
+    rememberWorkerModel?: RememberWorkerModel,
+  ): Promise<MessagesResponse>;
 }

@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  createOpenAIApproval,
+  createOpenAIReviewer,
   discoverOpenAIReviewer,
 } from '../../plugins/multi-openai/src/approval.ts';
 
@@ -23,7 +23,7 @@ const authFile = path.join(
 );
 assert(await discoverOpenAIReviewer(authFile));
 let calls = 0;
-const bridge = await createOpenAIApproval(authFile, cwd, async (url, init) => {
+const bridge = await createOpenAIReviewer(authFile, cwd, async (url, init) => {
   calls++;
   return fetch(url, init);
 });
@@ -47,28 +47,14 @@ for (const [user, command, expected, planMode] of [
   ],
 ] as const) {
   const before = calls;
-  const request = {
-    model: 'claude-sonnet-5',
-    metadata: { user_id: 'reviewer-live' },
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: '<transcript>\n' },
-          { type: 'text', text: `${JSON.stringify({ user })}\n` },
-          { type: 'text', text: `${JSON.stringify({ Bash: command })}\n` },
-          { type: 'text', text: '</transcript>\n' },
-          { type: 'text', text: 'Stage 1 does NOT apply user intent <severity>N</severity>' },
-        ],
-      },
-    ],
-  };
-  const result = await bridge.respond(request, AbortSignal.timeout(65000), {
-    model: 'multi/openai/gpt-6-luna',
-    scope: 'reviewer-live',
-    request: { messages: [{ role: 'user', content: user }] },
-    planMode,
-  });
+  const result = await bridge(
+    {
+      tool: { type: 'tool_use', id: 'live', name: 'Bash', input: { command } },
+      request: { messages: [{ role: 'user', content: user }] },
+      planMode,
+    },
+    AbortSignal.timeout(65000),
+  );
   results.push({ expected, planMode, actual: result.outcome, calls: calls - before });
   await writeFile(path.join(cwd, 'report.json'), JSON.stringify(results, null, 2));
   assert.equal(result.outcome, expected);

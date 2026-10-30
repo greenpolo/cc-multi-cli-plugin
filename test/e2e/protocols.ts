@@ -43,8 +43,28 @@ const anthropic: ReplyWriter = async (res, request, reply) => {
       : { type: 'text_delta', text: reply.text ?? 'E2E complete.' },
   });
   event(res, 'content_block_stop', { index: 0 });
+  // Like the real API, answer a request for server checks with a verdict per tool use.
+  // A reply without one latches Claude Code to local classification for the session.
+  const safeguard_results =
+    request.body.safeguards === undefined
+      ? undefined
+      : [
+          {
+            type: 'dangerous_tool_use',
+            status: {
+              type: 'available',
+              tool_uses: tool
+                ? { [tool.id ?? 'toolu_e2e']: { type: 'evaluated', outcome: 'not_flagged' } }
+                : {},
+            },
+          },
+        ];
   event(res, 'message_delta', {
-    delta: { stop_reason: tool ? 'tool_use' : 'end_turn', stop_sequence: null },
+    delta: {
+      stop_reason: tool ? 'tool_use' : 'end_turn',
+      stop_sequence: null,
+      ...(safeguard_results && { safeguard_results }),
+    },
     usage: { output_tokens: reply.usage?.output ?? 20 },
   });
   event(res, 'message_stop', {});

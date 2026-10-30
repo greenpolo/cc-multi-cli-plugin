@@ -1,14 +1,13 @@
 import { readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { HarnessExchange } from './harness-exchange.ts';
-import type { HarnessResponse } from './harness-response.ts';
 import {
   atomicJson,
   type HarnessSession,
   type HarnessSessionBase,
   type HarnessSessionStore,
 } from './harness-session.ts';
-import type { Emit, MessagesResponse } from './messages.ts';
+import type { MessagesResponse } from './messages.ts';
 
 /**
  * Records a completed native turn before its terminal stream events are visible.
@@ -22,21 +21,13 @@ export async function commitHarnessResponse<
 >(args: {
   session: HarnessSession<S, R>;
   store: HarnessSessionStore<S, R>;
-  response: HarnessResponse;
   finished: MessagesResponse;
   exchange: HarnessExchange<M>;
   key: string;
-  emit: Emit;
   update: (saved: S) => void;
   onCommitted?: () => void;
 }): Promise<MessagesResponse> {
-  const terminalEvents = args.response.takeTerminalEvents();
-  const events = [
-    ...args.exchange.events,
-    ...terminalEvents.map(
-      ([name, value]) => [name, structuredClone(value)] as [typeof name, typeof value],
-    ),
-  ];
+  const events = structuredClone(args.exchange.events);
   const before = structuredClone(args.session.saved);
   args.update(args.session.saved);
   args.session.saved.response = args.finished;
@@ -48,9 +39,6 @@ export async function commitHarnessResponse<
     throw error;
   }
   args.onCommitted?.();
-  for (const event of terminalEvents) {
-    args.emit(...event);
-  }
   return args.finished;
 }
 

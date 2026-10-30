@@ -4,12 +4,73 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
-## Unreleased
+## 0.4.0 — 2026-10-28
+
+Gateway Auto-mode arbiter, GPT-6.1 Terra and Sol, Gemini 4 Argon and resilient startup
+
+- **Run GPT-6.1 Terra and Gemini 4 Argon.** The OpenAI Terra picker row and
+  `model: gpt-6.1-terra` on a `multi-openai` worker now run `gpt-6.1-terra`, which
+  Codex serves on ChatGPT plans, in place of `gpt-5.6-terra`. A `multi-antigravity`
+  worker that names no model now runs `gemini-4-argon`, the newest Gemini
+  generation `agy` lists.
+
+- **Release from one command.** `npm run release -- <version> --summary "<line>"`
+  sets every plugin and marketplace version, the multi-core pins and the lockfile,
+  and turns `## Unreleased` into the dated release section. `npm run check` now
+  fails when any of them disagrees with `package.json`, and merging a new version
+  to `main` tags it and publishes the GitHub release from its CHANGELOG section.
+
+- **Message a stopped native worker right away.** A message sent to a Cursor,
+  Antigravity or Grok worker just after it was stopped now waits for the stopped
+  run to record its interruption, instead of failing with "A different request is
+  already running". A new prompt during a live run is still refused.
+
+- **Name a provider worker model without a paid review per spawn.** The gateway
+  carries the Agent call's model to worker admission before Claude Code sees the
+  call, preserving server verdicts without a hook input rewrite.
+
+- **Preserve sessions and keep Auto review bounded after upgrade.** Existing native
+  sessions and archived replies migrate away from retired verdicts and terminal
+  events without changing native history or repeating actions. OpenAI review
+  trims long evidence instead of refusing it, omits duplicate main-loop context,
+  and shares four review slots across the process. Coordination and UI tools,
+  including ExitPlanMode and worker handbacks, pass without review. The review
+  status belongs to the main loop and clears on a switch to Claude. Stop sequences
+  cancel provider generation before review, and failed failure delivery closes
+  the transport safely.
+
+- **Make the gateway the Auto-mode arbiter** ([#20](https://github.com/greenpolo/cc-multi-cli-plugin/issues/20)).
+  Every served tool call receives an evaluated verdict before its reply completes,
+  including display rows, handbacks, replay and keepalive failures. OpenAI reviews
+  actions inline on the originating ChatGPT plan, under the user's
+  `autoMode` and permission rules; denial, failure and timeout
+  block with a reason. Read-only calls skip review. Zen, Antigravity, Grok and
+  OpenAI without a reviewer discovered at launch run Auto unreviewed and say so;
+  in Plan, direct providers without a reviewer refuse non-read-only actions.
+  Cursor keeps native review and its fail-open behavior. Harness rows and
+  handbacks always pass: the harness applied the mode to its own actions.
+  Removed private classifier parsing, pending-action attribution and the
+  `/multi/permission` route. Native records now replay content events only;
+  old terminal-event replay records are migrated on load.
 
 - **Run GPT-6.1 Sol on OpenAI.** Codex now serves `gpt-6.1-sol` on ChatGPT
   plans, so the OpenAI picker row and `model: gpt-6.1-sol` on a `multi-openai`
   worker run it in place of the previous-generation `gpt-6-sol`. The default
   OpenAI model stays `gpt-6-astra`.
+- **Start despite one malformed plugin agent or a signed-out CLI** ([#45](https://github.com/greenpolo/cc-multi-cli-plugin/issues/45)).
+  A plugin agent whose frontmatter is not strict YAML, such as an unquoted `: `
+  in its description, is reparsed with its plain values quoted, as Claude Code
+  accepts it. One that still cannot be read is reported once and refuses only
+  native workers of its own type; it no longer disables every plugin worker and
+  native harness. An enabled Antigravity or Grok CLI that cannot list models
+  (for example, not signed in) now removes only its own rows instead of
+  stopping the launch.
+- **Default OpenAI workers to GPT-6.1 Sol.** Codex now lists `gpt-6.1-sol`
+  first, so a `multi-openai` worker that names no model runs it, and it leads
+  the OpenAI picker rows. `gpt-6-astra` stays selectable.
+- **Add MiniMax M3 to Zen.** `multi/zen/minimax-m3` (open-weight, text only) is
+  selectable; the default Zen picker is unchanged. The `MULTI_CURSOR_EXTRA_MODELS`
+  help text now names Grok 4.7, the Cursor row the picker already shows.
 - **Deliver native worker reports in Auto mode.** Cursor, Antigravity, and Grok
   workers now send their final report through Claude Code's `SubagentHandback`
   tool when it is offered. Display rows keep their follow-up answer, and resumed

@@ -171,54 +171,6 @@ test('Zen admission and counting never invoke inference; errors retain status wi
   assert.equal(calls, 1);
 });
 
-test('Zen native tools cannot acquire OpenAI review; explicit bypass stays explicit', async (t) => {
-  let reviewed = 0;
-  const base = await gateway(t, async () => completion(true), {
-    guardAuto: true,
-    approvalBridge: {
-      respond: async () => {
-        reviewed++;
-        throw new Error('No cross-provider review');
-      },
-    },
-  });
-  const body = {
-    ...request,
-    tools: [
-      {
-        name: 'Read',
-        input_schema: { type: 'object', properties: { file_path: { type: 'string' } } },
-      },
-    ],
-  };
-  for (const mode of ['auto', 'bypassPermissions', 'default', 'plan']) {
-    const inference = await post(base, body);
-    assert.equal(inference.status, 200);
-    await inference.arrayBuffer();
-    const hook = await fetch(`${base}/multi/permission`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        permission_mode: mode,
-        session_id: 'session-one',
-        tool_name: 'Read',
-        tool_use_id: 'call_1',
-      }),
-    });
-    const decision = await hook.json();
-    if (mode !== 'auto') {
-      assert.deepEqual(decision, {});
-      continue;
-    }
-    assert.deepEqual(
-      decision,
-      {},
-      'Zen keeps Claude native permission behavior when gateway attribution is unavailable',
-    );
-  }
-  assert.equal(reviewed, 0);
-});
-
 test('Zen client disconnect aborts the upstream fetch without replay', async (t) => {
   const entered = Promise.withResolvers<void>();
   const aborted = Promise.withResolvers<void>();

@@ -4,34 +4,24 @@ import os from 'node:os';
 import path from 'node:path';
 import type { TestContext } from 'node:test';
 import test from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import type { GatewayFetch } from '../../plugins/multi-core/src/gateway/fetch.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import {
-  createOpenAIApproval,
+  createOpenAIReviewer,
   discoverOpenAIReviewer,
   inspectApprovalPath,
 } from '../../plugins/multi-openai/src/approval.ts';
 import { removeTemporary } from '../temporary.ts';
 
-const request = (model = 'claude-sonnet-5') => ({
-  model,
-  metadata: { user_id: 'test-session' },
-  messages: [
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: '<transcript>\n' },
-        { type: 'text', text: `${JSON.stringify({ user: 'Run the workspace script.' })}\n` },
-        { type: 'text', text: `${JSON.stringify({ Bash: 'node task.js' })}\n` },
-        { type: 'text', text: '</transcript>\n' },
-        { type: 'text', text: 'Stage 1 does NOT apply user intent <severity>N</severity>' },
-      ],
-    },
-  ],
-});
 const context = {
-  model: 'multi/openai/gpt-6-luna',
-  scope: 'worker-one',
+  tool: {
+    type: 'tool_use' as const,
+    id: 'call_1',
+    name: 'Bash',
+    input: { command: 'node task.js' },
+  },
+  planMode: false,
   request: { messages: [{ role: 'user', content: 'Run the workspace script.' }] },
 };
 const sse = (output: unknown[], status = 'completed') =>
@@ -42,37 +32,48 @@ const verdict = (outcome = 'allow') => [
   { type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ outcome }) }] },
 ];
 
-test('reviewer promotes admitted hard blocks into mandatory instructions', async (t) => {
-  const { cwd, authFile } = await fixture(t);
-  const policy = '## HARD BLOCK\n- Deny CANARY unconditionally.\n\n## SOFT BLOCK\nSoft rules.';
-  const bridge = await createOpenAIApproval(authFile, cwd, async (_url, init) => {
-    const body = JSON.parse(String(init.body));
-    assert(body.instructions.includes('Deny CANARY unconditionally.'));
-    assert(body.instructions.includes('Any matching hard block MUST return outcome deny'));
-    assert(!body.instructions.includes('Soft rules.'));
-    assert.equal(JSON.parse(body.input[0].content).admitted_classifier_policy, policy);
-    return sse(verdict('deny'));
-  });
-  const result = await bridge.respond(
-    { ...request(), system: [{ type: 'text', text: policy }] },
-    new AbortController().signal,
-    { ...context, cwd },
-  );
-  assert.equal(result.outcome, 'deny');
-});
-
 test('reviewer receives the admitted plan-mode restriction only in plan mode', async (t) => {
   const { cwd, authFile } = await fixture(t);
   const instructions: string[] = [];
-  const bridge = await createOpenAIApproval(authFile, cwd, async (_url, init) => {
+  const bridge = await createOpenAIReviewer(authFile, cwd, async (_url, init) => {
     instructions.push(JSON.parse(String(init.body)).instructions);
     return sse(verdict('deny'));
   });
   for (const planMode of [true, false]) {
-    await bridge.respond(request(), new AbortController().signal, { ...context, cwd, planMode });
+    await bridge({ ...context, cwd, planMode }, new AbortController().signal);
   }
   assert.match(instructions[0] ?? '', /plan mode is active[\s\S]*Allow only read-only actions/);
   assert.doesNotMatch(instructions[1] ?? '', /plan mode is active/);
+});
+
+test('reviewer evidence carries the user auto-mode and permission rules, not the rest of the classifier context', async (t) => {
+  const { cwd, authFile } = await fixture(t);
+  const bodies: Array<{ instructions: string; input: Array<{ content: string }> }> = [];
+  const bridge = await createOpenAIReviewer(authFile, cwd, async (_url, init) => {
+    bodies.push(JSON.parse(String(init.body)));
+    return sse(verdict('deny'));
+  });
+  const auto_mode = { allow: [], soft_deny: [], hard_deny: ['Never run DENY_CANARY'] };
+  const rules = { allow: [], deny: ['Bash(rm:*)'], ask: [] };
+  const request = {
+    ...context.request,
+    safeguards: [
+      {
+        type: 'dangerous_tool_use',
+        classifier_context: {
+          permission_mode: 'auto',
+          home_dir: '/home/private',
+          auto_mode,
+          rules,
+        },
+      },
+    ],
+  };
+  await bridge({ ...context, cwd, request }, new AbortController().signal);
+  const evidence = JSON.parse(bodies[0]?.input[0]?.content ?? '{}');
+  assert.deepEqual(evidence.user_policy, { auto_mode, rules });
+  assert.doesNotMatch(JSON.stringify(evidence.user_policy), /home_dir/);
+  assert.match(bodies[0]?.instructions ?? '', /user_policy[\s\S]*hard_deny/);
 });
 
 async function fixture(t: TestContext) {
@@ -93,7 +94,7 @@ test('runtime reviewer investigates with bounded read-only tools and uses provid
   const { cwd, authFile } = await fixture(t);
   await writeFile(path.join(cwd, 'task.js'), 'console.log("safe")');
   const requests: { input: Record<string, string>[] }[] = [];
-  const bridge = await createOpenAIApproval(
+  const bridge = await createOpenAIReviewer(
     authFile,
     path.join(cwd, 'old-cwd'),
     async (url, init) => {
@@ -124,14 +125,14 @@ test('runtime reviewer investigates with bounded read-only tools and uses provid
       );
     },
   );
-  const result = await bridge.respond(request(), new AbortController().signal, { ...context, cwd });
+  const result = await bridge({ ...context, cwd }, new AbortController().signal);
   assert.equal(result.outcome, 'allow');
   assert.equal(requests.length, 2);
   assert.equal(requests[0].input[0].role, 'user');
   assert.deepEqual(JSON.parse(requests[0].input[0].content).original_request, context.request);
 });
 
-test('reviewer errors, invalid output, foreign providers, and exhausted investigation cannot approve', async (t) => {
+test('reviewer errors, invalid output, and exhausted investigation cannot approve', async (t) => {
   const { cwd, authFile } = await fixture(t);
   for (const fetchImpl of [
     async () => new Response('unavailable', { status: 503 }),
@@ -150,33 +151,18 @@ test('reviewer errors, invalid output, foreign providers, and exhausted investig
         },
       ]),
   ] satisfies GatewayFetch[]) {
-    const bridge = await createOpenAIApproval(authFile, cwd, fetchImpl);
-    await assert.rejects(bridge.respond(request(), new AbortController().signal, context));
+    const bridge = await createOpenAIReviewer(authFile, cwd, fetchImpl);
+    await assert.rejects(bridge(context, new AbortController().signal));
   }
   let calls = 0;
-  const bridge = await createOpenAIApproval(authFile, cwd, async () => {
+  const bridge = await createOpenAIReviewer(authFile, cwd, async () => {
     calls++;
     return sse(verdict());
   });
-  await assert.rejects(
-    bridge.respond(request(), new AbortController().signal, {
-      ...context,
-      model: 'multi/cursor/auto',
-    }),
-  );
-  await assert.rejects(bridge.respond(request(), new AbortController().signal));
-  await assert.rejects(
-    bridge.respond(request(), new AbortController().signal, { ...context, worker: true }),
-  );
-  await assert.rejects(
-    bridge.respond(request(), new AbortController().signal, {
-      ...context,
-      request: { messages: [{ role: 'user', content: '界'.repeat(400000) }] },
-    }),
-  );
+  await assert.rejects(bridge({ ...context, worker: true }, new AbortController().signal));
   const abort = new AbortController();
   abort.abort();
-  await assert.rejects(bridge.respond(request(), abort.signal, context));
+  await assert.rejects(bridge(context, abort.signal));
   assert.equal(calls, 0);
 });
 
@@ -226,23 +212,6 @@ test('investigation enforces filesystem boundary and truncation; discovery never
   );
 });
 
-test('OpenAI reviewer refuses a review context owned by another provider', async (t) => {
-  const { cwd, authFile } = await fixture(t);
-  let calls = 0;
-  const bridge = await createOpenAIApproval(authFile, cwd, async () => {
-    calls++;
-    return sse(verdict());
-  });
-  await assert.rejects(
-    bridge.respond(request(), new AbortController().signal, {
-      ...context,
-      model: 'multi/cursor/auto',
-    }),
-    { message: 'Automatic approval is unavailable for this provider' },
-  );
-  assert.equal(calls, 0);
-});
-
 test('required review without an eligible reviewer fails instead of forwarding as approval', async (t) => {
   const { authFile } = await fixture(t);
   const eligible = await discoverOpenAIReviewer(authFile, async () =>
@@ -282,4 +251,109 @@ test('required review without an eligible reviewer fails instead of forwarding a
     body.error.message,
     'Native gateway: Anthropic is not signed in. Select an external model.',
   );
+});
+
+test('long main and worker evidence drops schemas and keeps system heads and recent messages within budget', async (t) => {
+  const { cwd, authFile } = await fixture(t);
+  const evidence: Array<Record<string, unknown>> = [];
+  const bridge = await createOpenAIReviewer(authFile, cwd, async (_url, init) => {
+    const body = JSON.parse(String(init.body));
+    const text = body.input[0].content;
+    assert(Buffer.byteLength(text) <= 1048576);
+    assert.doesNotMatch(body.instructions, /supplied transcript|worker transcript/);
+    evidence.push(JSON.parse(text));
+    return sse(verdict());
+  });
+  const messages = Array.from({ length: 80 }, (_, index) => ({
+    role: 'user',
+    content: `${'\u0000"\\界'.repeat(5000)}RECENT_${index}`,
+  }));
+  const request = {
+    system: `SYSTEM_HEAD${'界'.repeat(500000)}`,
+    messages,
+    tools: [{ name: 'Bash', description: 'SCHEMA_ONLY'.repeat(200000), input_schema: {} }],
+  };
+  for (const worker of [false, true]) {
+    const result = await bridge(
+      { ...context, worker, request, rootRequest: request },
+      new AbortController().signal,
+    );
+    assert.equal(result.outcome, 'allow');
+  }
+  assert.equal(
+    Object.hasOwn(evidence[0], 'root_request'),
+    false,
+    'main-loop evidence appears only once',
+  );
+  for (const entry of evidence) {
+    const original = entry.original_request as {
+      system: { json_head: string };
+      messages: unknown[];
+      omitted_messages: number;
+      tools?: unknown;
+    };
+    assert.equal(original.tools, undefined);
+    assert.match(original.system.json_head, /SYSTEM_HEAD/);
+    assert.match(JSON.stringify(original.messages.at(-1)), /RECENT_79/);
+    assert(original.omitted_messages > 0);
+    assert.deepEqual(entry.planned_action, { Bash: { command: 'node task.js' } });
+  }
+  assert(Object.hasOwn(evidence[1], 'root_request'));
+});
+
+test('all reviewer instances share four slots, cancel queued calls and release slots on failure or abort', async (t) => {
+  const { cwd, authFile } = await fixture(t);
+  const gate = Promise.withResolvers<void>();
+  const entered = Promise.withResolvers<void>();
+  let active = 0;
+  let peak = 0;
+  let calls = 0;
+  const fetchImpl: GatewayFetch = async (_url, init) => {
+    calls++;
+    const body = JSON.parse(String(init.body));
+    const fail = JSON.parse(body.input[0].content).planned_action.Bash.command === 'FAIL';
+    active++;
+    peak = Math.max(peak, active);
+    if (calls === 4) {
+      entered.resolve();
+    }
+    const aborted = Promise.withResolvers<never>();
+    const abort = () => aborted.reject(init.signal.reason);
+    init.signal.addEventListener('abort', abort, { once: true });
+    try {
+      await Promise.race([gate.promise, aborted.promise]);
+      return fail ? new Response('', { status: 503 }) : sse(verdict());
+    } finally {
+      active--;
+      init.signal.removeEventListener('abort', abort);
+    }
+  };
+  const reviewers = await Promise.all([
+    createOpenAIReviewer(authFile, cwd, fetchImpl),
+    createOpenAIReviewer(authFile, cwd, fetchImpl),
+  ]);
+  const aborts = Array.from({ length: 10 }, () => new AbortController());
+  const settled = Promise.allSettled(
+    aborts.map((abort, index) =>
+      reviewers[index % 2](
+        {
+          ...context,
+          tool: { ...context.tool, input: { command: index === 0 ? 'FAIL' : 'allow' } },
+        },
+        abort.signal,
+      ),
+    ),
+  );
+  await entered.promise;
+  assert.equal(calls, 4);
+  aborts[6].abort(new Error('cancelled while queued'));
+  aborts[1].abort(new Error('cancelled while active'));
+  await setImmediate();
+  gate.resolve();
+  const results = await settled;
+  assert.equal(peak, 4);
+  assert.equal(calls, 9, 'the cancelled queued call never reached Codex');
+  assert.equal(active, 0);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 3);
+  assert.equal((await reviewers[0](context, new AbortController().signal)).outcome, 'allow');
 });

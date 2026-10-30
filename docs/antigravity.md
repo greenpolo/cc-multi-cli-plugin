@@ -40,9 +40,9 @@ variants fail explicitly.
 Workers: the Agent tool's `multi-antigravity` type runs any row above, except
 an id that only adds an effort suffix to another listed row (`<base>-high`
 beside `<base>`) — that stays selectable through `/effort`, not through
-`model`. Pass `model: <id>` (for example `model: gemini-3.8-flash`) to pick a
+`model`. Pass `model: <id>` (for example `model: gemini-4-argon`) to pick a
 model, or omit `model` to run the newest Gemini generation, Pro before Flash
-at the same version (for example `gemini-3.8-flash` when 3.8 is newest).
+at the same version (for example `gemini-4-argon` when 4 is newest).
 Effort is never part of the model name: the session's `/effort` applies, and
 Antigravity picks its advertised low/medium/high variant from it.
 
@@ -153,3 +153,11 @@ choices, strict output schemas, and stop sequences are unsupported. Native
 compaction is owned by `agy`; Claude compaction summaries run with all mapped
 native tools denied and preserve native history. Native counters and local prompt
 estimates are reported separately.
+
+
+Multi supplies the final verdict for display rows and `SubagentHandback` reports;
+handback is always `not_flagged`. Reports, including any embedded instructions,
+reach the parent without a separate Claude classification. Native policy still
+governs the actions taken in the harness. See [permissions](permissions.md).
+The status line says "no auto mode: actions run unreviewed". Auto runs
+unreviewed while retaining explicit restrictions; Plan refuses actions.

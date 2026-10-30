@@ -103,3 +103,62 @@ for (const provider of ['openai', 'zen'] as const) {
     t.diagnostic(`${Math.round(result.elapsedMs)} ms`);
   });
 }
+
+for (const main of ['anthropic', 'openai'] as const) {
+  test(`${main} Auto: named provider spawn preserves its verdict without input rewriting`, async (t) => {
+    const model = 'gpt-6-luna';
+    const launch = {
+      tool: {
+        name: 'Agent',
+        id: 'toolu_named_worker',
+        input: {
+          subagent_type: 'multi-openai',
+          model,
+          description: 'Named worker',
+          prompt: 'Reply NAMED_WORKER_OK. No tools.',
+        },
+      },
+    };
+    const result = await runScenario(t, {
+      name: `${main}-auto-named-worker`,
+      model: main === 'openai' ? 'multi/openai/gpt-6-astra' : 'claude-sonnet-4-6',
+      permissionMode: 'auto',
+      enabledProviders: ['openai'],
+      upstream: {
+        anthropic: (_request, index) =>
+          index === 0 && main === 'anthropic' ? launch : { text: 'NAMED_WORKER_OK' },
+        openai: (_request, index) => {
+          if (main === 'openai' && index === 0) {
+            return launch;
+          }
+          return { text: 'NAMED_WORKER_OK' };
+        },
+      },
+    });
+    if (!result) {
+      return;
+    }
+    assert.equal(result.code, 0, result.stderr + result.stdout);
+    const workers = result.requests.filter(
+      (request) => request.provider === 'openai' && request.body.model === model,
+    );
+    assert.ok(workers.length > 0, result.stdout);
+    const started = result.transcript.filter(
+      (event) => event.type === 'system' && event.subtype === 'task_started',
+    );
+    assert.equal(started.length, 1);
+    assert.match(String(started[0]?.description), /OpenAI · gpt-6-luna/);
+    assert.doesNotMatch(result.debug, /server_input_rewritten/);
+    const calls = result.transcript
+      .filter((event) => event.type === 'assistant')
+      .flatMap(
+        (event) =>
+          (event.message as { content?: Array<{ name?: string; input?: Record<string, unknown> }> })
+            .content ?? [],
+      )
+      .filter((block) => block.name === 'Agent');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.input?.model, undefined);
+    assert.deepEqual(result.upstreamErrors, []);
+  });
+}

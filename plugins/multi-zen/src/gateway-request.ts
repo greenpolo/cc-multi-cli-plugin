@@ -58,15 +58,14 @@ export function prepareZenRequest(
         signal,
         redirect: 'error',
       }),
-    translate: (stream, emit) => {
+    translate: (stream, emit, rememberWorkerModel) => {
       const options = {
+        rememberWorkerModel,
         toolNames: originalToolNames(body),
         stopSequences: body.stop_sequences,
         signaturePrefix: prepared.signaturePrefix,
         requireUsage: true,
         inputTokens: prepared.inputTokens,
-        safeguards: body.safeguards,
-        safeguardProvider: 'zen' as const,
       };
       const translate = prepared.endpoint === 'responses' ? fromResponses : fromChat;
       return translate(stream, String(body.model), emit, options);

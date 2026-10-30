@@ -7,6 +7,7 @@ import { workerCatalog, workerDefinitions } from '../../plugins/multi-core/src/l
 const rows = [
   'multi/openai/gpt-6-astra',
   'multi/openai/gpt-6-luna',
+  'multi/openai/gpt-6.1-sol',
   'multi/cursor/default',
   'multi/cursor/grok-4.7',
   'multi/cursor/composer-2.5',
@@ -68,7 +69,7 @@ test('another provider’s model is refused, naming this provider’s models and
   );
   assert.throws(
     () => resolveWorker(catalog, 'multi-openai', 'sonnet'),
-    /does not run Claude models; "sonnet" is a Claude alias\. OpenAI models: gpt-6-astra, gpt-6-luna\./,
+    /does not run Claude models; "sonnet" is a Claude alias\. OpenAI models: gpt-6-astra, gpt-6-luna, gpt-6\.1-sol\./,
   );
   assert.throws(
     () => resolveWorker(catalog, 'multi-antigravity', 'gemini-9-ultra'),
@@ -78,7 +79,7 @@ test('another provider’s model is refused, naming this provider’s models and
 });
 
 test('no model runs the provider default: the newest or native default, not the first row', () => {
-  assert.equal(resolveWorker(catalog, 'multi-openai').id, 'gpt-6-astra');
+  assert.equal(resolveWorker(catalog, 'multi-openai').id, 'gpt-6.1-sol');
   assert.equal(resolveWorker(catalog, 'multi-cursor', '').id, 'default');
   assert.equal(resolveWorker(catalog, 'multi-antigravity').id, 'gemini-3.8-flash');
   assert.equal(resolveWorker(catalog, 'multi-zen').id, 'deepseek-v4.1-flash');
@@ -93,6 +94,11 @@ test('no model runs the provider default: the newest or native default, not the 
       'gemini-3.1-pro',
     ]),
     'gemini-3.8-pro',
+  );
+  // A newer generation outranks an older Pro, whatever its tier name.
+  assert.equal(
+    antigravityDefaultWorkerModel(['gemini-3.8-pro', 'gemini-4-argon']),
+    'gemini-4-argon',
   );
   assert.equal(antigravityDefaultWorkerModel(['claude-opus']), undefined);
 });

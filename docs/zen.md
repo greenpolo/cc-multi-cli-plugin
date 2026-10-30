@@ -29,7 +29,7 @@ below lists the full supported catalog; other rows require explicit selection.
 
 | Model IDs | Protocol | Effort |
 | --- | --- | --- |
-| `deepseek-v4.1-flash`, `deepseek-v4-flash`, `kimi-k3`, `glm-5.3`, `glm-5.3-flash`, `glm-5.2`, `minimax-m2.7` | Chat Completions | Provider-native reasoning |
+| `deepseek-v4.1-flash`, `deepseek-v4-flash`, `kimi-k3`, `glm-5.3`, `glm-5.3-flash`, `glm-5.2`, `minimax-m3`, `minimax-m2.7` | Chat Completions | Provider-native reasoning |
 | `gpt-6.1-sol`, `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `muse-spark-1.3` | Responses | `low`, `medium`, `high`, `xhigh`, and `max` |
 
 Workers: the Agent tool's `multi-zen` type runs the Zen rows the session's
@@ -42,7 +42,7 @@ change it.
 
 ## Execution
 
-Claude Code executes tools and applies its permission mode. Zen has no independent model-based reviewer. Claude-backed classification remains available when Claude access is present. Zen never borrows OpenAI reviewer capability.
+Claude Code executes tools and applies its permission mode. Zen has no independent model-based reviewer. Auto runs tools unreviewed, and the status line says "no auto mode: actions run unreviewed". Plan refuses actions. Core supplies evaluated verdicts, so Zen tool calls do not spend Claude quota on a local classifier. Zen never borrows OpenAI reviewer capability.
 
 ## Caching and continuation
 

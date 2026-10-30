@@ -1,5 +1,6 @@
 import type { Register } from 'claude-code';
 import { atom, read } from 'claude-code';
+import { isProviderWorker } from '../src/gateway/provider-workers.ts';
 
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
@@ -12,18 +13,6 @@ const spawnModels = atom(
   {} as Record<string, string>,
 );
 
-/**
- * The provider worker types. Each runs one provider's models, and its Agent call's
- * `model` picks which; the rows below keep that model in sight wherever the agent shows.
- */
-const PROVIDER_WORKERS = new Set([
-  'multi-openai',
-  'multi-zen',
-  'multi-cursor',
-  'multi-antigravity',
-  'multi-grok',
-]);
-
 const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   openai: 'OpenAI',
   zen: 'Zen',
@@ -31,10 +20,6 @@ const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   antigravity: 'Antigravity',
   grok: 'Grok',
 };
-
-export function isProviderWorker(type: unknown): boolean {
-  return typeof type === 'string' && PROVIDER_WORKERS.has(type);
-}
 
 /** Provider display name for a `multi-*` subagent type, else undefined. */
 export function providerName(subagentType: unknown): string | undefined {

@@ -373,7 +373,8 @@ test('token-accounting: reported usage near the window triggers auto-compaction'
     enabledProviders: ['openai'],
     upstream: {
       openai: (_request, index) => ({
-        text: index === 1 ? 'Summary of the earlier turn.' : `Turn ${index}.`,
+        // Claude Code asks once more when a summary reply has no <summary> block.
+        text: index === 1 ? '<summary>Summary of the earlier turn.</summary>' : `Turn ${index}.`,
         usage: { input: index === 0 ? 190000 : 5000, output: 50 },
       }),
     },

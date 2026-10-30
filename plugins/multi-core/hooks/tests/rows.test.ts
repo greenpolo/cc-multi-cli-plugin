@@ -276,7 +276,7 @@ async function header(
   const drawn = await row.drawn();
   expect(await row.find({ type: 'Text', text: /mcp__|multi_row|a{32}/ })).toBeUndefined();
   await row.unmount();
-  return drawn;
+  return visualTree(drawn);
 }
 
 async function result(
@@ -300,7 +300,7 @@ async function result(
   });
   const drawn = await row.drawn();
   await row.unmount();
-  return drawn;
+  return visualTree(drawn);
 }
 
 /** The engine beneath the mod: what it was asked to draw, and a stand-in for its drawing. */
@@ -630,3 +630,26 @@ test('a failed display tool acknowledgement is retried while the catalog is unch
   await syncDisplayTools(client);
   expect(acknowledged.length).toBe(2);
 });
+
+/** Engine attribution and remote bold normalization are metadata, not row layout. */
+function visualTree(tree: unknown): unknown {
+  return JSON.parse(JSON.stringify(tree), (key, value: unknown) => {
+    if (typeof value !== 'object' || value === null) {
+      return value;
+    }
+    if (key === 'part' && 'plugin' in value && value.plugin === 'multi-core') {
+      return undefined;
+    }
+    if (
+      key === 'props' &&
+      'bold' in value &&
+      value.bold === true &&
+      'weight' in value &&
+      value.weight === 'semibold'
+    ) {
+      const { weight: _defaultWeight, ...props } = value;
+      return props;
+    }
+    return value;
+  });
+}

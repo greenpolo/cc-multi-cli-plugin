@@ -3,7 +3,7 @@
 
 const HARNESS_PROVIDERS = ['cursor', 'antigravity', 'grok'] as const;
 export type HarnessProvider = (typeof HARNESS_PROVIDERS)[number];
-type ProviderName = HarnessProvider | 'openai' | 'zen';
+export type ProviderName = HarnessProvider | 'openai' | 'zen';
 export type ProviderRoute = ProviderName | 'anthropic';
 
 const PROVIDERS: readonly ProviderName[] = [...HARNESS_PROVIDERS, 'openai', 'zen'];
@@ -31,15 +31,6 @@ export function providerRoute(model: string | null | undefined): ProviderRoute {
   return providerOf(model) ?? (model ? 'openai' : 'anthropic');
 }
 
-/**
- * Whose reviewer judges the model's actions: a provider's own, never Zen (whose auto mode
- * is unreviewed) or Claude. An unrecognized `multi/` prefix routes to OpenAI, so it is
- * reviewed like any other external model.
- */
-export function providerOwnedReview(model: string): boolean {
-  return model.startsWith('multi/') && providerOf(model) !== 'zen';
-}
-
 /** Claude's context tag is display metadata, never part of a native model ID. */
 export function nativeSpelling(model: string | undefined): string | undefined {
   return model?.replace(/\[1m\]$/i, '');
@@ -56,3 +47,28 @@ export const harnessUnavailable: Record<HarnessProvider, string> = {
   antigravity: 'Antigravity is unavailable. Install and connect the multi-antigravity plugin.',
   grok: 'Grok is unavailable. Install Grok Build, run grok login, and relaunch.',
 };
+
+export type AutoReviewPolicy = { review: 'reviewer' | 'harness' | 'none'; statement: string };
+export const PROVIDER_AUTO_REVIEW: Record<ProviderName, AutoReviewPolicy> = {
+  openai: { review: 'reviewer', statement: 'reviewed by the OpenAI account reviewer' },
+  cursor: {
+    review: 'harness',
+    statement: 'Cursor reviews its own actions natively and fails open',
+  },
+  zen: { review: 'none', statement: 'no auto mode: actions run unreviewed' },
+  antigravity: { review: 'none', statement: 'no auto mode: actions run unreviewed' },
+  grok: { review: 'none', statement: 'no auto mode: actions run unreviewed' },
+};
+
+export function autoReviewPolicy(
+  provider: ProviderName,
+  reviewerAvailable: boolean,
+): AutoReviewPolicy {
+  const policy = PROVIDER_AUTO_REVIEW[provider];
+  return policy.review === 'reviewer' && !reviewerAvailable
+    ? {
+        review: 'none',
+        statement: 'OpenAI reviewer unavailable; no auto mode: actions run unreviewed',
+      }
+    : policy;
+}

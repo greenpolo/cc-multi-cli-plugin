@@ -10,7 +10,6 @@ async function listen(t: TestContext, fetchImpl: GatewayFetch) {
     token: 'local-test-secret',
     authFile: '/nonexistent/auth.json',
     fetchImpl,
-    guardAuto: true,
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

@@ -128,8 +128,23 @@ test('discovers scoped plugin workers, manifest replacement paths and inherited 
     disallowedTools: undefined,
   });
   assert.equal(definitions['fixture:ignored'], undefined);
+  // An unquoted `: ` in a description (issue #45) is repaired, as Claude Code accepts it.
+  await writeFile(
+    path.join(root, 'reader.md'),
+    '---\nname: reader\ndescription: put `pi-model: <pattern>` first\ntools: Read, Grep\n---\n',
+  );
+  assert.deepEqual((await loadWorkerPermissions(cwd, {}))['fixture:reader'], {
+    tools: ['Read', 'Grep'],
+    disallowedTools: undefined,
+  });
+  // An unrepairable agent refuses only its own native workers; the gateway still starts.
+  const stderr = mock.method(process.stderr, 'write', () => true);
   await writeFile(path.join(root, 'reader.md'), '---\ntools: [Read\n---\n');
-  await assert.rejects(loadWorkerPermissions(cwd, {}), /Malformed plugin agent/);
+  const refused = await loadWorkerPermissions(cwd, {});
+  assert.match(refused['fixture:reader'].nativePermissionError ?? '', /Malformed plugin agent/);
+  assert.deepEqual(refused.Plan, { disallowedTools: ['Write', 'Edit'] });
+  await loadWorkerPermissions(cwd, {});
+  assert.equal(stderr.mock.callCount(), 1);
 });
 
 test('plugin and worker hooks never block native execution; Claude hooks do not run natively', async () => {

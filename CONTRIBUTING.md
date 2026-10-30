@@ -15,8 +15,8 @@ npm ci
 npm run check
 ```
 
-The checks cover banner freshness, formatting and lint, unused code, strict
-TypeScript, and offline tests. They do not require provider logins or paid inference.
+The checks cover banner freshness, version consistency, formatting and lint,
+unused code, strict TypeScript, and offline tests. They do not require provider logins or paid inference.
 
 ## Making a change
 
@@ -28,6 +28,8 @@ TypeScript, and offline tests. They do not require provider logins or paid infer
 
 Use `npm run format` for formatting and `npm run lint:fix` for safe lint fixes.
 If changing the banner, edit `scripts/banner.mjs` and run `npm run banner:generate`.
+Maintainers cut releases with `npm run release`; see
+[AGENTS.md](AGENTS.md#releasing).
 
 Changes to live integrations also need the relevant opt-in checks listed in
 [AGENTS.md](AGENTS.md#verification). These use real accounts and may spend provider

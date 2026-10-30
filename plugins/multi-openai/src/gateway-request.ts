@@ -97,12 +97,12 @@ export function prepareOpenAIRequest(
         throw error instanceof CodexAuthError ? new ProviderAuthError(error.message) : error;
       }
     },
-    translate: (stream, emit) =>
+    translate: (stream, emit, rememberWorkerModel) =>
       fromResponses(stream, externalModel, emit, {
+        rememberWorkerModel,
         toolNames: toolNames ?? originalToolNames(body),
         stopSequences: body.stop_sequences,
         inputTokens: inputTokens(),
-        safeguards: body.safeguards,
       }),
   };
 }

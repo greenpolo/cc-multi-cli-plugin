@@ -23,7 +23,6 @@ const GPT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const satisfies
 // github.com/anomalyco/opencode/blob/830d5eb5354874105cc31599635a80c1662609e8/packages/opencode/test/tool/fixtures/models-api.json
 // Zen's /models endpoint exposes IDs only, so capabilities stay explicit and conservative.
 export const ZEN_MODELS: readonly ZenModel[] = Object.freeze([
-  // Zen serves it; Codex refuses it on ChatGPT plans (2026-09-29), so it has no OpenAI row.
   {
     id: 'gpt-6.1-sol',
     protocol: 'responses',
@@ -92,6 +91,16 @@ export const ZEN_MODELS: readonly ZenModel[] = Object.freeze([
     images: false,
     documents: false,
     maxOutputTokens: 131072,
+  },
+  // Open-weight; served a live text request on 2026-10-14 but ignored an attached image.
+  {
+    id: 'minimax-m3',
+    protocol: 'chat',
+    label: 'MiniMax-M3',
+    description: 'OpenCode Zen · Chat Completions',
+    images: false,
+    documents: false,
+    maxOutputTokens: 128000,
   },
   {
     id: 'minimax-m2.7',

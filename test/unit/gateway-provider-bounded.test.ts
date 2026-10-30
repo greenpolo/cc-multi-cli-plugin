@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { addBounded, setBounded } from '../../plugins/multi-core/src/gateway/bounded.ts';
-import {
-  harnessProvider,
-  providerOwnedReview,
-  providerRoute,
-} from '../../plugins/multi-core/src/gateway/provider.ts';
+import { harnessProvider, providerRoute } from '../../plugins/multi-core/src/gateway/provider.ts';
 
 test('provider prefixes decide routing, review ownership and harness execution in one place', () => {
   assert.equal(providerRoute(null), 'anthropic');
@@ -16,11 +12,6 @@ test('provider prefixes decide routing, review ownership and harness execution i
   assert.equal(harnessProvider('multi/grok/x'), 'grok');
   assert.equal(harnessProvider('multi/openai/x'), undefined);
   assert.equal(harnessProvider(undefined), undefined);
-  assert.equal(providerOwnedReview('multi/antigravity/x'), true);
-  assert.equal(providerOwnedReview('multi/openai/x'), true);
-  assert.equal(providerOwnedReview('multi/unknown/x'), true);
-  assert.equal(providerOwnedReview('multi/zen/x'), false);
-  assert.equal(providerOwnedReview('claude-sonnet'), false);
 });
 
 test('bounded maps choose between recency and insertion eviction', () => {
