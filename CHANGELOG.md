@@ -4,6 +4,13 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## Unreleased
+
+- **Run GPT-6.2 Sol and Astra.** The OpenAI picker now lists `gpt-6.2-sol` and
+  `gpt-6.2-astra` above the earlier models, and a `multi-openai` worker that names
+  no model now runs `gpt-6.2-sol` in place of `gpt-6.1-sol`. The 6.1 and 6.0 rows
+  stay available.
+
 ## 0.4.0 — 2026-10-28
 
 Gateway Auto-mode arbiter, GPT-6.1 Terra and Sol, Gemini 4 Argon and resilient startup

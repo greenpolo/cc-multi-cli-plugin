@@ -565,7 +565,7 @@ test('launcher registers one worker per provider from the picker rows', () => {
   );
   const rows = [
     'multi/openai/gpt-6-luna',
-    'multi/openai/gpt-6.1-sol',
+    'multi/openai/gpt-6.2-sol',
     ...cursorPickerOptions(cursor).map(({ model }) => model),
     'multi/cursor/composer-2.5/effort=high',
     'multi/antigravity/gemini-3.1-pro[1m]',
@@ -583,7 +583,7 @@ test('launcher registers one worker per provider from the picker rows', () => {
     'multi-antigravity',
   ]);
   // Each default is the provider's newest or native default, not the first row.
-  assert.equal(agents['multi-openai'].model, 'multi/openai/gpt-6.1-sol');
+  assert.equal(agents['multi-openai'].model, 'multi/openai/gpt-6.2-sol');
   assert.equal(agents['multi-openai'].effort, 'medium');
   assert.equal(agents['multi-zen'].model, 'multi/zen/deepseek-v4.1-flash');
   assert.equal(agents['multi-zen'].effort, 'medium');
@@ -596,7 +596,7 @@ test('launcher registers one worker per provider from the picker rows', () => {
   );
   assert.equal(
     agents['multi-openai'].description,
-    "OpenAI worker (Claude Code's tools). Pass model (gpt-6-luna, gpt-6.1-sol) or omit it for gpt-6.1-sol.",
+    "OpenAI worker (Claude Code's tools). Pass model (gpt-6-luna, gpt-6.2-sol) or omit it for gpt-6.2-sol.",
   );
   assert.deepEqual(agents['multi-openai'].tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
   assert.equal(agents['multi-cursor'].tools.at(-1), 'mcp__multi-core');

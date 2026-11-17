@@ -620,11 +620,12 @@ test('OpenAI main and worker requests adapt instructions without losing runtime 
     seen.push(JSON.parse(String(options.body)));
     return new Response(sse(textEvents));
   });
-  for (const name of ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna']) {
+  const names = Object.values(MODELS);
+  for (const name of names) {
     await (await call({ ...payload, model: `multi/openai/${name}` })).text();
   }
   await (await call(payload, { 'x-claude-code-agent-id': 'worker-a' })).text();
-  assert.equal(seen.length, 5);
+  assert.equal(seen.length, names.length + 1);
   for (const request of seen) {
     assert.equal(request.instructions, openaiInstructions(runtime));
     assert(request.instructions.startsWith(runtime));
@@ -639,7 +640,7 @@ test('OpenAI main and worker requests adapt instructions without losing runtime 
   }
   const response = await call(payload, {}, '/v1/messages/count_tokens');
   assert.deepEqual(await response.json(), { input_tokens: estimateInputTokens(seen[0]) });
-  assert.equal(seen.length, 5, 'Counting must not call the provider');
+  assert.equal(seen.length, names.length + 1, 'Counting must not call the provider');
 });
 
 test('Claude prompts remain unchanged after OpenAI main and worker requests, including token counts', async (t) => {
@@ -749,7 +750,14 @@ test('all registered model and reasoning choices reach OpenAI without substituti
     return new Response(sse(textEvents));
   });
   assert.equal(OPENAI_WORKER_EFFORT, 'medium');
-  for (const slug of ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna']) {
+  for (const slug of [
+    'gpt-6.2-sol',
+    'gpt-6.2-astra',
+    'gpt-6-astra',
+    'gpt-6.1-sol',
+    'gpt-6.1-terra',
+    'gpt-6-luna',
+  ]) {
     assert(Object.values(MODELS).includes(slug), slug);
     for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
       const response = await call(
