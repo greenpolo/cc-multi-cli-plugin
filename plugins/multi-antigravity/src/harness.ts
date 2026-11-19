@@ -332,7 +332,8 @@ export class AntigravityHarness extends CliHarness<Saved, AntigravityModel> {
     const finished = response.finish(
       text.calls.turn(usageFields(usageDelta(result.usage, session.saved.usage))),
       model.id,
-      modelEffort(model),
+      // A pinned `-xhigh` row takes no effort flag; its ID names the effort that ran.
+      modelEffort(model) ?? (model.id.endsWith('-xhigh') ? 'xhigh' : undefined),
     );
     return commitHarnessResponse({
       session,
