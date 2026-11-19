@@ -1,32 +1,34 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import http from 'node:http';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import {
+  anthropicHeaders,
+  DEFAULT_ANTHROPIC_URL,
+  isRawAnthropicPath,
+  parseAnthropicBase,
+  STRIPPED_RESPONSE_HEADERS,
+} from './anthropic.ts';
 import { setBounded } from './bounded.ts';
 import {
   DisplayRows,
-  displayFollowUp,
-  FollowUpRefused,
   FollowUpUnavailable,
   followUpFallback,
   isDisplayTool,
   recordedFollowUp,
   unavailableFollowUp,
-  withoutDisplayTools,
 } from './display-rows.ts';
 import type { GatewayFetch } from './fetch.ts';
 import {
   emitHandback,
   handbackOffered,
-  handbackRequestKind,
+  type handbackRequestKind,
   recordedReport,
   withHandback,
-  withoutHarnessHandback,
 } from './harness-handback.ts';
 import type { NativeObservation } from './harness-progress.ts';
 import type {
-  Emit,
   MessagesRequest,
   MessagesResponse,
   ServedReply,
@@ -35,10 +37,10 @@ import type {
 } from './messages.ts';
 import { ModBridge } from './mod-bridge.ts';
 import { ModCompactions } from './mod-compaction.ts';
-import { MOD_KEY_HEADER, ModSessionKeys } from './mod-keys.ts';
+import { ModSessionKeys } from './mod-keys.ts';
 import { handleModRoute } from './mod-routes.ts';
 import type { PermissionContext, PermissionModes } from './mode-hook.ts';
-import { type NativeHarness, nativeHarnessErrorStatus } from './native-harness.ts';
+import type { NativeHarness } from './native-harness.ts';
 import {
   autoReviewPolicy,
   harnessProvider,
@@ -48,10 +50,36 @@ import {
 } from './provider.ts';
 import type { ConnectedProvider } from './provider-adapter.ts';
 import type { PreparedRequest } from './provider-request.ts';
-import { ProviderAuthError, UpstreamFailure } from './provider-request.ts';
+import { UpstreamFailure } from './provider-request.ts';
 import { ProviderUsageDashboard } from './provider-usage.ts';
 import { ReceiptLedger } from './receipts.ts';
-import { isRecord } from './record.ts';
+import {
+  displayRowsRemoved,
+  emitTerminal,
+  failResponse,
+  failureMessage,
+  finishHarnessDelivery,
+  ReplyKeepAlive,
+  sendResult,
+} from './reply.ts';
+import {
+  admitModRequest,
+  assertLoopbackHost,
+  assertProviderEnabled,
+  authorizeRequest,
+  BadRequest,
+  externalModel,
+  header,
+  type ProviderRequest,
+  providerSignal,
+  readRequest,
+  reason,
+  requestHasBody,
+  requestIdentity,
+  routeOf,
+  unavailable,
+  validateHarness,
+} from './request.ts';
 import { forAnthropic } from './responses.ts';
 import { verdictsFor } from './verdicts.ts';
 import {
@@ -60,31 +88,6 @@ import {
   stripWorkerSse,
   WorkerModels,
 } from './worker-models.ts';
-
-const DEFAULT_ANTHROPIC_URL = 'https://api.anthropic.com';
-// Anthropic's own Messages API limit is 32 MB; the gateway buffers up to it and leaves
-// the verdict to the provider, so a request Claude Code could send natively still goes.
-const MAX_BODY = 32 * 1024 * 1024;
-const STRIPPED_REQUEST_HEADERS = [
-  'host',
-  'connection',
-  'content-length',
-  'transfer-encoding',
-  'x-multi-gateway-token',
-  'accept-encoding',
-  'keep-alive',
-  'te',
-  'trailer',
-  'upgrade',
-  'proxy-connection',
-  'proxy-authorization',
-];
-const STRIPPED_RESPONSE_HEADERS = [
-  'content-encoding',
-  'content-length',
-  'transfer-encoding',
-  'connection',
-];
 
 /** What the gateway reports to `onEvent`; routing only, never credentials or bodies. */
 export interface GatewayEvent {
@@ -140,39 +143,6 @@ export type GatewayProvider = Pick<
   ConnectedProvider,
   'harness' | 'displayTools' | 'prepare' | 'reviewer' | 'usage' | 'billed'
 > & { harness?: NativeHarness };
-
-/** Rejected before any provider call; answered as HTTP 400 rather than 502. */
-class BadRequest extends Error {}
-class ForbiddenHost extends Error {}
-const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
-function authenticated(actual: string | string[] | undefined, expected: string): boolean {
-  const a = Buffer.from(String(actual ?? ''));
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function header(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value.join(', ') : value;
-}
-
-interface ProviderRequest {
-  req: http.IncomingMessage;
-  res: http.ServerResponse;
-  body: MessagesRequest;
-  parsed: Record<string, unknown>;
-  raw: Buffer;
-  url: URL;
-  signal: AbortSignal;
-  abort: AbortController;
-  agentId?: string;
-  identity: ReturnType<typeof requestIdentity>;
-  permissionContext?: PermissionContext;
-  emit: TerminalEmit;
-  startStream: () => void;
-  /** Arms the non-streamed keepalive before a slow upstream wait; a stream needs none. */
-  keepAlive: () => void;
-}
 
 export function createNativeGateway({
   token,
@@ -902,456 +872,4 @@ export function createNativeGateway({
       replies.stop();
     }
   });
-}
-
-class RequestTooLarge extends Error {}
-
-/**
- * What keeps a provider reply's connection alive while it works. A stream sends its
- * headers at once and a `ping` event every 15 s. Claude Code's request timeout only
- * bounds the wait for response headers, and a timed-out request is retried: a run that
- * is still working would then be started again. A non-streamed reply that is still
- * pending after a while therefore sends its headers and keeps the connection alive with
- * leading JSON whitespace, which any JSON parser skips before the message. Replies and
- * failures that come sooner keep their own status; after that point a failure can only
- * be an error body.
- */
-class ReplyKeepAlive {
-  jsonStarted = false;
-  private timer: NodeJS.Timeout | undefined;
-  private readonly res: http.ServerResponse;
-  private readonly ping: (type: 'ping') => void;
-  private readonly delayMs: number;
-
-  constructor(res: http.ServerResponse, ping: (type: 'ping') => void, delayMs: number) {
-    this.res = res;
-    this.ping = ping;
-    this.delayMs = delayMs;
-  }
-
-  startStream(streamed: boolean | undefined) {
-    if (this.timer) {
-      return;
-    }
-    if (!streamed) {
-      this.keepAlive(streamed);
-      return;
-    }
-    this.res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-    this.res.flushHeaders();
-    this.timer = setInterval(() => this.ping('ping'), 15000);
-  }
-
-  keepAlive(streamed: boolean | undefined) {
-    if (this.timer || streamed) {
-      return;
-    }
-    this.timer = setTimeout(() => {
-      this.jsonStarted = true;
-      this.res.writeHead(200, { 'content-type': 'application/json' });
-      this.res.flushHeaders();
-      this.timer = setInterval(() => this.res.write(' '), Math.min(15000, this.delayMs));
-    }, this.delayMs);
-  }
-
-  stop() {
-    clearInterval(this.timer);
-  }
-}
-
-/**
- * The gateway token alone does not authorize a mod request that changes a session: the
- * token is in the environment of Claude's own tools. See mod-keys.ts.
- */
-function admitModRequest(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  parsed: Record<string, unknown>,
-  keys: ModSessionKeys,
-) {
-  if (req.method !== 'POST' || typeof parsed.sessionId !== 'string' || !parsed.sessionId) {
-    return true;
-  }
-  const verdict = keys.check(parsed.sessionId, header(req.headers[MOD_KEY_HEADER]));
-  if (verdict.refused) {
-    res.writeHead(403, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Mod session key required' }));
-    return false;
-  }
-  if (verdict.issue) {
-    res.setHeader(MOD_KEY_HEADER, verdict.issue);
-  }
-  return true;
-}
-
-/**
- * Everything except the Messages API the gateway parses and may route, and its own
- * /multi/* control routes, goes to Anthropic as raw bytes with the caller's headers.
- */
-function isRawAnthropicPath(pathName: string) {
-  return (
-    !pathName.startsWith('/multi/') &&
-    !['/v1/messages', '/v1/messages/count_tokens'].includes(pathName)
-  );
-}
-
-/**
- * Only the gateway's own loopback name and port are accepted as the `Host`. A web page
- * that rebinds its DNS name to 127.0.0.1 reaches the port with its own name in `Host`,
- * which is what keeps it from using the unauthenticated raw passthrough as a relay.
- */
-function assertLoopbackHost(req: http.IncomingMessage) {
-  const host = req.headers.host?.toLowerCase();
-  const port = req.socket.localPort;
-  const allowed = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
-  if (!host || !allowed.includes(host)) {
-    throw new ForbiddenHost('Forbidden host');
-  }
-}
-
-/** A request body is present when the client declared one, whatever the method. */
-function requestHasBody(req: http.IncomingMessage) {
-  if (req.method === 'GET' || req.method === 'HEAD') {
-    return false;
-  }
-  return (
-    req.headers['transfer-encoding'] !== undefined || Number(req.headers['content-length'] ?? 0) > 0
-  );
-}
-
-/** The origin and path prefix Claude's traffic is forwarded to, without a trailing slash. */
-function parseAnthropicBase(value: string) {
-  const parsed = new URL(value);
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new Error('The Anthropic base URL must be http or https');
-  }
-  return parsed.origin + parsed.pathname.replace(/\/+$/, '');
-}
-
-/**
- * Display rows are Claude Code UI: no provider sees them as tools or history. A
- * request that only answers a reply's rows is marked as that reply's follow-up.
- */
-function displayRowsRemoved(
-  url: URL,
-  request: { raw: Buffer; parsed: Record<string, unknown>; body: MessagesRequest },
-) {
-  const harness = harnessProvider(externalModel(request.body.model));
-  const deliverHandback = Boolean(harness && handbackOffered(request.body));
-  const handbackKind = harness ? handbackRequestKind(request.body) : undefined;
-  const followUp = url.pathname === '/v1/messages' ? displayFollowUp(request.body) : undefined;
-  const withoutRows = withoutDisplayTools(request.body);
-  const body = harness ? withoutHarnessHandback(withoutRows) : withoutRows;
-  const raw = body === request.body ? request.raw : Buffer.from(JSON.stringify(body));
-  return { body, raw, followUp, deliverHandback, handbackKind };
-}
-
-function emitTerminal(emit: TerminalEmit, response: ServedReply): void {
-  emit('message_delta', {
-    delta: {
-      stop_reason: response.stop_reason,
-      stop_sequence: response.stop_sequence,
-      ...(response.safeguard_results === undefined
-        ? {}
-        : { safeguard_results: response.safeguard_results }),
-    },
-    usage: response.usage,
-  });
-  emit('message_stop', {});
-}
-
-function finishHarnessDelivery(
-  nativeResult: MessagesResponse,
-  deliverHandback: boolean,
-  body: MessagesRequest,
-  emit: Emit,
-): MessagesResponse {
-  if (!deliverHandback) {
-    return nativeResult;
-  }
-  const result =
-    nativeResult.multi_followup === undefined
-      ? withHandback(nativeResult, recordedReport(nativeResult) ?? '')
-      : nativeResult;
-  if (body.stream) {
-    if (result !== nativeResult) {
-      emitHandback(emit, result);
-    }
-  }
-  return result;
-}
-
-function providerSignal(disconnected: AbortSignal, model: string | null, timeoutMs?: number) {
-  // Native harness runs follow the client connection rather than an HTTP deadline.
-  if (harnessProvider(model)) {
-    return disconnected;
-  }
-  // Streamed OpenAI, Zen and Claude responses (including server-side advisor calls)
-  // can outlive any fixed wall-clock deadline; only an explicit limit bounds them.
-  if (timeoutMs === undefined) {
-    return disconnected;
-  }
-  return AbortSignal.any([disconnected, AbortSignal.timeout(timeoutMs)]);
-}
-
-async function readRequest(req: http.IncomingMessage) {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > (req.url?.startsWith('/multi/mod/') ? 32 * 1024 : MAX_BODY)) {
-      throw new RequestTooLarge();
-    }
-    chunks.push(chunk);
-  }
-  const raw = Buffer.concat(chunks);
-  let parsed: unknown;
-  try {
-    parsed = raw.length ? JSON.parse(raw.toString('utf8')) : {};
-  } catch {
-    throw new BadRequest('Invalid JSON');
-  }
-  if (!isRecord(parsed) || (parsed.model !== undefined && typeof parsed.model !== 'string')) {
-    throw new BadRequest('Expected an object with a string model');
-  }
-  return { raw, parsed, body: parsed as MessagesRequest };
-}
-
-function errorStatus(error: unknown): number {
-  if (error instanceof ProviderAuthError) {
-    return 401;
-  }
-  if (error instanceof BadRequest) {
-    return 400;
-  }
-  if (error instanceof FollowUpRefused || error instanceof ForbiddenHost) {
-    return 403;
-  }
-  if (error instanceof FollowUpUnavailable) {
-    return 404;
-  }
-  if (error instanceof UpstreamFailure) {
-    return error.status;
-  }
-  const harnessStatus = nativeHarnessErrorStatus(error);
-  if (harnessStatus !== undefined) {
-    return harnessStatus;
-  }
-  return 502;
-}
-
-function sendResult(exchange: ProviderRequest, result: ServedReply) {
-  if (!exchange.body.stream && !exchange.res.headersSent) {
-    exchange.res.writeHead(200, { 'content-type': 'application/json' });
-  }
-  exchange.res.end(exchange.body.stream ? undefined : JSON.stringify(result));
-}
-
-function requestIdentity(
-  parsed: Record<string, unknown>,
-  agentId?: string,
-  sessionHeader?: string,
-  provider = true,
-) {
-  const rawIdentity =
-    isRecord(parsed.metadata) && typeof parsed.metadata.user_id === 'string'
-      ? parsed.metadata.user_id
-      : undefined;
-  let session = '';
-  if (rawIdentity) {
-    try {
-      const metadata: unknown = JSON.parse(rawIdentity);
-      if (isRecord(metadata) && typeof metadata.session_id === 'string') {
-        session = metadata.session_id;
-      }
-    } catch {
-      /* Unknown identity cannot grant auto capability. */
-    }
-  }
-  // Session identity matters to provider routes and to classifier requests that go to
-  // provider review (checked at dispatch). A Claude passthrough request is never refused
-  // for it: Anthropic owns that request.
-  const mismatch = Boolean(session && sessionHeader && session !== sessionHeader);
-  if (provider && mismatch) {
-    throw new BadRequest('Session header and metadata disagree');
-  }
-  session = session || sessionHeader || '';
-  const identity = session || rawIdentity;
-  return {
-    identity,
-    session,
-    mismatch,
-    scope: identity ? JSON.stringify([identity, agentId ?? 'main']) : undefined,
-  };
-}
-
-function anthropicHeaders(req: http.IncomingMessage) {
-  const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(req.headers)) {
-    const single = header(value);
-    if (single !== undefined && !STRIPPED_REQUEST_HEADERS.includes(name)) {
-      headers[name] = single;
-    }
-  }
-  headers['accept-encoding'] = decodableEncodings(req.headers['accept-encoding']);
-  return headers;
-}
-
-/**
- * Node's fetch decodes gzip, deflate and br before the gateway sees a byte, so the
- * observer and the relay always handle decoded bytes (the relay drops content-encoding
- * and content-length). Keep the client's own preference for those, so Anthropic
- * compresses as it would for Claude Code directly; anything else asks for identity.
- */
-function decodableEncodings(value: string | string[] | undefined) {
-  const wanted = (header(value) ?? '')
-    .split(',')
-    .map((entry) => entry.trim().split(';')[0].toLowerCase())
-    .filter((entry) => ['gzip', 'deflate', 'br'].includes(entry));
-  return wanted.length ? wanted.join(', ') : 'identity';
-}
-
-function authorizeRequest(req: http.IncomingMessage, res: http.ServerResponse, token: string) {
-  if (req.headers.origin || !authenticated(req.headers['x-multi-gateway-token'], token)) {
-    const pathName = new URL(req.url ?? '', 'http://localhost').pathname;
-    res.writeHead(pathName.startsWith('/multi/mod/') ? 401 : 403);
-    res.end('Forbidden');
-    return false;
-  }
-  const url = new URL(req.url ?? '', 'http://localhost');
-  if (
-    ![
-      '/v1/messages',
-      '/v1/messages/count_tokens',
-      '/multi/mod/session',
-      '/multi/mod/worker',
-      '/multi/mod/worker-model',
-      '/multi/mod/mode',
-      '/multi/mod/policy',
-      '/multi/mod/offer',
-      '/multi/mod/telemetry',
-      '/multi/mod/lifecycle',
-      '/multi/mod/display',
-      '/multi/mod/display-tools',
-      '/multi/mod/usage',
-      '/multi/mod/usage/complete',
-      '/multi/mod/receipts',
-      '/multi/mod/detach',
-      '/multi/mod/compact/precompute',
-      '/multi/mod/compact/run',
-      '/multi/mod/compact/authorize',
-      '/multi/mod/compact/cancel',
-    ].includes(url.pathname) ||
-    !['POST', 'GET', 'HEAD'].includes(req.method ?? '')
-  ) {
-    res.writeHead(404);
-    res.end('Not found');
-    return false;
-  }
-  return true;
-}
-
-function failResponse(res: http.ServerResponse, emit: TerminalEmit, error: unknown) {
-  if (res.destroyed) {
-    return;
-  }
-  const status = errorStatus(error);
-  if (error instanceof RequestTooLarge) {
-    // Anthropic's own 413 body, so Claude Code reads it as it would natively.
-    res.writeHead(413, { 'content-type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        type: 'error',
-        error: {
-          type: 'request_too_large',
-          message: 'Request exceeds the maximum allowed number of bytes.',
-        },
-      }),
-    );
-    return;
-  }
-  const errorTypes: Record<number, string> = {
-    400: 'invalid_request_error',
-    401: 'authentication_error',
-    403: 'permission_error',
-    404: 'not_found_error',
-    429: 'rate_limit_error',
-    503: 'overloaded_error',
-  };
-  const failure = {
-    type: 'error',
-    error: {
-      type: errorTypes[status] ?? 'api_error',
-      message: `Native gateway: ${latchSafe(reason(error))}`,
-    },
-  };
-  if (error instanceof UpstreamFailure && error.retryAfter && !res.headersSent) {
-    res.setHeader('retry-after', error.retryAfter);
-  }
-  if (res.headersSent) {
-    emit('error', { error: failure.error });
-    res.end();
-  } else {
-    res.writeHead(status, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(failure));
-  }
-}
-
-/** The failure as an ordinary assistant message: it states the failure and claims no work. */
-export function failureMessage(error: unknown, model: string): MessagesResponse {
-  const provider = routeOf(model);
-  const detail = latchSafe(reason(error)).replace(/\s+/g, ' ').trim().slice(0, 500);
-  return {
-    id: `msg_${randomUUID()}`,
-    type: 'message',
-    role: 'assistant',
-    model,
-    content: [{ type: 'text', text: `Multi: ${provider} failed: ${detail}` }],
-    stop_reason: 'end_turn',
-    stop_sequence: null,
-    usage: { input_tokens: 0, output_tokens: 0 },
-  };
-}
-
-function assertProviderEnabled(model: string | null, enabled: readonly string[] | undefined) {
-  if (model && enabled && !enabled.includes(model.split('/')[1])) {
-    throw new BadRequest('This provider plugin is not enabled for this session.');
-  }
-}
-
-/** Where a model's traffic goes: its provider, Anthropic without one, itself if unknown. */
-function routeOf(model: string | null | undefined): string {
-  if (!model) {
-    return 'anthropic';
-  }
-  return providerOf(model) ?? model.split('/')[1] ?? model;
-}
-
-/** What a request for a provider this session does not run is told. */
-function unavailable(provider: string): string {
-  return (
-    providerManifest(provider)?.unavailable ??
-    `${providerManifest(provider)?.label ?? provider} is not available in this session.`
-  );
-}
-
-function externalModel(model: unknown) {
-  return typeof model === 'string' && model.startsWith('multi/') ? model : null;
-}
-function validateHarness(exchange: ProviderRequest, provider: string, bridge: NativeHarness) {
-  try {
-    if (
-      !['/v1/messages', '/v1/messages/count_tokens'].includes(exchange.url.pathname) ||
-      exchange.req.method !== 'POST'
-    ) {
-      throw new Error(`${provider} requires POST /v1/messages or /v1/messages/count_tokens`);
-    }
-    return bridge.validate(exchange.body, exchange.permissionContext);
-  } catch (error) {
-    throw new BadRequest(reason(error));
-  }
-}
-
-function latchSafe(text: string): string {
-  return text.replace(/safeguards|dangerous-tool-use|beta/gi, 'verdict');
 }
