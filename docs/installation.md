@@ -132,8 +132,8 @@ are not installed, so the Claude Mods hooks work immediately from a checkout.
 You can still install the plugins from the checkout with `/plugin marketplace add
 /path/to/checkout` followed by the plugin installs above. Antigravity is enabled
 by installing `multi-antigravity`. From a checkout, set `MULTI_ANTIGRAVITY=1` to
-show its models and workers. Run `--antigravity-setup` after the official `agy`
-login to install its scoped permission hook.
+show its models and workers. The launcher installs and repairs its scoped permission
+hook itself; `--antigravity-setup` does the same by hand.
 
 Whole-session `--bg`, `--background`, `attach`, and `respawn` are currently
 unsupported: the gateway and generated settings belong to the launcher process.

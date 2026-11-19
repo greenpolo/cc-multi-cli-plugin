@@ -11,20 +11,18 @@ export const PROVIDERS: Readonly<Record<string, { label: string; harness: boolea
   zen: { label: 'Zen', harness: false },
 };
 
-function providerOf(model: string | undefined): string | undefined {
-  const name = /^multi\/([a-z]+)\//.exec(model ?? '')?.[1];
-  return name !== undefined && Object.hasOwn(PROVIDERS, name) ? name : undefined;
+function providerOf(model: string | undefined) {
+  return PROVIDERS[/^multi\/([a-z]+)\//.exec(model ?? '')?.[1] ?? ''];
 }
 
 /** The provider's display name, else undefined. */
 export function providerLabel(name: string): string | undefined {
-  return Object.hasOwn(PROVIDERS, name) ? PROVIDERS[name].label : undefined;
+  return Object.hasOwn(PROVIDERS, name) ? PROVIDERS[name]?.label : undefined;
 }
 
 /** These providers execute tools outside Claude Code and need policy translation. */
 export function isHarnessModel(model: string | undefined): boolean {
-  const provider = providerOf(model);
-  return provider !== undefined && PROVIDERS[provider].harness;
+  return providerOf(model)?.harness ?? false;
 }
 
 /** Any Multi model: a harness, or a provider whose tool loop Claude Code runs. */

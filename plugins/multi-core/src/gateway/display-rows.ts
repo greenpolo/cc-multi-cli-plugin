@@ -30,7 +30,7 @@ const DISPLAY_TOOL_PREFIX = 'mcp__multi-core__';
 /** A worker definition's grant for every display tool; it grants no native capability. */
 export const DISPLAY_TOOL_SERVER = 'mcp__multi-core';
 /** The input key carrying the gateway-issued token. */
-export const ROW_TOKEN = 'multi_row';
+const ROW_TOKEN = 'multi_row';
 
 // A tool name is at most 64 characters, prefix included.
 const maximumName = 64 - DISPLAY_TOOL_PREFIX.length;
@@ -297,7 +297,7 @@ function derivedFields(derived: DerivedMirror | undefined) {
  * built-in) take precedence. A tool without an equivalent carries its native
  * parameters alone.
  */
-export function mirroredInput(
+function mirroredInput(
   tool: string,
   input: unknown,
   derived?: DerivedMirror,

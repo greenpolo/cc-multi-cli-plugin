@@ -37,7 +37,7 @@ export interface GrokToolCall {
   content?: unknown;
 }
 
-export interface GrokResult {
+interface GrokResult {
   sessionId: string;
   stopReason: string;
   requestId?: string;
@@ -103,7 +103,7 @@ export interface GrokRunResult {
  * breach or an unparsable event stays as specific as `runNativeCli`'s generic
  * `spawn`/`output_limit` failures are not.
  */
-export class GrokCliError extends NativeCliError {
+class GrokCliError extends NativeCliError {
   declare readonly code:
     | 'spawn'
     | 'output_limit'

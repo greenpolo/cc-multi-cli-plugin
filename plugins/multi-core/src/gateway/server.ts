@@ -139,7 +139,7 @@ export interface GatewayOptions {
 }
 
 /** What the gateway uses of a connected provider. */
-export type GatewayProvider = Pick<
+type GatewayProvider = Pick<
   ConnectedProvider,
   'harness' | 'displayTools' | 'prepare' | 'reviewer' | 'usage' | 'billed'
 > & { harness?: NativeHarness };

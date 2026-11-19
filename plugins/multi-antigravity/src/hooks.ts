@@ -26,7 +26,7 @@ function configRoot(options: AntigravityPathOptions = {}): string {
   return join(home, '.gemini');
 }
 
-export function antigravityHookFile(options: AntigravityPathOptions = {}): string {
+function antigravityHookFile(options: AntigravityPathOptions = {}): string {
   const join =
     (options.platform ?? process.platform) === 'win32' ? path.win32.join : path.posix.join;
   return join(configRoot(options), 'config', 'hooks.json');
@@ -45,7 +45,7 @@ export function antigravitySettingsFile(options: AntigravityPathOptions = {}): s
  * assumed, so the hook invokes Node directly and the hook itself stays neutral
  * without a policy.
  */
-export function antigravityHookDefinition(platform: NodeJS.Platform = process.platform) {
+function antigravityHookDefinition(platform: NodeJS.Platform = process.platform) {
   const command = hookCommand(new URL('./permission-hook.ts', import.meta.url), platform);
   return {
     PreToolUse: [

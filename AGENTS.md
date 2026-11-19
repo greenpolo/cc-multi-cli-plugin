@@ -15,16 +15,18 @@ Claude Code function-hook UI and extensibility rules live in
 
 | Path | Responsibility |
 | --- | --- |
-| `plugins/multi-core/src/launcher.ts` | Launches the gateway and registers models and workers. |
-| `plugins/multi-core/src/gateway/server.ts` | Routes requests and manages sessions. |
+| `plugins/multi-<name>/provider.json` | A provider's manifest: name, label, kind (`direct` or `harness`), order, review and usage text. Core reads these and names no provider. |
+| `plugins/multi-<name>/src/adapter.ts` | A provider's adapter: sign-in, models, runtime, launcher flags, and account verb, loaded by core through `gateway/provider-adapter.ts`. |
+| `plugins/multi-core/src/launcher.ts`, `launch/` | Launches the gateway and Claude Code. `launch/` holds the provider connection (`providers.ts`), the `/model` picker (`picker.ts`), worker types (`workers.ts`), the Claude executable probes (`claude.ts`), and the session environment (`environment.ts`). |
+| `plugins/multi-core/src/gateway/server.ts`, `request.ts`, `reply.ts`, `anthropic.ts` | Routes requests and manages sessions; request admission and identity; replies and failures; Anthropic passthrough headers and paths. |
 | `plugins/multi-core/src/gateway/messages.ts`, `fetch.ts`, `tools.ts`, `responses.ts`, `bounded.ts`, `record.ts` | Shared protocol, outbound fetch, tool aliases, Responses translation and SSE reader, bounded maps, and the `isRecord` guard. |
-| `plugins/multi-core/src/gateway/provider.ts`, `provider-request.ts` | Model-prefix provider table, `nativeSpelling`, and the contract through which OpenAI and Zen modules build their own requests. |
+| `plugins/multi-core/src/gateway/provider.ts`, `provider-adapter.ts`, `provider-request.ts` | The provider table read from the manifests, `providerOf`, `nativeSpelling`; the adapter contract and loader; the contract through which direct providers build their own requests. |
 | `plugins/multi-core/src/gateway/executable.ts`, `process-tree.ts` | Resolves executables and manages child processes. |
 | `plugins/multi-core/src/gateway/atomic-write.ts`, `state-lock.ts` | Protects files and serializes native state. |
-| `plugins/multi-core/src/gateway/harness-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Admits harness settings (`checkHarnessSettings`, `mergePermissions`), maps prompt and worker permissions, and resolves the Agent tool's `model` against each provider's worker catalog. |
+| `plugins/multi-core/src/gateway/harness-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Reads what a native run takes from Claude's settings (`readHarnessSettings`, `mergePermissions`, `nativeMode`, `nativeRules`), keeps one permission record per session, and resolves the Agent tool's `model` against each provider's worker catalog. |
 | `plugins/multi-core/src/gateway/verdicts.ts`, `provider.ts` | Core verdict contract, Reviewer interface, and provider auto-review policy. `server.ts` alone finalises served replies and terminal events. |
 | `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, and the nested-`claude` environment restore. |
-| `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. |
+| `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. `provider.ts` is the hooks' own provider table, checked against the manifests by `npm run check:providers`. |
 | `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, notices, and failure classifier (`harness-failure.ts`) shared by Cursor, Antigravity, and Grok; the CLI harness base (`harness-cli.ts`), process runner, and text prompt preparation shared by Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
 | `plugins/multi-openai/src/` | Codex authentication, models, request construction (`gateway-request.ts`), instructions, and reviewer. |
@@ -32,14 +34,15 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-zen/src/` | Zen API-key authentication, catalogs, request construction (`gateway-request.ts`), and translations. |
 | `plugins/multi-antigravity/src/` | `agy` CLI harness, models, hooks, requests, and permissions. |
 | `plugins/multi-grok/src/` | Grok Build CLI harness, models, requests, permissions, and login state. |
-| `test/unit/` | Offline unit tests for gateway and provider behavior. |
-| `test/live/` | Opt-in checks against native CLIs and provider services. |
-| `scripts/` | Development utilities: banner generation, release versioning (`versioning.ts`), and the release CLIs. |
+| `test/live/` | The tests: opt-in checks against real CLIs and provider services. There are no offline tests. |
+| `scripts/` | Development utilities: banner generation, release versioning (`versioning.ts`), the release CLIs, and the provider-table check. |
 | `.github/workflows/ci.yml` | Runs `npm run check` on Node 24 across Linux, macOS, and Windows. |
 | `.github/workflows/release.yml` | Tags `v<version>` and publishes its GitHub release when a new version reaches `main`. |
 | `package.json`, `biome.json`, `knip.json` | Scripts, lint rules, and entry/project analysis. |
 
-Keep provider authentication and catalogs in provider folders. Keep shared protocol
+Keep everything about one provider in its folder: core imports no provider code and
+names no provider, so adding or removing a provider touches its folder and the hooks'
+table in `plugins/multi-core/hooks/provider.ts`. Keep shared protocol
 types and cross-provider helpers in `plugins/multi-core/src/gateway/`. Prefer
 direct module imports, the existing repository convention. Platform-dependent code
 accepts an explicit `platform` option so every branch is unit-testable on Linux.
@@ -52,7 +55,10 @@ changes to those boundaries need corresponding implementation and verification.
 
 - Claude's permission mode controls every provider at prompt boundaries.
 - Each provider owns its login, reviewer, execution state, and credentials.
-- Fail explicitly on unsupported modes, unknown workers, or ambiguous ownership.
+- Never refuse a native run over its permission mode or a Claude setting the harness
+  cannot enforce: Plan stays read-only, Bypass stays unreviewed, any other mode runs as
+  Auto, and what was skipped is named in a one-line notice.
+- Fail explicitly on unknown models or ambiguous ownership.
 - A provider without a reviewer runs auto mode unreviewed and says so; plan mode still refuses actions.
 - Never replay external tool events as executable Claude tools.
 - Native state is never rewound, and uncertain actions are never rerun blindly.
@@ -70,14 +76,15 @@ when gateway data or actions are needed; local rendering changes need no new rou
 
 ## Verification
 
-Run `npm run check`. It checks the generated banner, version consistency, Biome
-lint, Knip, strict type checking, and offline tests. `npm test` runs `tsc --noEmit` and the unit
-test suite. Use Node 24.12 or newer and avoid `DEP0190` warnings.
+Run `npm run check`. It checks the generated banner, version consistency, the hooks'
+provider table, Biome lint, Knip, and strict type checking. Use Node 24.12 or newer and
+avoid `DEP0190` warnings.
 
-For Claude Mods hook or surface changes, also run `npm run test:mod`. It type-checks
-the hooks against `.claude-plugin/types/` (Claude Code writes them when it loads the
-plugin; they are gitignored) and runs `claude plugin test` with the installed Claude
-executable and the Mods rollout flag forced on, without provider inference. It is separate from `npm run check` and the current CI matrix.
+There are no offline tests. A test earns its place by telling us something about a real
+CLI or provider service, so the tests are the live checks below, run on a machine where
+the provider is signed in. For Claude Mods hook or surface changes, also run
+`npm run typecheck:mod`: it type-checks the hooks against `.claude-plugin/types/`
+(Claude Code writes them when it loads the plugin; they are gitignored).
 
 | Command | Check | Login needed |
 | --- | --- | --- |

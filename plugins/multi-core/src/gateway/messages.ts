@@ -132,7 +132,7 @@ type BlockDelta =
   | { type: 'thinking_delta'; thinking: string }
   | { type: 'signature_delta'; signature: string };
 
-export type StreamEventName =
+type StreamEventName =
   | 'message_start'
   | 'content_block_start'
   | 'content_block_delta'
@@ -151,7 +151,7 @@ export type ContentEventBody =
   | { error: { type: string; message: string } }
   | Record<string, never>;
 
-export type StreamEventBody =
+type StreamEventBody =
   | ContentEventBody
   | {
       delta: {

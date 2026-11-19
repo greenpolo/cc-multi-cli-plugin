@@ -74,7 +74,7 @@ function missingExecutable(message: string): NodeJS.ErrnoException {
 const CMD_UNSAFE = /["%!^&|<>\r\n\0]/;
 
 /** True when text can pass through `cmd.exe /d /s /c` as one literal argument. */
-export function isCmdSafeArgument(value: string): boolean {
+function isCmdSafeArgument(value: string): boolean {
   return !CMD_UNSAFE.test(value);
 }
 

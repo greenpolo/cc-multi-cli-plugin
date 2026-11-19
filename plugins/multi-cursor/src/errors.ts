@@ -59,7 +59,7 @@ function stringField(value: Record<string, unknown>, key: string): string | unde
 }
 
 /** Redact before truncating so partial credentials cannot survive a length limit. */
-export function sanitizeCursorErrorMessage(value: unknown): string {
+function sanitizeCursorErrorMessage(value: unknown): string {
   const text = String(value ?? 'unknown Cursor SDK failure');
   const apiKey = process.env.CURSOR_API_KEY;
   return (
@@ -75,7 +75,7 @@ export function sanitizeCursorErrorMessage(value: unknown): string {
   );
 }
 
-export function cursorFailure(error: unknown): CursorFailure {
+function cursorFailure(error: unknown): CursorFailure {
   if (error instanceof HarnessBusyError) {
     // Deterministic, not retryable: the prompt was composed before the running
     // turn answered, so a retry would forward that turn's stale history again.

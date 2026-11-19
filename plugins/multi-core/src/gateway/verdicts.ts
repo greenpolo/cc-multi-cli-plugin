@@ -28,7 +28,7 @@ export type SafeguardResults = [
   },
 ];
 
-export function dangerousToolMode(value: unknown): string {
+function dangerousToolMode(value: unknown): string {
   if (!Array.isArray(value)) {
     return '';
   }

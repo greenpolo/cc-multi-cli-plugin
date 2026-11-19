@@ -4,10 +4,10 @@ import { argvSafe, executableInvocation, resolveExecutable } from './executable.
 import { terminateProcessTree } from './process-tree.ts';
 
 /** Per-line and retained-stderr bound; the stream itself is not capped in total. */
-export const defaultMaxOutputBytes = 8 * 1024 * 1024;
-export const interruptGraceMs = 1500;
-export const terminateGraceMs = 1500;
-export const cancellationWaitMs = interruptGraceMs + terminateGraceMs + 1000;
+const defaultMaxOutputBytes = 8 * 1024 * 1024;
+const interruptGraceMs = 1500;
+const terminateGraceMs = 1500;
+const cancellationWaitMs = interruptGraceMs + terminateGraceMs + 1000;
 
 // cmd.exe caps a command line at 8,191 characters when a .cmd shim cannot be
 // bypassed; the fixed flags, executable path, cwd and quoting need the rest.
@@ -77,7 +77,7 @@ function matchesEnvironmentName(key: string, entry: string): boolean {
   return entry.endsWith('_') ? key.startsWith(entry) : key === entry;
 }
 
-export function redactStderr(value: string): string {
+function redactStderr(value: string): string {
   return value
     .replaceAll(/Bearer\s+\S+/gi, 'Bearer [redacted]')
     .replaceAll(/([?&](?:api[_-]?key|token|password)=)[^&\s]+/gi, '$1[redacted]');

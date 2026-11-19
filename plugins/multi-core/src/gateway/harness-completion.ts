@@ -84,7 +84,7 @@ const archiveKeepCount = 512;
 const archiveMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
 
 /** Best effort: a failure to prune never fails the turn that triggered it. */
-export async function pruneArchives(
+async function pruneArchives(
   directory: string,
   limits: { keep: number; maxAgeMs: number; now: number },
 ): Promise<void> {

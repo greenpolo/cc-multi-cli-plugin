@@ -447,7 +447,7 @@ const missingPermissions: CheckAntigravityPermissions = async () => {
   throw new Error('Antigravity native permission policy is not configured');
 };
 
-export class AntigravityProviderError extends Error {
+class AntigravityProviderError extends Error {
   readonly failure: { status: number; message: string };
   constructor(error: unknown) {
     // Deterministic refusals are request errors: a retryable status turned one

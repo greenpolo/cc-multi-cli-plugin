@@ -25,7 +25,7 @@ export type Effort = (typeof EFFORTS)[number];
 
 export type ResponsesInputContent = NormalizedContent;
 
-export type ResponsesInputItem =
+type ResponsesInputItem =
   | { role: 'user' | 'assistant' | 'developer'; content: ResponsesInputContent[] }
   | { type: 'function_call'; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string | ResponsesInputContent[] }

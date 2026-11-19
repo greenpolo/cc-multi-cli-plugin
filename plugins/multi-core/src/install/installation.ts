@@ -402,7 +402,7 @@ export async function setup(
  * beside the installed shims and must run after the plugin is gone, so it cannot import the
  * plugin's own path helpers; the location logic mirrors `antigravityHookFile`.
  */
-export async function removeAntigravityHook(
+async function removeAntigravityHook(
   options: { platform?: Platform; env?: NodeJS.ProcessEnv; homedir?: string } = {},
 ): Promise<boolean> {
   const platform = options.platform ?? process.platform;

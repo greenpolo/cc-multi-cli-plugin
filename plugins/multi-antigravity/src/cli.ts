@@ -91,12 +91,7 @@ export interface AntigravityRunResult {
 }
 
 /** agy's own failure codes; the shared runner reports the first three. */
-export type AntigravityCliCode =
-  | 'spawn'
-  | 'output_limit'
-  | 'parse'
-  | 'no_terminal_result'
-  | 'aborted';
+type AntigravityCliCode = 'spawn' | 'output_limit' | 'parse' | 'no_terminal_result' | 'aborted';
 
 const CLI_CODES: readonly string[] = [
   'spawn',
@@ -107,7 +102,7 @@ const CLI_CODES: readonly string[] = [
 ];
 
 /** agy's own failures, so a caller can tell them from another provider's. */
-export class AntigravityCliError extends NativeCliError {
+class AntigravityCliError extends NativeCliError {
   constructor(
     message: string,
     code: AntigravityCliCode,

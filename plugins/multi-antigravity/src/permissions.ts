@@ -5,7 +5,7 @@ import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.t
 
 /** Native names reachable from each mapped Claude tool. */
 /** The agy config roots that hold hooks and settings; see antigravityProtectedRoots. */
-export function antigravityProtectedRoots(
+function antigravityProtectedRoots(
   options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; homedir?: string } = {},
 ): string[] {
   const platform = options.platform ?? process.platform;

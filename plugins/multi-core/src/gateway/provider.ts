@@ -59,7 +59,7 @@ function parseManifest(value: unknown, file: string): ProviderManifest {
 }
 
 /** Every `plugins/multi-<name>/provider.json` beside core, in display order. */
-export function readProviderManifests(
+function readProviderManifests(
   pluginsDirectory = fileURLToPath(new URL('../../../', import.meta.url)),
 ): ProviderManifest[] {
   const manifests: ProviderManifest[] = [];

@@ -119,8 +119,8 @@ instead of treating the example as a stable public specification.
 | Concern | Function-hook API used here | Multi behavior |
 | --- | --- | --- |
 | Startup and registration | `session.start`, `$.command.register`, `$.state`, `$.tool.register` | Registers `/multi-usage` and greets the gateway with the session (which also tells the launcher the Mod is live). The first prompt after a `/clear`, which fires no `session.start`, greets again. Multi registers no model-callable tools, and no display tool at start (see below). |
-| Model and permission boundary | `classic.SessionStart`, `classic.UserPromptSubmit`, `$.session.model/cwd/id`, `$.state` | Records the effective Claude permission snapshot at prompt boundaries; it does not redesign provider permissions. A harness prompt always admits its settings policy; any other model's snapshot is posted only when the mode, workspace or model changed, and always kept in `$.state` so a harness worker spawned later admits against it. |
-| Workers | `tool.describe` (Agent), `agent.offer`, `agent.spawn`, `classic.SubagentStart`, `$.ui.invalidate('tool.describe')`, `ui.render` (ToolUse, UserMessage) | Resolves the Agent tool's `model` against the provider worker catalog at spawn (the gateway removes it from successful Messages replies and records it by session and tool_use id before the engine sees it, avoiding a `tool.call` rewrite and local classification), labelling the task's description, which the running-agents list and its notification show, admits harness children against the current policy generation, and labels the Agent row with the resolved provider and model, read from `$.state` so a resolved spawn redraws it. The Agent description names provider models only while a provider worker type is offered. An agent type skips gateway registration only when it is natively Claude: a built-in on a Claude session is classified locally, any other type by the gateway's offer (its model must not be a Multi model, so a definition pinned to `multi/openai/...` keeps registration), and `classic.SubagentStart` keeps the record while any loop of the session runs a Multi model. |
+| Model and permission boundary | `classic.SessionStart`, `classic.UserPromptSubmit`, `$.session.model/cwd/id`, `$.state` | Records the effective Claude permission snapshot at prompt boundaries; it does not redesign provider permissions. The snapshot is posted only when the mode, workspace or model changed; the gateway keeps it as the session's one permission record. |
+| Workers | `tool.describe` (Agent), `agent.offer`, `agent.spawn`, `classic.SubagentStart`, `$.ui.invalidate('tool.describe')`, `ui.render` (ToolUse, UserMessage) | Resolves the Agent tool's `model` against the provider worker catalog at spawn (the gateway removes it from successful Messages replies and records it by session and tool_use id before the engine sees it, avoiding a `tool.call` rewrite and local classification), labelling the task's description, which the running-agents list and its notification show, announces each worker to the gateway (which records what it inherits and never refuses the spawn), and labels the Agent row with the resolved provider and model, read from `$.state` so a resolved spawn redraws it. The Agent description names provider models only while a provider worker type is offered. An agent type skips gateway registration only when it is natively Claude: a built-in on a Claude session is classified locally, any other type by the gateway's offer (its model must not be a Multi model, so a definition pinned to `multi/openai/...` keeps registration), and `classic.SubagentStart` keeps the record while any loop of the session runs a Multi model. |
 | Native action rows | `$.tool.register`, `turn.step`, `tool.describe`, `tool.check`, `tool.call`, `ui.render` for `ToolUse` and `ToolResult` | Registers a display tool per native tool name the gateway offers, lazily: at a harness prompt, before a harness worker spawns, and before a harness step when the catalog changed. A session that never runs a harness lists none. It defers them behind ToolSearch, allows only calls carrying a gateway-issued token, answers those with the native output from `POST /multi/mod/display`, and draws each row as Claude Code draws the built-in the native tool mirrors (Read, Bash, Grep, Glob, LS, Edit, Write), under the native tool's name. `ToolGroup` folding stays the engine's. |
 | Usage UI | `command.run`, `$.ui.open` (`isPlaced`), `$.ui.toast`, `$.state`, `ui.render` for `Pane`, `ui.message` | Opens the interactive usage pane, renders its literal `Client` module from `$.state` (a write redraws it; nothing invalidates), and handles bounded refresh/receipt/toggle messages. A pane that waits undrawn is announced with a toast and its numbers are returned as text. |
 | Lifecycle | `turn.step`, `turn.complete`, `session.end`, `$.clock.every`, `$.ui.status` | Records each loop's model, sends telemetry for a Multi step only, polls a harness run's status on a `$.clock` timer cancelled at `turn.complete` and `session.end`, completes/cancels runs, and forgets session-scoped state when the session ends (exit, `/clear` and resume alike). `session.detach` fires when any client leaves the roster, a session still running, so it is not hooked. |
@@ -139,7 +139,7 @@ The implementation is deliberately split:
 
 | Layer | Responsibility |
 | --- | --- |
-| `plugins/multi-core/hooks/*.ts` | Register function hooks, react to Claude events, open surfaces, and exchange UI messages. `gateway.ts` is the one gateway client, `state.ts` the bounded-record helpers, `policy.ts` the prompt-boundary admission. |
+| `plugins/multi-core/hooks/*.ts` | Register function hooks, react to Claude events, open surfaces, and exchange UI messages. `gateway.ts` is the one gateway client, `state.ts` the bounded-record helpers, `policy.ts` the prompt-boundary record, `provider.ts` the hooks' provider table. |
 | `plugins/multi-core/types/multi-core.d.ts` | The `$.state` values the hooks keep (`PluginState`), named by `.claude-plugin/plugin.json` `types`. |
 | `plugins/multi-core/hooks/*-view.ts` | Render `Client` surfaces (the usage pane); module paths at call sites stay literal. |
 | `plugins/multi-core/hooks/rows.ts` | Register, gate, answer and draw the display rows of native harness actions. |
@@ -178,8 +178,7 @@ harness session, or the Agent-tool worker's transcript (ctrl+o).
 **Exact native tools.** A row is named after the harness's real tool, as the
 harness reports it: Cursor's SDK tool-call type (`shell`, `read`, `edit`, `grep`,
 ...; `CURSOR_TOOLS`), the toolset `agy` announces in its `init` event
-(`view_file`, `run_command`, ...; `ANTIGRAVITY_TOOLS`, captured in
-`test/unit/fixtures/antigravity`), and Grok's announced toolset (`read_file`,
+(`view_file`, `run_command`, ...; `ANTIGRAVITY_TOOLS`, as captured from a live run), and Grok's announced toolset (`read_file`,
 `run_terminal_command`, ...; `GROK_TOOLS`). `$.tool.register` lists each as
 `mcp__multi-core__<name>`; that is engine naming, not an MCP server. The gateway
 offers the static sets of the harnesses it runs (`GET /multi/mod/display-tools`),
@@ -223,9 +222,9 @@ precedence, and may name another built-in: Cursor's `EditSuccess` (`linesAdded`,
 `linesRemoved`, `diffString`) has no created flag, so a diff from `/dev/null` is a
 Write row, and an edit reporting counts but no diff draws `Added N lines, removed M
 lines` from those counts without a preview. Captured from real runs: the
-`view_file` and `run_command` shapes (`test/unit/fixtures/antigravity`), and
+`view_file` and `run_command` shapes (captured from a live run), and
 Cursor's `read`, `grep`, `glob`, `shell` and `edit` args and `edit` results
-(`test/unit/fixtures/cursor`; Composer 2.5 created a file through `edit` and listed
+(captured from a live run; Composer 2.5 created a file through `edit` and listed
 through `shell`, so `write` and `ls`, both in the SDK's tool-call union, are
 uncaptured); the rest follow the SDK's types or the harness's documented schema. A tool with no equivalent (a browser action, `mcp`,
 `task`) carries `native` alone. The output (16 KiB) stays in the gateway: the
@@ -289,7 +288,7 @@ closing summary counts it without listing it under `Changed:`.
 
 **Status and failures.** `turn.step` polls `GET /multi/mod/lifecycle` for the
 status line (model, scope, state, elapsed time, current action). A failed run or a
-request refused before dispatch (policy admission, unavailable provider, invalid
+request refused before dispatch (unavailable provider, invalid
 request) records one sanitised 240-character reason, which the status line and the
 refused request's error both carry.
 
@@ -315,23 +314,15 @@ never put in the environment, a log, or a Client surface payload; other plugins 
 the state value, but they already run in the engine with the same environment. `session.end`
 sends `/multi/mod/detach` with the key, then forgets it.
 
-The gateway bounds what the Mod can make it hold: a session's snapshot and policy
-tables evict the least recently used idle session instead of refusing a new one, an
-unconsumed policy job is reused for a minute at most, and a policy request may carry
-`wait: true` to be held until discovery ends.
+The gateway bounds what the Mod can make it hold: a session's snapshot and record
+tables evict the least recently used entry instead of refusing a new one.
 
-## Testing the hooks
+## Checking the hooks
 
-`npm run test:mod` type-checks the hooks and their tests against the engine's own
-declarations (`.claude-plugin/types/`, written when the mod loads from this checkout;
-`/plugin-types` writes the same files elsewhere) and runs `claude plugin test` with the
-installed Claude executable, without provider inference. Mods are on by default in
-Claude Code 2.1.287, but `claude plugin test` follows the server rollout flag, which is
-served off for some accounts; the script therefore sets
-`CLAUDE_INTERNAL_FC_OVERRIDES={"tengu_plugin_hooks_modules":true}` for that process
-only (no `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is involved). A test that reaches the
-gateway client installs `mock.clock(on)`, because each request is bounded by
-`$.clock`; a test of a timer advances that clock.
+`npm run typecheck:mod` type-checks the hooks against the engine's own declarations
+(`.claude-plugin/types/`, written when the mod loads from this checkout;
+`/plugin-types` writes the same files elsewhere). The hooks have no offline tests:
+their behavior is verified in a real Claude Code session with the live checks.
 
 ## Rules for changes
 

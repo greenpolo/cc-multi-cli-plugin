@@ -14,7 +14,7 @@ export interface AntigravityModel {
   effort?: 'low' | 'medium' | 'high';
 }
 
-export function parseAntigravityModels(output: string): AntigravityModel[] {
+function parseAntigravityModels(output: string): AntigravityModel[] {
   const models = new Map<string, AntigravityModel>();
   for (const line of output.split('\n')) {
     const match = /^([a-z0-9][a-z0-9.-]*)\t([^\t\r\n]+)\r?$/.exec(line);

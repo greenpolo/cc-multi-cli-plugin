@@ -35,7 +35,7 @@ export type NativeAction = {
 };
 
 const maximumListed = 8;
-export const maximumTracked = 512;
+const maximumTracked = 512;
 const unsettledOutput = "The native run ended without reporting this action's completion.";
 
 /**

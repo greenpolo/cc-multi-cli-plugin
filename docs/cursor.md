@@ -59,9 +59,9 @@ policy checks. Cancellation reaches the native SDK run.
 Modes apply at prompt boundaries. Worker modes inherit from the parent and the
 worker type's definition. Settings, plugin policies, tool lists, and managed
 policy are admitted per operating system; see [docs/permissions.md](permissions.md).
-Unsupported modes, unknown workers, ignored Cursor permission files, ask rules,
-sandbox policy, unsupported argument or path rules, and unsupported managed
-controls fail explicitly. SDK events provide native action observations for Claude
+Any other Claude mode runs as Auto. Ask rules, sandbox settings and argument-specific
+deny rules have no SDK form and are skipped with a one-line notice. The SDK runs with
+isolated settings, so a `.cursor/permissions.json` is not loaded. SDK events provide native action observations for Claude
 Mods display; Claude's classic tool hooks do not enforce native SDK tool calls.
 
 ## State and resume

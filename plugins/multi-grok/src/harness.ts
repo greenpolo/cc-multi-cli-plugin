@@ -364,7 +364,7 @@ const missingPermissions: CheckGrokPermissions = async () => {
   throw new Error('Grok native permission policy is not configured');
 };
 
-export class GrokProviderError extends Error {
+class GrokProviderError extends Error {
   readonly failure: { status: number; message: string };
   constructor(error: unknown) {
     // Deterministic failures are request errors; retrying them repeats a paid run.

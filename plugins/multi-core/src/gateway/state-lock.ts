@@ -40,7 +40,7 @@ let cachedMachineId: { value: string | undefined } | undefined;
  * A hostname follows the network (macOS flips between `.local`, `.lan` and
  * conflict suffixes), so identity prefers an OS machine id when one is readable.
  */
-export function machineIdentity(platform: NodeJS.Platform = process.platform): string | undefined {
+function machineIdentity(platform: NodeJS.Platform = process.platform): string | undefined {
   if (cachedMachineId) {
     return cachedMachineId.value;
   }
@@ -64,12 +64,12 @@ export function machineIdentity(platform: NodeJS.Platform = process.platform): s
 }
 
 /** Lower-cased first label: `Mac.local`, `mac.lan` and `MAC` are one machine name. */
-export function normalizeHostname(name: string): string {
+function normalizeHostname(name: string): string {
   return name.toLowerCase().split('.')[0] ?? '';
 }
 
 /** Whether a marker was written by this machine, tolerating hostname drift. */
-export function sameMachine(
+function sameMachine(
   recorded: LockOwner,
   self: { hostname: string; machine?: string | undefined },
 ): boolean {

@@ -40,7 +40,7 @@ function label(id: string): string {
   return `Grok ${rest.replaceAll('-', ' ')}`;
 }
 
-export function parseGrokModels(output: string): GrokModel[] {
+function parseGrokModels(output: string): GrokModel[] {
   const models = new Map<string, GrokModel>();
   for (const line of output.split('\n')) {
     const match = CATALOG_LINE.exec(line.replace(/\r$/, ''));

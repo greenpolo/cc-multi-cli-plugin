@@ -121,7 +121,7 @@ async function quotaResponse(
 }
 
 /** The multi-bucket response is authoritative; never count its legacy alias twice. */
-export function normalizeCodexUsage(value: unknown): CodexQuota {
+function normalizeCodexUsage(value: unknown): CodexQuota {
   if (!isRecord(value)) {
     throw unavailable();
   }

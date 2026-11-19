@@ -11,7 +11,7 @@ import type { ProviderUsageReader } from './provider-usage.ts';
 import type { AccountReviewer } from './verdicts.ts';
 
 /** One `/model` row a provider offers. */
-export interface PickerRow {
+interface PickerRow {
   model: string;
   label: string;
   description: string;
@@ -20,7 +20,7 @@ export interface PickerRow {
 }
 
 /** What core hands a provider when a session launches. */
-export interface LaunchContext {
+interface LaunchContext {
   cwd: string;
   env: NodeJS.ProcessEnv;
   /** The session's plugin selection names this provider, rather than leaving it to default. */
@@ -54,13 +54,13 @@ export interface ConnectedProvider {
 }
 
 /** A launcher flag a provider owns, such as `--cursor-login`. */
-export interface ProviderCommand {
+interface ProviderCommand {
   help: string;
   run(): Promise<void>;
 }
 
 /** What `multi login <provider>` or `multi connect <provider>` runs. */
-export interface AccountTools {
+interface AccountTools {
   /** Run a command attached to the terminal; resolves with its exit code. */
   run(command: string, args: string[]): Promise<number>;
   /** Run this launcher with one of the provider's own flags. */

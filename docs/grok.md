@@ -55,6 +55,7 @@ installed.
 | acceptEdits | `--permission-mode acceptEdits` |
 | Plan | `--permission-mode plan`, plus `Bash`, `Edit` and `Write` denied and the matching tools removed |
 | Bypass | `--permission-mode bypassPermissions`, explicit restrictions retained |
+| Default, dontAsk | `--permission-mode auto`, with a one-line notice |
 
 Restrictions are expressed three times on purpose. The native toolset is bounded
 with `--tools`, every ungranted tool is *also* removed by name — the allowlist

@@ -422,11 +422,11 @@ export function isHash(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
-export function optionalCount(value: unknown): boolean {
+function optionalCount(value: unknown): boolean {
   return value === undefined || (Number.isSafeInteger(value) && Number(value) >= 0);
 }
 
-export function validMessagesResponse(
+function validMessagesResponse(
   value: unknown,
   validContentBlock: ContentBlockCheck = harnessContentBlock,
 ): value is MessagesResponse {
@@ -473,7 +473,7 @@ export function validPersistedResponse(
   return validMessagesResponse(value.response, validContentBlock) && validEvents(value.events);
 }
 
-export function validReplay(value: unknown): value is { key: string; events: HarnessEvent[] } {
+function validReplay(value: unknown): value is { key: string; events: HarnessEvent[] } {
   if (!isRecord(value)) {
     return false;
   }

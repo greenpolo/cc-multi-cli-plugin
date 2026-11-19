@@ -4,6 +4,42 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## Unreleased
+
+- **A native run is never refused over its permission mode or your Claude settings.**
+  Cursor, Antigravity and Grok now run under every Claude mode: Plan stays read-only,
+  Bypass stays unreviewed, and any other mode (Default, dontAsk) runs as Auto. Ask
+  rules, sandbox settings and argument-specific deny rules such as `Bash(rm:*)` have
+  no native form; they are skipped and named in one line at the start of the run,
+  instead of stopping it. Bare tool denials and tool lists still apply. A
+  `.cursor/permissions.json` no longer blocks Cursor.
+
+- **Start several workers of one provider together, and from a Workflow.** Starting
+  two Cursor (or Antigravity, or Grok) workers at once no longer fails with "no
+  unique acknowledged spawn", and a native worker started by a Workflow now runs. The
+  gateway keeps one permission record per session and every worker inherits it; the
+  per-prompt policy handshake between the hooks and the gateway is gone.
+
+- **Faster native runs.** A native run no longer lists Claude's plugins before it
+  starts, and the managed policy is read once per session.
+
+- **A long first-run consent screen no longer ends the session.** The launcher used to
+  stop with "Claude Code 2.1.272 or newer with loaded function hooks is required"
+  when the Bypass consent screen stayed open for more than 30 seconds.
+
+- **The Antigravity hook repairs itself.** Updating the plugin or switching between
+  copies no longer needs `--antigravity-setup` again; every launch and every native
+  run points the hook at the running copy.
+
+- **Each provider is one self-describing folder.** A provider's manifest
+  (`provider.json`) and adapter (`src/adapter.ts`) hold everything about it; the
+  launcher and gateway name no provider. The launcher and gateway server are split
+  into smaller modules. Nothing changes in use.
+
+- **Tests are the live checks.** The offline unit, hook and scripted end-to-end tests
+  are removed; `npm run check` covers lint, unused code, versions and types, and the
+  `test:live:*` checks run against real CLIs.
+
 ## 0.4.0 — 2026-10-28
 
 Gateway Auto-mode arbiter, GPT-6.1 Terra and Sol, Gemini 4 Argon and resilient startup
