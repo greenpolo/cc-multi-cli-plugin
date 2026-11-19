@@ -147,7 +147,8 @@ for (const main of ['anthropic', 'openai'] as const) {
       (event) => event.type === 'system' && event.subtype === 'task_started',
     );
     assert.equal(started.length, 1);
-    assert.match(String(started[0]?.description), /OpenAI · gpt-6-luna/);
+    // The task keeps the model's own description; the agent list names the CLI itself.
+    assert.equal(started[0]?.description, 'Named worker');
     assert.doesNotMatch(result.debug, /server_input_rewritten/);
     const calls = result.transcript
       .filter((event) => event.type === 'assistant')
