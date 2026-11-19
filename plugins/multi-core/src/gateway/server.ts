@@ -3,16 +3,6 @@ import type { Server } from 'node:http';
 import http from 'node:http';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import {
-  openaiSignaturePrefixes,
-  prepareOpenAIRequest,
-} from '../../../multi-openai/src/gateway-request.ts';
-import { validateZenKey } from '../../../multi-zen/src/auth.ts';
-import {
-  prepareZenRequest,
-  zenSignaturePrefixes,
-  zenUnavailable,
-} from '../../../multi-zen/src/gateway-request.ts';
 import { setBounded } from './bounded.ts';
 import {
   DisplayRows,
@@ -51,20 +41,19 @@ import type { PermissionContext, PermissionModes } from './mode-hook.ts';
 import { type NativeHarness, nativeHarnessErrorStatus } from './native-harness.ts';
 import {
   autoReviewPolicy,
-  type HarnessProvider,
-  harnessEndpoint,
   harnessProvider,
-  harnessUnavailable,
   isHarnessProvider,
-  providerRoute,
+  providerManifest,
+  providerOf,
 } from './provider.ts';
+import type { ConnectedProvider } from './provider-adapter.ts';
 import type { PreparedRequest } from './provider-request.ts';
 import { ProviderAuthError, UpstreamFailure } from './provider-request.ts';
-import { ProviderUsageDashboard, type ProviderUsageReader } from './provider-usage.ts';
+import { ProviderUsageDashboard } from './provider-usage.ts';
 import { ReceiptLedger } from './receipts.ts';
 import { isRecord } from './record.ts';
 import { forAnthropic } from './responses.ts';
-import { type Reviewer, verdictsFor } from './verdicts.ts';
+import { verdictsFor } from './verdicts.ts';
 import {
   stripWorkerJson,
   stripWorkerModel,
@@ -72,8 +61,6 @@ import {
   WorkerModels,
 } from './worker-models.ts';
 
-/** Other providers' reasoning signatures mean nothing to Anthropic and are stripped. */
-const FOREIGN_SIGNATURE_PREFIXES = [...openaiSignaturePrefixes, ...zenSignaturePrefixes];
 const DEFAULT_ANTHROPIC_URL = 'https://api.anthropic.com';
 // Anthropic's own Messages API limit is 32 MB; the gateway buffers up to it and leaves
 // the verdict to the provider, so a request Claude Code could send natively still goes.
@@ -101,16 +88,8 @@ const STRIPPED_RESPONSE_HEADERS = [
 
 /** What the gateway reports to `onEvent`; routing only, never credentials or bodies. */
 export interface GatewayEvent {
-  route:
-    | 'anthropic'
-    | 'openai'
-    | 'openai-request'
-    | 'cursor'
-    | 'antigravity'
-    | 'grok'
-    | 'review'
-    | 'zen'
-    | 'zen-request';
+  /** `anthropic`, `review`, a provider's name, or a provider's own request route. */
+  route: string;
   model?: string;
   agentId?: string | null;
   path?: string;
@@ -135,34 +114,32 @@ export interface GatewayEvent {
 export interface GatewayOptions {
   receipts?: ReceiptLedger;
   usageDashboard?: ProviderUsageDashboard;
-  billedUsage?: (session: string) => Promise<unknown>;
-  usageReaders?: Partial<
-    Record<'openai' | 'cursor' | 'zen' | 'antigravity' | 'grok', ProviderUsageReader>
-  >;
   token: string;
   /** How long a non-streamed provider reply may stay silent before its headers go out. */
   jsonKeepAliveMs?: number;
   /** Where Claude's own traffic goes: Anthropic by default, or the caller's own base URL. */
   anthropicBaseUrl?: string;
   enabledProviders?: readonly string[];
-  authFile: string;
   fetchImpl?: GatewayFetch;
   onEvent?: (event: GatewayEvent) => void;
   timeoutMs?: number;
-  cursor?: NativeHarness;
-  antigravity?: NativeHarness;
-  grok?: NativeHarness;
-  zen?: { apiKey: string };
-  /** OpenAI review for GPT-originated actions, independent of Claude authentication. */
-  reviewers?: Partial<Record<'openai', Reviewer>>;
+  /** The providers connected in this session, by name: what runs, reviews and meters each. */
+  providers?: Readonly<Record<string, GatewayProvider>>;
+  /** Reasoning-signature prefixes providers write; they mean nothing to Anthropic and are stripped. */
+  signaturePrefixes?: readonly string[];
   /** No Anthropic credentials: block Anthropic passthrough. */
   blockAnthropic?: boolean;
   permissionModes?: PermissionModes;
   modBridge?: ModBridge;
-  /** Display rows for native harness actions; the native tool names each harness is known to have. */
+  /** Display rows for native harness actions. */
   displayRows?: DisplayRows;
-  displayTools?: Partial<Record<'cursor' | 'antigravity' | 'grok', readonly string[]>>;
 }
+
+/** What the gateway uses of a connected provider. */
+export type GatewayProvider = Pick<
+  ConnectedProvider,
+  'harness' | 'displayTools' | 'prepare' | 'reviewer' | 'usage' | 'billed'
+> & { harness?: NativeHarness };
 
 /** Rejected before any provider call; answered as HTTP 400 rather than 502. */
 class BadRequest extends Error {}
@@ -202,47 +179,29 @@ export function createNativeGateway({
   anthropicBaseUrl = DEFAULT_ANTHROPIC_URL,
   jsonKeepAliveMs = 30000,
   enabledProviders,
-  authFile,
   fetchImpl = fetch,
   onEvent: observer = () => {},
   timeoutMs,
-  cursor,
-  antigravity,
-  grok,
-  zen,
-  reviewers = {},
+  providers = {},
+  signaturePrefixes = [],
   blockAnthropic,
   permissionModes,
   modBridge = new ModBridge(),
   displayRows = new DisplayRows(),
-  displayTools = {},
   receipts = new ReceiptLedger(),
   usageDashboard,
-  billedUsage,
-  usageReaders = {},
 }: GatewayOptions): Server {
   const dashboard =
     usageDashboard ??
     new ProviderUsageDashboard({
-      enabled: (enabledProviders ?? ['openai', 'cursor', 'zen', 'antigravity', 'grok']).filter(
-        (provider) => {
-          if (provider === 'cursor') {
-            return Boolean(cursor);
-          }
-          if (provider === 'zen') {
-            return Boolean(zen);
-          }
-          if (provider === 'antigravity') {
-            return Boolean(antigravity);
-          }
-          if (provider === 'grok') {
-            return Boolean(grok);
-          }
-          return provider === 'openai';
-        },
+      enabled: Object.keys(providers).filter(
+        (provider) => !enabledProviders || enabledProviders.includes(provider),
       ),
-      ...usageReaders,
+      readers: Object.fromEntries(
+        Object.entries(providers).map(([provider, { usage }]) => [provider, usage]),
+      ),
     });
+  const billed = Object.values(providers).find((provider) => provider.billed)?.billed;
   const onEvent = (event: GatewayEvent) => {
     receipts.observe(event);
     observer(event);
@@ -250,25 +209,19 @@ export function createNativeGateway({
   if (!token) {
     throw new Error('Gateway token required');
   }
-  if (zen) {
-    validateZenKey(zen.apiKey);
-  }
   const anthropicOrigin = parseAnthropicBase(anthropicBaseUrl);
   const anthropicUrl = (url: URL) => anthropicOrigin + url.pathname + url.search;
   const modKeys = new ModSessionKeys();
   const workerModels = new WorkerModels();
   const fallbackSession = randomUUID();
-  const harnesses: Record<HarnessProvider, NativeHarness | undefined> = {
-    cursor,
-    antigravity,
-    grok,
-  };
   const harnessFor = (provider: string | undefined) =>
-    isHarnessProvider(provider) ? harnesses[provider] : undefined;
+    provider !== undefined && isHarnessProvider(provider)
+      ? providers[provider]?.harness
+      : undefined;
   // Offer the mod rows only for the harnesses this gateway runs.
-  for (const [provider, names] of Object.entries(displayTools)) {
-    if (harnessFor(provider) && names) {
-      displayRows.announce(names);
+  for (const { harness, displayTools } of Object.values(providers)) {
+    if (harness && displayTools) {
+      displayRows.announce(displayTools);
     }
   }
   const rootRequests = new Map<string, MessagesRequest>();
@@ -277,11 +230,11 @@ export function createNativeGateway({
     for (const block of reply.content) {
       stripWorkerModel(block, workerModels.remember(exchange.identity.session));
     }
-    const provider = providerRoute(exchange.body.model);
-    if (provider === 'anthropic') {
+    const provider = providerOf(exchange.body.model);
+    if (provider === undefined) {
       throw new Error('Cannot finalise an upstream reply');
     }
-    const reviewer = provider === 'openai' ? reviewers.openai : undefined;
+    const reviewer = providers[provider]?.reviewer;
     const policy = autoReviewPolicy(provider, Boolean(reviewer));
     let cwd: string | undefined;
     try {
@@ -363,11 +316,11 @@ export function createNativeGateway({
     }
     return error;
   }
-  async function handleHarness(exchange: ProviderRequest, provider: HarnessProvider) {
+  async function handleHarness(exchange: ProviderRequest, provider: string) {
     const { res, body, url, signal, agentId, emit, identity } = exchange;
-    const bridge = harnesses[provider];
+    const bridge = harnessFor(provider);
     if (!bridge) {
-      throw refuseHarness(exchange, provider, new BadRequest(harnessUnavailable[provider]));
+      throw refuseHarness(exchange, provider, new BadRequest(unavailable(provider)));
     }
     const scope = harnessScope(exchange);
     let inputTokens: number;
@@ -436,7 +389,9 @@ export function createNativeGateway({
         },
       );
     }
-    onEvent(completionEvent(exchange, result, provider, harnessEndpoint(provider)));
+    onEvent(
+      completionEvent(exchange, result, provider, providerManifest(provider)?.endpoint ?? provider),
+    );
     await serveReply(exchange, result);
     modBridge.complete(scope, 'completed', run);
   }
@@ -452,7 +407,7 @@ export function createNativeGateway({
     deliverHandback: boolean,
   ) {
     const { body, emit } = exchange;
-    const followUp = await pendingFollowUp(exchange, ids, providerRoute(external));
+    const followUp = await pendingFollowUp(exchange, ids, routeOf(external));
     // An empty deferral is the reply's own choice; the turn's last message still says something.
     const text = followUp.text || followUpFallback;
     // The reply's context carries over, so the window's fill does not read as empty
@@ -482,7 +437,7 @@ export function createNativeGateway({
     await serveReply(exchange, result);
   }
   async function answerHandbackOnly(exchange: ProviderRequest, external: string | null) {
-    const harness = harnessFor(providerRoute(external));
+    const harness = harnessFor(providerOf(external));
     const recorded = await harness?.recordedResponse?.(
       harnessScope(exchange),
       followUpContext(exchange),
@@ -554,7 +509,7 @@ export function createNativeGateway({
   async function pendingFollowUp(
     exchange: ProviderRequest,
     ids: readonly string[],
-    provider: ReturnType<typeof providerRoute>,
+    provider: string,
   ) {
     const scope = harnessScope(exchange);
     const held = displayRows.followUp({ scope, provider }, ids);
@@ -580,10 +535,10 @@ export function createNativeGateway({
     }
   }
   /**
-   * A hosted-API provider (OpenAI, Zen): the provider module prepares the request,
+   * A hosted-API provider: the provider's adapter prepares the request,
    * this owns keepalive, events, failure mapping and the reply.
    */
-  async function handleHosted(exchange: ProviderRequest, route: 'openai' | 'zen') {
+  async function handleHosted(exchange: ProviderRequest, route: string) {
     const { res, body, url, signal, agentId, emit } = exchange;
     const prepared = prepareHosted(exchange, route);
     if (url.pathname === '/v1/messages/count_tokens') {
@@ -629,24 +584,25 @@ export function createNativeGateway({
     });
     await serveReply(exchange, result);
   }
-  function prepareHosted(exchange: ProviderRequest, route: 'openai' | 'zen'): PreparedRequest {
+  function prepareHosted(exchange: ProviderRequest, route: string): PreparedRequest {
     const { req, url, body, identity, agentId } = exchange;
-    if (route === 'zen' && !zen?.apiKey) {
-      throw new BadRequest(zenUnavailable);
+    const prepare = providers[route]?.prepare;
+    if (!prepare) {
+      throw new BadRequest(unavailable(route));
     }
-    const input = {
-      method: req.method,
-      pathname: url.pathname,
-      body,
-      session: identity.session,
-      fallbackSession,
-      clientSession: header(req.headers['x-claude-code-session-id']),
-      agentId,
-    };
     try {
-      return zen?.apiKey && route === 'zen'
-        ? prepareZenRequest(input, zen.apiKey)
-        : prepareOpenAIRequest(input, String(body.model), authFile);
+      return prepare(
+        {
+          method: req.method,
+          pathname: url.pathname,
+          body,
+          session: identity.session,
+          fallbackSession,
+          clientSession: header(req.headers['x-claude-code-session-id']),
+          agentId,
+        },
+        String(body.model),
+      );
     } catch (error) {
       throw new BadRequest(reason(error));
     }
@@ -654,7 +610,7 @@ export function createNativeGateway({
   async function handleAnthropic(exchange: ProviderRequest) {
     const { req, res, body, url, raw, signal } = exchange;
     const headers = anthropicHeaders(req);
-    const cleaned = forAnthropic(body, FOREIGN_SIGNATURE_PREFIXES);
+    const cleaned = forAnthropic(body, signaturePrefixes);
     let forwarded: Buffer | undefined;
     if (req.method === 'POST') {
       forwarded = cleaned === body ? raw : Buffer.from(JSON.stringify(cleaned));
@@ -797,7 +753,7 @@ export function createNativeGateway({
   }
   async function forwardProvider(exchange: ProviderRequest, external: string | null) {
     const { body, agentId, url } = exchange;
-    const route = providerRoute(external);
+    const route = routeOf(external);
     beginUsage(exchange, external);
     let permissionContext: PermissionContext | undefined;
     if (permissionModes && isHarnessProvider(route) && url.pathname === '/v1/messages') {
@@ -825,7 +781,7 @@ export function createNativeGateway({
     if (isHarnessProvider(route)) {
       return handleHarness(exchange, route);
     }
-    return handleHosted(exchange, route === 'zen' ? 'zen' : 'openai');
+    return handleHosted(exchange, route);
   }
   function handleMod(
     req: http.IncomingMessage,
@@ -844,15 +800,15 @@ export function createNativeGateway({
         workerModels.forgetSession(session);
       },
       reviewStatement: (model) => {
-        const provider = providerRoute(model);
-        return provider === 'anthropic'
+        const provider = providerOf(model);
+        return provider === undefined
           ? undefined
-          : autoReviewPolicy(provider, Boolean(reviewers.openai)).statement;
+          : autoReviewPolicy(provider, Boolean(providers[provider]?.reviewer)).statement;
       },
       permissionModes,
       compactions,
       receipts,
-      billedUsage,
+      billed,
       dashboard,
       rows: displayRows,
       keys: modKeys,
@@ -1343,7 +1299,7 @@ function failResponse(res: http.ServerResponse, emit: TerminalEmit, error: unkno
 
 /** The failure as an ordinary assistant message: it states the failure and claims no work. */
 export function failureMessage(error: unknown, model: string): MessagesResponse {
-  const provider = providerRoute(model);
+  const provider = routeOf(model);
   const detail = latchSafe(reason(error)).replace(/\s+/g, ' ').trim().slice(0, 500);
   return {
     id: `msg_${randomUUID()}`,
@@ -1363,14 +1319,26 @@ function assertProviderEnabled(model: string | null, enabled: readonly string[] 
   }
 }
 
+/** Where a model's traffic goes: its provider, Anthropic without one, itself if unknown. */
+function routeOf(model: string | null | undefined): string {
+  if (!model) {
+    return 'anthropic';
+  }
+  return providerOf(model) ?? model.split('/')[1] ?? model;
+}
+
+/** What a request for a provider this session does not run is told. */
+function unavailable(provider: string): string {
+  return (
+    providerManifest(provider)?.unavailable ??
+    `${providerManifest(provider)?.label ?? provider} is not available in this session.`
+  );
+}
+
 function externalModel(model: unknown) {
   return typeof model === 'string' && model.startsWith('multi/') ? model : null;
 }
-function validateHarness(
-  exchange: ProviderRequest,
-  provider: string,
-  bridge: NonNullable<GatewayOptions['cursor'] | GatewayOptions['antigravity']>,
-) {
+function validateHarness(exchange: ProviderRequest, provider: string, bridge: NativeHarness) {
   try {
     if (
       !['/v1/messages', '/v1/messages/count_tokens'].includes(exchange.url.pathname) ||

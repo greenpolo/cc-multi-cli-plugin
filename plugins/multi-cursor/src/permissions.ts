@@ -2,7 +2,6 @@ import { lstat, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { AgentModeOption, AgentOptions } from '@cursor/sdk';
-import type { WorkerPermissions } from '../../multi-core/src/gateway/agent-definitions.ts';
 import { nativeToolRules } from '../../multi-core/src/gateway/display-rows.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 
@@ -36,6 +35,11 @@ export function cursorPermissionPolicy(context: PermissionContext): {
   }).map(([tool]) => tool);
   const autoReview = context.permissionMode !== 'bypassPermissions';
   return { mode, tools, autoReview, identity: JSON.stringify([mode, tools, autoReview]) };
+}
+
+/** Refuses a Claude tool rule Cursor has no native tool for. */
+export function assertCursorToolRules(value: string[] | undefined): void {
+  claudeToolRules(value);
 }
 
 function claudeToolRules(value: string[] | undefined): Set<string> | undefined {
@@ -108,58 +112,6 @@ async function rejectIgnoredPolicy(file: string): Promise<void> {
   throw new Error(
     `Native Cursor cannot honor ${file} with isolated SDK settings. This permission configuration is unsupported.`,
   );
-}
-
-/** Claude cannot enforce these restrictions over tools executed by Cursor. */
-export function assertCursorClaudeSettings(
-  settings: unknown,
-  { cursorToolRules = true }: { cursorToolRules?: boolean } = {},
-): WorkerPermissions {
-  const value = settingsRecord(settings);
-  if (value.disableAllHooks === true) {
-    throw new Error('Native Cursor requires Claude mode hooks; disableAllHooks is unsupported.');
-  }
-  const permissions = settingsRecord(value.permissions ?? {});
-  assertNativeAskRules(permissions.ask);
-  const denied = permissions.deny;
-  if (
-    denied !== undefined &&
-    (!Array.isArray(denied) || denied.some((rule) => typeof rule !== 'string'))
-  ) {
-    throw new Error('Native Cursor cannot enforce Claude permissions.deny');
-  }
-  // Another harness validates the merged rules itself once every source is read, so a
-  // per-file Cursor check would reject rules that harness does enforce.
-  if (cursorToolRules) {
-    claudeToolRules(denied);
-  }
-  // Claude's PreToolUse/PermissionRequest hooks never run for native Cursor tools.
-  // They are not translatable policy, so they neither block admission nor apply.
-  const sandbox = settingsRecord(value.sandbox ?? {});
-  if (Object.keys(sandbox).some((key) => key !== 'enabled' || sandbox.enabled !== false)) {
-    throw new Error(
-      'Native Cursor cannot enforce Claude sandbox settings; native execution is unavailable.',
-    );
-  }
-  return { disallowedTools: denied };
-}
-
-function settingsRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Claude settings for native Cursor execution');
-  }
-  return value as Record<string, unknown>;
-}
-
-function assertNativeAskRules(value: unknown): void {
-  if (
-    value !== undefined &&
-    (!Array.isArray(value) || value.length > 0 || value.some((rule) => typeof rule !== 'string'))
-  ) {
-    throw new Error(
-      'Native Cursor cannot enforce Claude permissions.ask; native execution is unavailable.',
-    );
-  }
 }
 
 /** The policy helper also removes write-capable tools for Plan. */

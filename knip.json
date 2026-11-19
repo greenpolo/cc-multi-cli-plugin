@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "plugins/multi-core/src/launcher.ts",
-    "test/unit/**/*.test.ts",
+    "plugins/*/src/adapter.ts",
     "test/e2e/**/*.test.ts",
     "test/live/*.ts",
     "plugins/multi-core/src/setup.ts",

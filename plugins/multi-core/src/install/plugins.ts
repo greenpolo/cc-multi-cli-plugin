@@ -5,9 +5,6 @@ import { promisify } from 'node:util';
 import { executableInvocation } from '../gateway/executable.ts';
 
 const MARKETPLACE = 'cc-multi-cli-plugin';
-const PROVIDERS = ['openai', 'cursor', 'zen', 'antigravity', 'grok'] as const;
-export type Provider = (typeof PROVIDERS)[number];
-
 interface Plugin {
   id: string;
   enabled: boolean;
@@ -16,16 +13,20 @@ interface Plugin {
   errors?: unknown;
 }
 
-export function providerSelection(value: string | undefined): Provider[] | undefined {
+/**
+ * The provider names a session was launched with. This file is also copied on its own into
+ * Multi's data directory, so it knows the shape of a provider name and not the provider list:
+ * the launcher refuses a name no provider folder answers to.
+ */
+export function providerSelection(value: string | undefined): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
   return [...new Set(value.split(',').filter(Boolean))].map((id) => {
-    const provider = PROVIDERS.find((name) => name === id);
-    if (!provider) {
+    if (!/^[a-z]+$/.test(id)) {
       throw new Error(`Unknown Multi provider: ${id}`);
     }
-    return provider;
+    return id;
   });
 }
 
@@ -83,9 +84,14 @@ export async function installedPlugins(
   if (core.length && personalCore.length !== 1) {
     throw new Error('Install multi-core at user scope before running Multi setup.');
   }
-  const providers = PROVIDERS.filter((name) =>
-    plugins.some((plugin) => plugin.id === `multi-${name}@${MARKETPLACE}` && plugin.enabled),
-  );
+  const providers = [
+    ...new Set(
+      plugins.flatMap((plugin) => {
+        const name = new RegExp(`^multi-([a-z]+)@${MARKETPLACE}$`).exec(plugin.id)?.[1];
+        return plugin.enabled && name !== undefined && name !== 'core' ? [name] : [];
+      }),
+    ),
+  ];
   return { root: personalCore[0]?.installPath, providers };
 }
 

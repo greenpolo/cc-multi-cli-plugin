@@ -1,0 +1,21 @@
+{
+  "name": "grok",
+  "label": "Grok",
+  "kind": "harness",
+  "order": 40,
+  "runs": "native Grok Build CLI",
+  "endpoint": "grok",
+  "unavailable": "Grok is unavailable. Install Grok Build, run grok login, and relaunch.",
+  "review": {
+    "mode": "none",
+    "statement": "no auto mode: actions run unreviewed"
+  },
+  "usage": {
+    "name": "Grok Build",
+    "url": "https://x.ai/build",
+    "unavailable": [
+      "Grok Build exposes no account quota; per-run cost appears in session receipts.",
+      "Run grok login if the browser credential has expired."
+    ]
+  }
+}

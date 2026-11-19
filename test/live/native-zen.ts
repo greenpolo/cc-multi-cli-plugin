@@ -16,6 +16,7 @@ import {
 import { readZenKey } from '../../plugins/multi-zen/src/auth.ts';
 import { zenModel, zenPickerOptions } from '../../plugins/multi-zen/src/models.ts';
 import { isolatedEnvironment } from './environment.ts';
+import { liveProviders } from './providers.ts';
 
 interface UsageSample {
   stage: string;
@@ -97,7 +98,8 @@ function requireApiKey(value: string | undefined): string {
   }
   return value;
 }
-const apiKey = requireApiKey(await readZenKey());
+requireApiKey(await readZenKey());
+const providers = await liveProviders(['zen']);
 assert(!option('--model') || model.length > 0, '--model requires a non-empty model id');
 assert(!switchedModel || switchedModel.length > 0, '--switch requires a non-empty model id');
 assert(zenModel(model), `Unsupported Zen model: ${model}`);
@@ -254,9 +256,8 @@ function createGateway() {
   };
   const options: GatewayOptions = {
     token: gatewayToken,
-    authFile: path.join(artifacts, 'unused-codex-auth.json'),
+    providers,
     blockAnthropic: true,
-    zen: { apiKey },
     fetchImpl,
   };
   return createNativeGateway(options);

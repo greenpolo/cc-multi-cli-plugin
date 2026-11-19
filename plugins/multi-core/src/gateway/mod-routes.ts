@@ -41,7 +41,7 @@ export interface ModRouteContext {
   permissionModes?: PermissionModes;
   compactions?: ModCompactions;
   receipts?: ReceiptLedger;
-  billedUsage?: (session: string) => Promise<unknown>;
+  billed?: { scope: string; read(session: string): Promise<unknown> };
   dashboard?: ProviderUsageDashboard;
   rows?: DisplayRows;
   /** The per-session keys; a detached session's key is dropped with the session. */
@@ -55,7 +55,7 @@ export async function handleModRoute(
   parsed: unknown,
   context: ModRouteContext,
 ) {
-  const { bridge, receipts, billedUsage, dashboard, rows } = context;
+  const { bridge, receipts, billed, dashboard, rows } = context;
   try {
     if (
       ['/multi/mod/usage', '/multi/mod/receipts', '/multi/mod/usage/complete'].includes(
@@ -65,7 +65,7 @@ export async function handleModRoute(
       if (!receipts) {
         throw new Error('Usage accounting is unavailable');
       }
-      return reply(res, await usageRoute(req, url, parsed, receipts, billedUsage, dashboard));
+      return reply(res, await usageRoute(req, url, parsed, receipts, billed, dashboard));
     }
     switch (url.pathname) {
       case '/multi/mod/telemetry':

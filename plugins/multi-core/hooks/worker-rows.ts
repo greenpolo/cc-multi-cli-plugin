@@ -1,6 +1,7 @@
 import type { Register } from 'claude-code';
 import { atom, read } from 'claude-code';
 import { isProviderWorker } from '../src/gateway/provider-workers.ts';
+import { providerLabel } from './provider.ts';
 
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
@@ -13,21 +14,13 @@ const spawnModels = atom(
   {} as Record<string, string>,
 );
 
-const PROVIDER_LABELS: Readonly<Record<string, string>> = {
-  openai: 'OpenAI',
-  zen: 'Zen',
-  cursor: 'Cursor',
-  antigravity: 'Antigravity',
-  grok: 'Grok',
-};
-
 /** Provider display name for a `multi-*` subagent type, else undefined. */
 export function providerName(subagentType: unknown): string | undefined {
   if (typeof subagentType !== 'string') {
     return undefined;
   }
   const [, key = ''] = /^multi-([a-z]+)$/.exec(subagentType) ?? [];
-  return Object.hasOwn(PROVIDER_LABELS, key) ? PROVIDER_LABELS[key] : undefined;
+  return providerLabel(key);
 }
 
 /** `<provider> · <model>` for a Multi model (`multi/cursor/composer-2.5`), else undefined. */
@@ -36,7 +29,7 @@ export function workerLabel(model: unknown): string | undefined {
     return undefined;
   }
   const [, name = '', spelled = ''] = /^multi\/([a-z]+)\/(.+)$/.exec(model) ?? [];
-  const provider = Object.hasOwn(PROVIDER_LABELS, name) ? PROVIDER_LABELS[name] : undefined;
+  const provider = providerLabel(name);
   if (!provider || !spelled) {
     return undefined;
   }

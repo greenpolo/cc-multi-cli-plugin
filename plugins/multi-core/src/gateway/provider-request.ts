@@ -22,7 +22,8 @@ export class UpstreamFailure extends Error {
 
 /** Routing facts a provider reports for one request; never credentials or bodies. */
 interface ProviderEvent {
-  route: 'openai' | 'openai-request' | 'zen' | 'zen-request';
+  /** The provider's name, or `<name>-request` for the request it sends upstream. */
+  route: string;
   agentId?: string | null;
   model?: string;
   effort?: string;
@@ -50,7 +51,7 @@ export interface PreparedRequest {
   authHelp: string;
   /** The API the request is billed through, reported on completion. */
   endpoint: string;
-  route: 'openai' | 'zen';
+  route: string;
   /** The local input estimate; computed on first use, since a streamed reply needs it late. */
   inputTokens(): number;
   /** Model and effort the completion reports in place of the client's request, if known. */

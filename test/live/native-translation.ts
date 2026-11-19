@@ -1,10 +1,9 @@
 // Opt-in live check. Sends only synthetic text/images through the Codex subscription.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import os from 'node:os';
-import path from 'node:path';
 import type { MessagesResponse } from '../../plugins/multi-core/src/gateway/messages.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
+import { liveProviders } from './providers.ts';
 
 // Generated 64x64 solid red and blue PNGs; no external image fetches.
 const red =
@@ -17,11 +16,7 @@ const image = (data: string) => ({
 });
 const token = randomBytes(32).toString('hex');
 const nonce = randomBytes(8).toString('hex');
-const authFile = path.join(
-  process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
-  'auth.json',
-);
-const server = createNativeGateway({ token, authFile });
+const server = createNativeGateway({ token, providers: await liveProviders(['openai']) });
 await new Promise<void>((resolve, reject) => {
   server.once('error', reject);
   server.listen(0, '127.0.0.1', resolve);

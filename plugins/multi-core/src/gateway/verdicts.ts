@@ -12,6 +12,12 @@ export interface ReviewInput {
   planMode: boolean;
 }
 export type Reviewer = (input: ReviewInput, signal: AbortSignal) => Promise<ReviewVerdict>;
+/** A provider's account reviewer: how refusals name it, and the model its events report. */
+export interface AccountReviewer {
+  review: Reviewer;
+  label: string;
+  model: string;
+}
 type ToolVerdict =
   | { type: 'evaluated'; outcome: 'not_flagged' }
   | { type: 'evaluated'; outcome: 'flagged'; explanation: string };
@@ -79,7 +85,7 @@ export async function verdictsFor(
   request: MessagesRequest,
   reply: MessagesResponse,
   policy: AutoReviewPolicy,
-  reviewer: Reviewer | undefined,
+  reviewer: AccountReviewer | undefined,
   signal: AbortSignal,
   context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker'> = {},
   onReview: (tool: string, verdict: ReviewVerdict) => void = () => {},
@@ -122,7 +128,7 @@ async function toolVerdict(
   tool: ReviewInput['tool'],
   mode: string,
   policy: AutoReviewPolicy,
-  reviewer: Reviewer | undefined,
+  reviewer: AccountReviewer | undefined,
   request: MessagesRequest,
   signal: AbortSignal,
   context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker'>,
@@ -147,17 +153,19 @@ async function toolVerdict(
   try {
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(60000)]);
     const verdict = await boundedReview(
-      reviewer,
+      reviewer.review,
       { tool, request, ...context, planMode: mode === 'plan' },
       deadline,
     );
     onReview(tool.name, verdict);
     return verdict.outcome === 'allow'
       ? allowed
-      : blocked(prose(verdict.reason ?? 'The OpenAI reviewer refused this action.'));
+      : blocked(prose(verdict.reason ?? `The ${reviewer.label} reviewer refused this action.`));
   } catch {
-    onReview(tool.name, { model: 'codex-auto-review', outcome: 'deny' });
-    return blocked('The OpenAI reviewer could not complete its review. The action was refused.');
+    onReview(tool.name, { model: reviewer.model, outcome: 'deny' });
+    return blocked(
+      `The ${reviewer.label} reviewer could not complete its review. The action was refused.`,
+    );
   }
 }
 

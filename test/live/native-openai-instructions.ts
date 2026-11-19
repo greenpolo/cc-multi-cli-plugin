@@ -4,13 +4,14 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
+import { liveProviders } from './providers.ts';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'openai-instructions-live-'));
 const results: unknown[] = [];
 let requests = 0;
 const server = createNativeGateway({
   token: 'instructions-probe',
-  authFile: path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json'),
+  providers: await liveProviders(['openai']),
   blockAnthropic: true,
   fetchImpl: async (url, init) => {
     assert.equal(url, 'https://chatgpt.com/backend-api/codex/responses');

@@ -170,3 +170,36 @@ export function selectAntigravityModel(
   }
   return variant;
 }
+
+/**
+ * Families whose native input window is about a million tokens. Gemini 3.x Flash and Pro
+ * take 1,048,576. Every other advertised model keeps the conservative default, because its
+ * window is smaller or unestablished: GPT-OSS 120B takes 131,072, and the Claude models
+ * served here carry no 1M entitlement. The native catalog reports no capacity metadata, so
+ * this list is the only place that claim is made.
+ */
+const ONE_MILLION_FAMILIES = /^gemini(?:-|$)/;
+
+/** An opt-out set to an explicit negative reads as off, not as "the variable is present". */
+function optedOut(value: string | undefined): boolean {
+  return value !== undefined && !['', '0', 'false', 'no', 'off'].includes(value.toLowerCase());
+}
+
+/**
+ * Claude reads a row's context window from a `[1m]` tag on the model ID before it consults
+ * the `behavesAs` profile, and it matches `behavesAs` on the untagged spelling. Tagging a
+ * row therefore states the provider's real window without adopting a Claude profile that
+ * also advertises effort levels the provider does not have. The harness strips the tag
+ * before it resolves the native model. `MULTI_DISABLE_1M_CONTEXT` opts out.
+ */
+export function oneMillionContext(
+  model: string,
+  id: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const family = id.replace(/-(low|medium|high)$/, '');
+  if (optedOut(env.MULTI_DISABLE_1M_CONTEXT) || !ONE_MILLION_FAMILIES.test(family)) {
+    return model;
+  }
+  return `${model}[1m]`;
+}

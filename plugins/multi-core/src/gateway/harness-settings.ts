@@ -2,10 +2,6 @@ import childProcess from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  assertCursorClaudeSettings,
-  cursorPermissionPolicy,
-} from '../../../multi-cursor/src/permissions.ts';
 import { pluginPermissions, type WorkerPermissions } from './agent-definitions.ts';
 import type { PermissionContext } from './mode-hook.ts';
 
@@ -16,19 +12,17 @@ export interface HarnessSettingsOptions {
   readFile?: typeof fs.readFile;
   readDir?: typeof fs.readdir;
   runCommand?: (command: string, args: readonly string[]) => Promise<string>;
-  /** Validator for the merged rules; defaults to Cursor's. Another harness passes its own.
-   * It must be synchronous: admission throws, and a returned promise would be ignored. */
-  validate?: (context: PermissionContext) => void;
-  /** Whether each settings file is also judged against Cursor's tool vocabulary as it is
-   * read, which buys the per-file attribution in the error message. Defaults to Cursor's
-   * own dispatch, meaning any caller that brings its own `validate` owns validation and
-   * opts back in explicitly. Stated as an option rather than inferred from which function
-   * `validate` is, so a wrapper or a test double cannot change the mode by accident. */
-  cursorToolRules?: boolean;
+  /** The harness's own judgement of the merged rules. It must be synchronous: admission
+   * throws, and a returned promise would be ignored. */
+  validate: (context: PermissionContext) => void;
+  /** Judges each settings file's deny rules as it is read, which buys the per-file
+   * attribution in the error message. Without it only the merged result is judged. */
+  checkRules?: (rules: string[] | undefined) => void;
 }
 
 /** Every discovery option resolved to a value; not part of the public surface. */
-type SettingsDiscovery = Required<HarnessSettingsOptions>;
+type SettingsDiscovery = Required<Omit<HarnessSettingsOptions, 'checkRules'>> &
+  Pick<HarnessSettingsOptions, 'checkRules'>;
 
 export const policyCommandTimeoutMs = 10_000;
 
@@ -91,13 +85,12 @@ export async function checkHarnessSettings(
   cwd: string,
   args: readonly string[],
   inlineSettings: Record<string, unknown>,
-  options: HarnessSettingsOptions = {},
+  options: HarnessSettingsOptions,
 ): Promise<WorkerPermissions> {
   const { sources, restrictions } = settingSources(args);
   await pluginPermissions(cwd, [...args, '--settings', JSON.stringify(inlineSettings)]);
   let context = mergePermissions({ permissionMode: 'auto' }, restrictions);
-  const { validate = cursorPermissionPolicy, cursorToolRules = options.validate === undefined } =
-    options;
+  const { validate, checkRules } = options;
   const settingsOptions: SettingsDiscovery = {
     platform: options.platform ?? process.platform,
     env: options.env ?? process.env,
@@ -106,13 +99,10 @@ export async function checkHarnessSettings(
     readDir: options.readDir ?? fs.readdir,
     runCommand: options.runCommand ?? defaultRunCommand,
     validate,
-    cursorToolRules,
+    checkRules,
   };
   context = mergePolicies(context, await managedSettings(settingsOptions));
-  context = mergePermissions(
-    context,
-    assertCursorClaudeSettings(inlineSettings, { cursorToolRules }),
-  );
+  context = mergePermissions(context, claudeSettingsRestrictions(inlineSettings, checkRules));
   if (sources.has('user')) {
     context = mergePermissions(
       context,
@@ -122,7 +112,7 @@ export async function checkHarnessSettings(
           'settings.json',
         ),
         settingsOptions.readFile,
-        cursorToolRules,
+        checkRules,
       ),
     );
   }
@@ -133,7 +123,7 @@ export async function checkHarnessSettings(
         await checkFile(
           path.join(directory, '.claude', 'settings.json'),
           settingsOptions.readFile,
-          cursorToolRules,
+          checkRules,
         ),
       );
     }
@@ -143,7 +133,7 @@ export async function checkHarnessSettings(
         await checkFile(
           path.join(directory, '.claude', 'settings.local.json'),
           settingsOptions.readFile,
-          cursorToolRules,
+          checkRules,
         ),
       );
     }
@@ -201,15 +191,15 @@ function settingSources(args: readonly string[]): {
 function selectedSources(sources: string): Set<string> {
   const selected = new Set(sources.split(',').filter(Boolean));
   if ([...selected].some((source) => !['user', 'project', 'local'].includes(source))) {
-    throw new Error('Native Cursor received unsupported --setting-sources');
+    throw new Error('Native harness received unsupported --setting-sources');
   }
   return selected;
 }
 
 async function checkFile(
   file: string,
-  readFile: typeof fs.readFile = fs.readFile,
-  cursorToolRules = true,
+  readFile: typeof fs.readFile,
+  checkRules: HarnessSettingsOptions['checkRules'],
 ): Promise<WorkerPermissions> {
   let text: string;
   try {
@@ -221,9 +211,9 @@ async function checkFile(
     throw error;
   }
   try {
-    return assertCursorClaudeSettings(JSON.parse(text), { cursorToolRules });
+    return claudeSettingsRestrictions(JSON.parse(text), checkRules);
   } catch (error) {
-    throw new Error(`Native Cursor settings admission failed for ${file}: ${String(error)}`);
+    throw new Error(`Native harness settings admission failed for ${file}: ${String(error)}`);
   }
 }
 
@@ -234,7 +224,7 @@ async function managedSettings(options: SettingsDiscovery): Promise<WorkerPermis
   // WSL is therefore admitted through the Linux file source; Claude only consults
   // the Windows chain when its documented wslInheritsWindowsSettings controls are active.
   if (!['linux', 'darwin', 'win32'].includes(options.platform)) {
-    throw new Error(`Native Cursor managed-policy admission does not support ${options.platform}`);
+    throw new Error(`Native harness managed-policy admission does not support ${options.platform}`);
   }
   const platformPath = options.platform === 'win32' ? path.win32 : path.posix;
   const effectivePlatform =
@@ -261,7 +251,7 @@ async function managedSettings(options: SettingsDiscovery): Promise<WorkerPermis
       }
       throw error;
     }
-    policies.push(managedPolicy(source, file, options.cursorToolRules));
+    policies.push(managedPolicy(source, file, options.checkRules));
   }
   if (effectivePlatform === 'darwin') {
     policies.push(
@@ -310,7 +300,7 @@ async function managedCommandPolicy(
     }
     if (!retry || !failedWithExitCode(error, 1)) {
       throw new Error(
-        `Native Cursor cannot observe managed policy via ${command}: ${String(error)}`,
+        `Native harness cannot observe managed policy via ${command}: ${String(error)}`,
       );
     }
     source = await retry();
@@ -319,11 +309,7 @@ async function managedCommandPolicy(
     return [];
   }
   return [
-    managedPolicy(
-      parsePolicyValue(source),
-      `${command} ${args.join(' ')}`,
-      options.cursorToolRules,
-    ),
+    managedPolicy(parsePolicyValue(source), `${command} ${args.join(' ')}`, options.checkRules),
   ];
 }
 
@@ -387,7 +373,7 @@ async function managedRegistryValue(
       return undefined;
     }
     throw new Error(
-      `Native Cursor cannot observe managed policy via reg or PowerShell for ${root}: ${String(error)}`,
+      `Native harness cannot observe managed policy via reg or PowerShell for ${root}: ${String(error)}`,
     );
   }
 }
@@ -400,7 +386,7 @@ function parsePolicyValue(source: string): string {
   } catch {
     const match = trimmed.match(/(?:Settings\s+REG_(?:SZ|EXPAND_SZ)\s+)(.+)$/im);
     if (!match) {
-      throw new Error('Native Cursor cannot parse managed policy output as JSON');
+      throw new Error('Native harness cannot parse managed policy output as JSON');
     }
     const value = match[1].trim();
     JSON.parse(value);
@@ -408,7 +394,11 @@ function parsePolicyValue(source: string): string {
   }
 }
 
-function managedPolicy(source: string, file: string, cursorToolRules = true): WorkerPermissions {
+function managedPolicy(
+  source: string,
+  file: string,
+  checkRules: HarnessSettingsOptions['checkRules'],
+): WorkerPermissions {
   const settings = JSON.parse(source.trim() || '{}');
   if (
     !settings ||
@@ -416,7 +406,7 @@ function managedPolicy(source: string, file: string, cursorToolRules = true): Wo
     Array.isArray(settings) ||
     Object.keys(settings).some((key) => !['permissions', 'hooks', 'sandbox'].includes(key))
   ) {
-    throw new Error(`Native Cursor cannot enforce managed policy ${file}; unsupported settings.`);
+    throw new Error(`Native harness cannot enforce managed policy ${file}; unsupported settings.`);
   }
   if (
     settings.permissions &&
@@ -424,9 +414,57 @@ function managedPolicy(source: string, file: string, cursorToolRules = true): Wo
       (key) => !['allow', 'deny', 'ask', 'defaultMode'].includes(key),
     )
   ) {
-    throw new Error(`Native Cursor cannot enforce managed permission controls in ${file}`);
+    throw new Error(`Native harness cannot enforce managed permission controls in ${file}`);
   }
-  return assertCursorClaudeSettings(settings, { cursorToolRules });
+  return claudeSettingsRestrictions(settings, checkRules);
+}
+
+/** Claude cannot enforce these restrictions over tools a native harness executes. */
+function claudeSettingsRestrictions(
+  settings: unknown,
+  checkRules: HarnessSettingsOptions['checkRules'],
+): WorkerPermissions {
+  const value = settingsRecord(settings);
+  if (value.disableAllHooks === true) {
+    throw new Error('Native harnesses require Claude mode hooks; disableAllHooks is unsupported.');
+  }
+  const permissions = settingsRecord(value.permissions ?? {});
+  assertNativeAskRules(permissions.ask);
+  const denied = permissions.deny;
+  if (
+    denied !== undefined &&
+    (!Array.isArray(denied) || denied.some((rule) => typeof rule !== 'string'))
+  ) {
+    throw new Error('Native harnesses cannot enforce Claude permissions.deny');
+  }
+  checkRules?.(denied);
+  // Claude's PreToolUse/PermissionRequest hooks never run for native harness tools.
+  // They are not translatable policy, so they neither block admission nor apply.
+  const sandbox = settingsRecord(value.sandbox ?? {});
+  if (Object.keys(sandbox).some((key) => key !== 'enabled' || sandbox.enabled !== false)) {
+    throw new Error(
+      'Native harnesses cannot enforce Claude sandbox settings; native execution is unavailable.',
+    );
+  }
+  return { disallowedTools: denied };
+}
+
+function settingsRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid Claude settings for native harness execution');
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertNativeAskRules(value: unknown): void {
+  if (
+    value !== undefined &&
+    (!Array.isArray(value) || value.length > 0 || value.some((rule) => typeof rule !== 'string'))
+  ) {
+    throw new Error(
+      'Native harnesses cannot enforce Claude permissions.ask; native execution is unavailable.',
+    );
+  }
 }
 
 function missing(error: unknown): boolean {

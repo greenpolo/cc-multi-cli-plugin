@@ -6,16 +6,7 @@
  * request's effort (the session's /effort) applies, validated by the provider.
  */
 
-const WORKER_PROVIDERS = ['openai', 'zen', 'cursor', 'antigravity', 'grok'] as const;
-export type WorkerProvider = (typeof WORKER_PROVIDERS)[number];
-
-const PROVIDER_LABELS: Readonly<Record<WorkerProvider, string>> = {
-  openai: 'OpenAI',
-  zen: 'Zen',
-  cursor: 'Cursor',
-  antigravity: 'Antigravity',
-  grok: 'Grok',
-};
+import { providerManifest, providerManifests, providerOf } from './provider.ts';
 
 /** Claude's model aliases: the Agent tool's own values, never a provider model. */
 const CLAUDE_ALIASES = new Set(['sonnet', 'opus', 'haiku', 'fable', 'inherit']);
@@ -30,7 +21,7 @@ interface WorkerModel {
 
 export interface ProviderWorker {
   type: string;
-  provider: WorkerProvider;
+  provider: string;
   label: string;
   models: WorkerModel[];
   defaultId: string;
@@ -41,7 +32,7 @@ export type WorkerCatalog = Readonly<Record<string, ProviderWorker>>;
 
 export interface ResolvedWorker {
   type: string;
-  provider: WorkerProvider;
+  provider: string;
   label: string;
   id: string;
   model: string;
@@ -55,18 +46,18 @@ export interface WorkerDefaults {
   effort?: string;
 }
 
-function workerType(provider: WorkerProvider): string {
+function workerType(provider: string): string {
   return `multi-${provider}`;
 }
 
-function providerLabel(provider: WorkerProvider): string {
-  return PROVIDER_LABELS[provider];
+function providerLabel(provider: string): string {
+  return providerManifest(provider)?.label ?? provider;
 }
 
 /** `multi/<provider>/<id>` split into its provider and its decoded, untagged id. */
-function parseProviderModel(model: string): { provider: WorkerProvider; id: string } | undefined {
+function parseProviderModel(model: string): { provider: string; id: string } | undefined {
   const match = /^multi\/([a-z]+)\/(.+)$/.exec(model);
-  const provider = WORKER_PROVIDERS.find((name) => name === match?.[1]);
+  const provider = providerOf(model);
   if (!match || !provider) {
     return undefined;
   }
@@ -86,11 +77,11 @@ function parseProviderModel(model: string): { provider: WorkerProvider; id: stri
  */
 export function buildWorkerCatalog(
   rows: readonly { model: string }[],
-  defaults: Partial<Record<WorkerProvider, WorkerDefaults>> = {},
+  defaults: Partial<Record<string, WorkerDefaults>> = {},
 ): WorkerCatalog {
   const grouped = byProvider(rows);
   const catalog: Record<string, ProviderWorker> = {};
-  for (const provider of WORKER_PROVIDERS) {
+  for (const { name: provider } of providerManifests()) {
     const models = withoutEffortVariants(grouped.get(provider));
     const first = models?.[0];
     if (!models || !first) {
@@ -102,7 +93,7 @@ export function buildWorkerCatalog(
     catalog[workerType(provider)] = {
       type: workerType(provider),
       provider,
-      label: PROVIDER_LABELS[provider],
+      label: providerLabel(provider),
       models,
       defaultId: preferred && ids.includes(preferred) ? preferred : first.id,
       ...(effort ? { effort } : {}),
@@ -111,8 +102,8 @@ export function buildWorkerCatalog(
   return catalog;
 }
 
-function byProvider(rows: readonly { model: string }[]): Map<WorkerProvider, WorkerModel[]> {
-  const grouped = new Map<WorkerProvider, WorkerModel[]>();
+function byProvider(rows: readonly { model: string }[]): Map<string, WorkerModel[]> {
+  const grouped = new Map<string, WorkerModel[]>();
   for (const { model } of rows) {
     const parsed = parseProviderModel(model);
     if (!parsed || parsed.id.includes('/')) {
