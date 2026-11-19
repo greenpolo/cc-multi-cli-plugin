@@ -17,6 +17,8 @@ Use `/model multi/openai/<model-id>` or choose a row in `/model`. Use `/effort <
 
 | Picker row | Model |
 | --- | --- |
+| OpenAI · `gpt-6.2-sol` | `gpt-6.2-sol` |
+| OpenAI · `gpt-6.2-astra` | `gpt-6.2-astra` |
 | OpenAI · `gpt-6.1-sol` | `gpt-6.1-sol` |
 | OpenAI · `gpt-6-astra` | `gpt-6-astra` |
 | OpenAI · `gpt-6.1-terra` | `gpt-6.1-terra` |
@@ -28,7 +30,7 @@ Picker rows include `behavesAs` metadata for Claude client compatibility. This m
 
 The Agent tool's `OpenAI` type runs any row above: pass `model: <id>`
 (for example `model: gpt-6-luna`) to pick one, or omit `model` to run the
-default, `gpt-6.1-sol`. An unknown id, another provider's model, or an
+default, `gpt-6.2-sol`. An unknown id, another provider's model, or an
 effort-suffixed name such as `gpt-6-luna-high` refuses the spawn, naming the
 available OpenAI models. `OpenAI` runs one provider-wide medium effort;
 effort is never part of the model name, and the session's `/effort` does not

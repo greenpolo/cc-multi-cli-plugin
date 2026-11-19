@@ -6,6 +6,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Run GPT-6.2 Sol and Astra.** The OpenAI picker now lists `gpt-6.2-sol` and
+  `gpt-6.2-astra` above the earlier models, and an `OpenAI` worker that names no
+  model now runs `gpt-6.2-sol` in place of `gpt-6.1-sol`. The 6.1 and 6.0 rows stay
+  available.
+
 - **Antigravity's `xhigh` rows run at `xhigh`.** Gemini 4 Neon and Hydrogen list an
   `xhigh` variant as its own `/model` row. Picking it now runs that variant whatever
   `/effort` says, and an Antigravity worker started without a model no longer lands
