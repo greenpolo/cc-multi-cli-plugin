@@ -71,6 +71,13 @@ export async function discoverAntigravityModels(
   return parseAntigravityModels(stdout);
 }
 
+/**
+ * `agy models` also lists an `xhigh` variant for some models. Claude Code offers `xhigh` only
+ * on profiles that would change how it treats the row, so `/effort` cannot reach it: the
+ * variant keeps its own `/model` row and always runs at the effort its ID names.
+ */
+const PINNED_EFFORT = /-xhigh$/;
+
 /** Group only suffix variants with no independently advertised base identity. */
 export function antigravityPickerOptions(models: readonly AntigravityModel[]): AntigravityModel[] {
   const nativeIds = new Set(models.map(({ id }) => id));
@@ -99,7 +106,8 @@ export function antigravityDefaultWorkerModel(ids: readonly string[]): string | 
   let best: { id: string; rank: number[] } | undefined;
   for (const id of ids) {
     const match = /^gemini-(\d+)(?:\.(\d+))?(?:-|$)/.exec(id);
-    if (!match) {
+    // A pinned effort row (`<base>-xhigh` beside `<base>`) is never the default.
+    if (!match || (PINNED_EFFORT.test(id) && ids.includes(id.replace(PINNED_EFFORT, '')))) {
       continue;
     }
     // Pro before Flash, Flash before Flash-Lite; equal ranks fall to the greater id so the
@@ -154,7 +162,7 @@ export function selectAntigravityModel(
     throw new Error('Unknown Antigravity model; run agy models for native selections.');
   }
   const selected = native ?? defaultVariant(models, row.id);
-  if (effort === undefined) {
+  if (effort === undefined || PINNED_EFFORT.test(selected.id)) {
     return selected;
   }
   if (effort !== 'low' && effort !== 'medium' && effort !== 'high') {

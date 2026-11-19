@@ -6,6 +6,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Antigravity's `xhigh` rows run at `xhigh`.** Gemini 4 Neon and Hydrogen list an
+  `xhigh` variant as its own `/model` row. Picking it now runs that variant whatever
+  `/effort` says, and an Antigravity worker started without a model no longer lands
+  on it: it runs Gemini 4 Neon at the session's effort.
+
 - **Workers look like Claude's own agents.** The worker types are now the CLIs'
   own names, `OpenAI`, `Zen`, `Cursor`, `Antigravity` and `Grok`, in place of
   `multi-openai` and the rest, so Claude Code names them the way it names `Explore`

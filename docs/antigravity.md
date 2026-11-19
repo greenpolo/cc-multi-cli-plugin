@@ -35,6 +35,8 @@ The picker reads the models advertised by `agy`.
 | Unsuffixed advertised model | `multi/antigravity/<id>` |
 
 Suffix variants group behind a base row when no independent base model exists.
+An advertised `-xhigh` variant keeps its own row and always runs at that effort,
+because Claude Code's `/effort` offers these rows only low, medium and high.
 The default variant order is medium, high, then low. `/effort` accepts only an
 advertised low, medium, or high variant. Unknown models and unavailable effort
 variants fail explicitly.
