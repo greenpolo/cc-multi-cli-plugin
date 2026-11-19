@@ -7,7 +7,6 @@ import {
   runNativeCli,
 } from '../../multi-core/src/gateway/harness-process.ts';
 import { isRecord } from '../../multi-core/src/gateway/record.ts';
-import type { AntigravityEffort } from './models.ts';
 
 type AntigravityStatus =
   | 'SUCCESS'
@@ -70,7 +69,7 @@ export interface AntigravityRunOptions {
   prompt: string;
   signal: AbortSignal;
   model?: string;
-  effort?: AntigravityEffort;
+  effort?: 'low' | 'medium' | 'high';
   conversation?: string;
   agent?: string;
   mode?: 'plan';

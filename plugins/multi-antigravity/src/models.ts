@@ -7,20 +7,11 @@ import {
 import { nativeSpelling } from '../../multi-core/src/gateway/provider.ts';
 import { antigravityEnvironment } from './cli.ts';
 
-/** The effort variants `agy models` advertises as an ID suffix; not every model has each. */
-const ANTIGRAVITY_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
-export type AntigravityEffort = (typeof ANTIGRAVITY_EFFORTS)[number];
-const EFFORT_SUFFIX = /-(low|medium|high|xhigh)$/;
-
-export function isAntigravityEffort(value: unknown): value is AntigravityEffort {
-  return ANTIGRAVITY_EFFORTS.some((effort) => effort === value);
-}
-
 export interface AntigravityModel {
   id: string;
   model: string;
   label: string;
-  effort?: AntigravityEffort;
+  effort?: 'low' | 'medium' | 'high';
 }
 
 function parseAntigravityModels(output: string): AntigravityModel[] {
@@ -80,19 +71,26 @@ export async function discoverAntigravityModels(
   return parseAntigravityModels(stdout);
 }
 
+/**
+ * `agy models` also lists an `xhigh` variant for some models. Claude Code offers `xhigh` only
+ * on profiles that would change how it treats the row, so `/effort` cannot reach it: the
+ * variant keeps its own `/model` row and always runs at the effort its ID names.
+ */
+const PINNED_EFFORT = /-xhigh$/;
+
 /** Group only suffix variants with no independently advertised base identity. */
 export function antigravityPickerOptions(models: readonly AntigravityModel[]): AntigravityModel[] {
   const nativeIds = new Set(models.map(({ id }) => id));
   const rows = new Map<string, AntigravityModel>();
   for (const option of models) {
-    const base = option.id.replace(EFFORT_SUFFIX, '');
+    const base = option.id.replace(/-(low|medium|high)$/, '');
     if (base === option.id || nativeIds.has(base)) {
       rows.set(option.id, option);
     } else if (!rows.has(base)) {
       rows.set(base, {
         id: base,
         model: `multi/antigravity/${base}`,
-        label: option.label.replace(/(?:\s*[-·]\s*|\s+|\s*\()(low|medium|high|xhigh)\)?$/i, ''),
+        label: option.label.replace(/(?:\s*[-·]\s*|\s+|\s*\()(low|medium|high)\)?$/i, ''),
       });
     }
   }
@@ -108,7 +106,8 @@ export function antigravityDefaultWorkerModel(ids: readonly string[]): string | 
   let best: { id: string; rank: number[] } | undefined;
   for (const id of ids) {
     const match = /^gemini-(\d+)(?:\.(\d+))?(?:-|$)/.exec(id);
-    if (!match) {
+    // A pinned effort row (`<base>-xhigh` beside `<base>`) is never the default.
+    if (!match || (PINNED_EFFORT.test(id) && ids.includes(id.replace(PINNED_EFFORT, '')))) {
       continue;
     }
     // Pro before Flash, Flash before Flash-Lite; equal ranks fall to the greater id so the
@@ -163,13 +162,13 @@ export function selectAntigravityModel(
     throw new Error('Unknown Antigravity model; run agy models for native selections.');
   }
   const selected = native ?? defaultVariant(models, row.id);
-  if (effort === undefined) {
+  if (effort === undefined || PINNED_EFFORT.test(selected.id)) {
     return selected;
   }
-  if (!isAntigravityEffort(effort)) {
-    throw new Error('Antigravity effort must be an advertised low, medium, high or xhigh variant.');
+  if (effort !== 'low' && effort !== 'medium' && effort !== 'high') {
+    throw new Error('Antigravity effort must be an advertised low, medium or high variant.');
   }
-  const base = selected.id.replace(EFFORT_SUFFIX, '');
+  const base = selected.id.replace(/-(low|medium|high)$/, '');
   if (base === selected.id) {
     return { ...selected, effort };
   }
@@ -206,7 +205,7 @@ export function oneMillionContext(
   id: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const family = id.replace(EFFORT_SUFFIX, '');
+  const family = id.replace(/-(low|medium|high)$/, '');
   if (optedOut(env.MULTI_DISABLE_1M_CONTEXT) || !ONE_MILLION_FAMILIES.test(family)) {
     return model;
   }

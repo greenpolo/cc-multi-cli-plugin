@@ -6,11 +6,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
-- **Antigravity's `xhigh` effort works.** Gemini 4 Neon and Hydrogen advertise an
-  `xhigh` variant. It used to show as a separate `/model` row and `/effort xhigh`
-  was refused; it now folds into the model's one row like low, medium and high, and
-  an Antigravity worker started without a model runs Gemini 4 Neon at its default
-  effort rather than the `xhigh` variant.
+- **Antigravity's `xhigh` rows run at `xhigh`.** Gemini 4 Neon and Hydrogen list an
+  `xhigh` variant as its own `/model` row. Picking it now runs that variant whatever
+  `/effort` says, and an Antigravity worker started without a model no longer lands
+  on it: it runs Gemini 4 Neon at the session's effort.
 
 - **Workers look like Claude's own agents.** The worker types are now the CLIs'
   own names, `OpenAI`, `Zen`, `Cursor`, `Antigravity` and `Grok`, in place of

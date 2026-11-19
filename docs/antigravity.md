@@ -31,22 +31,24 @@ The picker reads the models advertised by `agy`.
 | Picker entry | Route |
 | --- | --- |
 | Advertised base family | `multi/antigravity/<base>` |
-| Advertised `-low`, `-medium`, `-high`, or `-xhigh` variant | `multi/antigravity/<id>` |
+| Advertised `-low`, `-medium`, or `-high` variant | `multi/antigravity/<id>` |
 | Unsuffixed advertised model | `multi/antigravity/<id>` |
 
 Suffix variants group behind a base row when no independent base model exists.
+An advertised `-xhigh` variant keeps its own row and always runs at that effort,
+because Claude Code's `/effort` offers these rows only low, medium and high.
 The default variant order is medium, high, then low. `/effort` accepts only an
-advertised low, medium, high, or xhigh variant. Unknown models and unavailable effort
+advertised low, medium, or high variant. Unknown models and unavailable effort
 variants fail explicitly.
 
 Workers: the Agent tool's `Antigravity` type runs any row above, except
 an id that only adds an effort suffix to another listed row (`<base>-high`
 beside `<base>`) — that stays selectable through `/effort`, not through
-`model`. Pass `model: <id>` (for example `model: gemini-4-neon`) to pick a
+`model`. Pass `model: <id>` (for example `model: gemini-4-argon`) to pick a
 model, or omit `model` to run the newest Gemini generation, Pro before Flash
-at the same version (for example `gemini-4-neon` when 4 is newest).
+at the same version (for example `gemini-4-argon` when 4 is newest).
 Effort is never part of the model name: the session's `/effort` applies, and
-Antigravity picks its advertised low/medium/high/xhigh variant from it.
+Antigravity picks its advertised low/medium/high variant from it.
 
 ### Context window
 
@@ -55,7 +57,7 @@ session to the million input tokens Gemini 3.x accepts; an `Antigravity`
 worker resolved to one of these rows keeps the tag on its spawned model. The
 tag is Claude-side display metadata: `agy` never sees it, both spellings select
 the same native model, and `/effort` still offers only the advertised low,
-medium, high, and xhigh variants.
+medium, and high variants.
 
 Other advertised models keep Claude's 200K default, because their window is smaller
 or unestablished: GPT-OSS 120B accepts 131,072 tokens, and the Claude models served
