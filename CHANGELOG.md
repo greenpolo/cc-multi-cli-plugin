@@ -6,14 +6,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
-- **Workers look like Claude's own agents.** A Cursor, OpenAI, Antigravity, Grok or
-  Zen worker's row is Claude Code's own Agent row, named for its CLI:
-  `Cursor(Fix tests · composer-2.5)` instead of `Agent(Fix tests · Cursor ·
-  composer-2.5)`. The agent list under the prompt shows a running worker's newest
-  action where it shows a Claude agent's progress. While a CLI is the main model,
-  the spinner names it and its current action, and the status line reads `Cursor
-  composer-2.5 · running 12s · edit: a.ts` without internal ids. ctrl+o still shows
-  the full row.
+- **Workers look like Claude's own agents.** Wherever Claude Code would show a
+  worker's `multi-*` type, it now shows the CLI's name in Claude Code's own layout:
+  the Agent row reads `OpenAI(Fix slugify · gpt-6-luna)`, a launch of several
+  background workers lists `├ OpenAI (Fix slugify)`, and the agent list under the
+  prompt reads `OpenAI  Fix slugify`. A running worker's newest action appears
+  beside its task, with paths relative to the project. A Cursor, Antigravity or Grok
+  worker shows its time without a token count, since that count only arrives when it
+  finishes. The task's description and the "finished" notice keep the model's own
+  words, without ` · OpenAI · model`. While a CLI is the main model, the spinner
+  names it and its current action. Run progress no longer goes to the plugin status
+  line, which Claude Code draws as a warning. That line now appears only when a run
+  fails.
 
 ## 0.4.0 — 2026-10-28
 

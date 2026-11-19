@@ -115,7 +115,7 @@ test('a running provider worker row shows its provider and resolved model', asyn
     expect(compact.tool).toBe('Cursor');
     expect(compact.input.description).toBe('Fix tests · composer-2.5');
     expect(compact.input.model).toBeUndefined();
-    // ctrl+o keeps the engine's full row, labelled.
+    // ctrl+o names it the same way.
     const full = await agentRow($, surface, {
       tool_use_id: 'toolu_cursor',
       input,
@@ -123,8 +123,9 @@ test('a running provider worker row shows its provider and resolved model', asyn
       isExpanded: true,
     });
     await full.unmount();
-    const props = drawn.at(-1) as { input: Record<string, unknown> };
-    expect(props.input.description).toBe('Fix tests · Cursor · composer-2.5');
+    const props = drawn.at(-1) as { tool: string; input: Record<string, unknown> };
+    expect(props.tool).toBe('Cursor');
+    expect(props.input.description).toBe('Fix tests · composer-2.5');
     // The rest of the call's input is drawn as sent, less the provider model the Agent
     // schema rejects (the engine draws a rejected input as a bare `Agent`).
     expect(props.input.subagent_type).toBe('multi-cursor');
@@ -147,15 +148,6 @@ test('a completed worker row reads the model from its result after a reload', as
     const compact = drawn.at(-1) as { tool: string; input: Record<string, unknown> };
     expect(compact.tool).toBe('Antigravity');
     expect(compact.input.description).toBe('Review · gemini-3.8-flash');
-    const full = await agentRow($, surface, {
-      tool_use_id: 'toolu_restored',
-      input: { ...input, description: 'Review', subagent_type: 'multi-antigravity' },
-      output: { status: 'completed', resolvedModel: 'multi/antigravity/gemini-3.8-flash[1m]' },
-      isExpanded: true,
-    });
-    await full.unmount();
-    const props = drawn.at(-1) as { input: Record<string, unknown> };
-    expect(props.input.description).toBe('Review · Antigravity · gemini-3.8-flash');
   }
 });
 
@@ -183,34 +175,60 @@ test('Claude agents and other tools keep their rows unlabelled', async ($, on) =
   });
 });
 
-test('a worker notification shows its provider and model, and ctrl+o keeps the full row', async ($, on) => {
+test('a worker notification keeps the engine’s own words', async ($, on) => {
   mock.clock(on);
   gateway(on);
   const drawn = engine(on);
   await $.agent.spawn({
     prompt: 'task',
+    description: 'Fix tests',
     subagentType: 'multi-cursor',
     model: 'composer-2.5',
     tool_use_id: 'toolu_cursor',
   } as never);
-  for (const surface of surfaces) {
-    await notification($, surface, { task: { id: 'agent-cursor', status: 'completed' } });
-    expect(drawn.at(-1)?.text).toBe('Agent "Fix tests" completed · Cursor · composer-2.5');
-    // A notification that names only its call still finds the spawn.
-    await notification($, surface, { task: { toolUseId: 'toolu_cursor', status: 'failed' } });
-    expect(drawn.at(-1)?.text).toBe('Agent "Fix tests" completed · Cursor · composer-2.5');
-    await notification($, surface, {
-      isExpanded: true,
-      task: { id: 'agent-cursor', status: 'completed' },
+  await notification($, 'terminal', { task: { id: 'agent-cursor', status: 'completed' } });
+  expect(drawn.at(-1)?.text).toBe('Agent "Fix tests" completed');
+});
+
+test('a launch of several background workers names each for its CLI', async ($, on) => {
+  mock.clock(on);
+  gateway(on);
+  const drawn = engine(on);
+  const call = (id: string, type: string, description: string) => ({
+    tool_use_id: id,
+    tool: 'Agent',
+    input: { description, prompt: 'task', subagent_type: type, run_in_background: true },
+    isRunning: false,
+    isErrored: false,
+    isInterrupted: false,
+    output: { status: 'async_launched' },
+  });
+  const group = async (calls: unknown[], isExpanded = false) => {
+    const row = await $.ui.mount({
+      plugin: 'multi-core',
+      surface: 'terminal',
+      component: 'ToolGroup',
+      requestId: 'group',
+      props: { calls, isActive: false, isExpanded } as never,
     });
-    expect(drawn.at(-1)?.text).toBe('Agent "Fix tests" completed');
-    await notification($, surface, { task: { id: 'shell-1', status: 'completed' } });
-    expect(drawn.at(-1)?.text).toBe('Agent "Fix tests" completed');
-    // A summary that already names the model (the spawn labels its description) is kept.
-    const summary = 'Agent "Fix tests · Cursor · composer-2.5" finished';
-    await notification($, surface, { text: summary, task: { id: 'agent-cursor' } });
-    expect(drawn.at(-1)?.text).toBe(summary);
-  }
+    await row.drawn();
+    return row;
+  };
+  const both = [
+    call('toolu_a', 'multi-openai', 'Fix slugify'),
+    call('toolu_b', 'multi-antigravity', 'Fix countWords'),
+  ];
+  const row = await group(both);
+  expect(await row.find({ type: 'Text', text: '2 background agents launched ' })).toBeDefined();
+  expect(await row.find({ type: 'Text', text: 'OpenAI (Fix slugify)' })).toBeDefined();
+  expect(await row.find({ type: 'Text', text: 'Antigravity (Fix countWords)' })).toBeDefined();
+  expect(await row.find({ type: 'Text', text: '   └ ' })).toBeDefined();
+  await row.unmount();
+  expect(drawn.length).toBe(0);
+  // A group holding a Claude agent, or unfolded, is the engine's.
+  await (await group([both[0], call('toolu_c', 'Explore', 'Look')])).unmount();
+  await (await group(both, true)).unmount();
+  expect(drawn.length).toBe(2);
 });
 
 test("turn.step leaves an Agent call's streamed input exactly as the model wrote it", async ($, on) => {
@@ -258,19 +276,20 @@ async function listRow($: Engine, props: Record<string, unknown>) {
     requestId: 'agent-grok',
     props: {
       id: 'agent-grok',
-      description: 'Port the reader · Grok · grok-build',
+      description: 'Port the reader',
       type: 'multi-grok',
       status: 'running',
       kind: 'local_agent',
       taskStatus: 'running',
-      label: 'Port the reader · Grok · grok-build',
+      label: 'Port the reader',
       startTime: 0,
       cwd: '/workspace',
       model: 'multi/grok/grok-build',
-      tokenCount: 41_000,
+      tokenCount: 925,
       tokenSamples: [],
       hasRow: true,
       rowIds: ['agent-grok'],
+      columns: 60,
       isHidden: false,
       ...props,
     } as never,
@@ -279,11 +298,26 @@ async function listRow($: Engine, props: Record<string, unknown>) {
   await row.unmount();
 }
 
-test('the agent list keeps its own row and shows a worker’s newest action', async ($, on) => {
+const plain = (text: unknown) =>
+  String(text).replaceAll('\u001b[2m', '').replaceAll('\u001b[22m', '');
+
+test('the agent list names a worker for its CLI, keeps its task and adds its newest action', async ($, on) => {
   const clock = mock.clock(on);
   mock.env(on, { MULTI_GATEWAY_TOKEN: 'token', MULTI_MOD_GATEWAY_URL: 'http://127.0.0.1:4000' });
   on('session.id', () => ({ value: 's' }));
+  on('session.cwd', () => ({ value: 'C:\\Users\\lab\\repo' }));
   on('ui.status', () => ({ value: undefined }));
+  // A call on `$` is answered as `{ value }`, which the event's result type does not name.
+  on(
+    'agent.list',
+    () =>
+      ({
+        value: [
+          { id: 'agent-grok', type: 'multi-grok', model: 'multi/grok/grok-build', hasRow: true },
+          { id: 'agent-x', type: 'Explore', model: 'claude-haiku-4-5', hasRow: true },
+        ],
+      }) as never,
+  );
   on('http.fetch', (_$, event) => {
     const reply = (value: unknown) => ({
       value: { ok: true, status: 200, headers: {}, text: JSON.stringify(value) },
@@ -292,7 +326,7 @@ test('the agent list keeps its own row and shows a worker’s newest action', as
       return reply({
         model: 'multi/grok/grok-build',
         state: 'running',
-        detail: 'read_file: src/reader.ts',
+        detail: 'read_file: C:\\Users\\lab\\repo\\src\\reader.ts',
         elapsedMs: 3000,
         startedAt: Number.MAX_SAFE_INTEGER,
       });
@@ -311,9 +345,11 @@ test('the agent list keeps its own row and shows a worker’s newest action', as
     };
   });
   const drawn = engine(on);
-  // Before any action, the engine's own words stand.
+  await clock.set(13_000);
+  // The name column is padded to the longest listed name, as the engine pads it; a
+  // harness run's token count would sit still, so only its time shows.
   await listRow($, {});
-  expect(drawn.at(-1)?.label).toBe('Port the reader · Grok · grok-build');
+  expect(plain(drawn.at(-1)?.body)).toBe(`Grok     Port the reader${' '.repeat(33)}13s`);
   for await (const _chunk of $.turn.step({
     turnId: 't',
     index: 0,
@@ -325,11 +361,19 @@ test('the agent list keeps its own row and shows a worker’s newest action', as
   }
   await clock.advance(500);
   await listRow($, {});
-  expect(drawn.at(-1)?.label).toBe('read_file: src/reader.ts');
-  expect(drawn.at(-1)?.description).toBe('Port the reader · Grok · grok-build');
-  // A finished worker's row is the engine's alone.
+  expect(plain(drawn.at(-1)?.body)).toBe(
+    `Grok     Port the reader  read_file: src/reader.ts${' '.repeat(7)}13s`,
+  );
+  // A finished worker shows its task alone.
   await listRow($, { taskStatus: 'completed', status: 'completed' });
-  expect(drawn.at(-1)?.label).toBe('Port the reader · Grok · grok-build');
+  expect(plain(drawn.at(-1)?.body)).toBe(`Grok     Port the reader${' '.repeat(33)}13s`);
+  // An OpenAI worker runs Claude's own loop, so its tokens are counted.
+  await listRow($, { type: 'multi-openai', model: 'multi/openai/gpt-6-luna', tokenCount: 6800 });
+  expect(plain(drawn.at(-1)?.body)).toContain('OpenAI   Port the reader');
+  expect(plain(drawn.at(-1)?.body)).toMatch(/13s · ↓ 6\.8k tokens$/);
+  // A Claude agent is the engine's row.
+  await listRow($, { type: 'Explore', model: 'claude-haiku-4-5' });
+  expect(drawn.at(-1)?.body).toBeUndefined();
 });
 
 test('the spinner names the CLI and its current step while it is the main model', async ($, on) => {

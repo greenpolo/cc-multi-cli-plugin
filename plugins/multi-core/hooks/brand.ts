@@ -63,3 +63,26 @@ export function stepText(detail: unknown, maximum = 60): string {
   const line = detail.replace(/\s+/g, ' ').trim().replace(/\.$/, '');
   return line.length > maximum ? `${line.slice(0, maximum - 1)}…` : line;
 }
+
+const absolutePath = /(?:[A-Za-z]:[\\/]|\/)[^\s'"`]*/g;
+
+/** `path` relative to `cwd` when it lies inside it, else its last two segments. */
+function shortPath(path: string, cwd: string): string {
+  const slashes = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '');
+  const target = slashes(path);
+  const base = slashes(cwd);
+  // Windows paths compare without case, as the file system does.
+  const fold = /^[A-Za-z]:/.test(target) ? (value: string) => value.toLowerCase() : String;
+  if (base && fold(target).startsWith(`${fold(base)}/`)) {
+    return target.slice(base.length + 1);
+  }
+  const parts = target.split('/').filter(Boolean);
+  return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : target;
+}
+
+/** A harness action's words with every absolute path made short, on one line. */
+export function shortStep(detail: unknown, cwd: string): string {
+  return stepText(
+    typeof detail === 'string' ? detail.replace(absolutePath, (path) => shortPath(path, cwd)) : '',
+  );
+}

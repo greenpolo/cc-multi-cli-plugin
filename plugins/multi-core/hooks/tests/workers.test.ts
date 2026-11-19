@@ -328,7 +328,7 @@ test('agent.spawn retrieves a removed model by tool use id and labels the spawn'
   expect(named.agentId).toBe('agent-1');
   expect(spawned[0]).toBe('multi/cursor/composer-2.5');
   // The running-agents list and the notification show the task's description.
-  expect(descriptions[0]).toBe('Fix tests · Cursor · composer-2.5');
+  expect(descriptions[0]).toBe('Fix tests');
   const resolution = sent.find((item) => item.url.endsWith('/multi/mod/worker-model'));
   expect(resolution?.body?.model).toBeUndefined();
   expect(resolution?.body?.toolUseId).toBe('toolu_named');

@@ -182,7 +182,8 @@ test('a harness step polls the run status on the clock until its turn completes'
   await clock.advance(500);
   expect(lifecycleReads.length).toBe(1);
   expect(lifecycleReads[0]).toContain('sessionId=s&agentId=main');
-  expect(lines.at(-1)).toBe('Cursor auto · running 3s · reading');
+  // A running run's progress is not posted: the plugin's status line is drawn as a warning.
+  expect(lines.filter((line) => line !== undefined)).toEqual([]);
   await clock.advance(1000);
   expect(lifecycleReads.length).toBe(3);
   await $.turn.complete({

@@ -14,7 +14,7 @@ import { ensureHarnessPolicy, policyClient } from './policy.ts';
 import { isHarnessModel, isMultiModel } from './provider.ts';
 import { type RowsClient, syncDisplayTools } from './rows.ts';
 import { defined, withBounded, withItem } from './state.ts';
-import { labelled, register as registerWorkerRows } from './worker-rows.ts';
+import { register as registerWorkerRows } from './worker-rows.ts';
 
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
@@ -239,9 +239,8 @@ async function providerSpawn(
   if (selection.refused || !selection.model) {
     return { deny: selection.error ?? `The ${event.subagentType} model was not resolved.` };
   }
-  // The task's description is what the running-agents list and its notification show.
-  const description = labelled(event.description, selection.model);
-  return { event: { ...event, model: selection.model, description }, selection };
+  // The task keeps the model's own description: the agent list names the CLI itself.
+  return { event: { ...event, model: selection.model }, selection };
 }
 
 /** Admit a harness spawn against the current policy generation; undefined admits it. */

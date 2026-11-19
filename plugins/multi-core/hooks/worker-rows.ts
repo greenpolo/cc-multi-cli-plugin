@@ -1,7 +1,8 @@
-import type { Register } from 'claude-code';
+import type { AgentInfo, ElementTable, Register, RenderElement } from 'claude-code';
 import { atom, read } from 'claude-code';
 import { isProviderWorker } from '../src/gateway/provider-workers.ts';
-import { brandOfType, stepText, workerModel } from './brand.ts';
+import { brandOfType, workerModel } from './brand.ts';
+import { isHarnessModel } from './provider.ts';
 
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
@@ -18,31 +19,7 @@ const workerSteps = atom(
   {} as Record<string, string>,
 );
 
-/** `<provider> · <model>` for a Multi model (`multi/cursor/composer-2.5`), else undefined. */
-export function workerLabel(model: unknown): string | undefined {
-  const worker = workerModel(model);
-  return worker ? `${worker.brand.name} · ${worker.model}` : undefined;
-}
-
-/** Append label to description, replacing a prior provider-only suffix if present. */
-export function appendLabel(description: string, label: string): string {
-  if (!description || description.endsWith(label)) {
-    return description;
-  }
-  const [, provider = ''] = /^([A-Za-z]+)\s+·\s+/.exec(label) ?? [];
-  const suffix = provider ? ` · ${provider}` : '';
-  const base =
-    suffix && description.endsWith(suffix) ? description.slice(0, -suffix.length) : description;
-  return `${base} · ${label}`;
-}
-
-/** The description without the `· <provider> · <model>` label a spawn gave it. */
-function bareDescription(description: string, label: string | undefined): string {
-  const suffix = label ? ` · ${label}` : '';
-  return suffix && description.endsWith(suffix)
-    ? description.slice(0, -suffix.length)
-    : description;
-}
+type Tags = Pick<ElementTable, 'Box' | 'Text'>;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -55,67 +32,173 @@ function resultModel(output: unknown): unknown {
   return record(output)?.resolvedModel;
 }
 
-/** `<description> · <provider> · <model>`: the task's own label, set at spawn. */
-export function labelled(description: string, model: string): string {
-  const label = workerLabel(model);
-  return label ? appendLabel(description, label) : description;
-}
-
-/**
- * The Agent row's name and input for a provider worker. Compact, only the label changes
- * (`Cursor(Fix tests · composer-2.5)`); the engine still draws the row and its
- * arguments. ctrl+o keeps the full `Agent` row, labelled. The call's provider model is
- * not one of the Agent schema's Claude aliases, and the engine draws an input its schema
- * rejects as a bare `Agent`, so the words carry it.
- */
-function agentRowWords(
-  input: Record<string, unknown>,
-  model: unknown,
-  isExpanded: boolean,
-): { tool?: string; input: Record<string, unknown> } {
-  const worker = workerModel(model);
-  const brand = worker?.brand ?? brandOfType(input.subagent_type);
-  const label = workerLabel(model);
-  const description = typeof input.description === 'string' ? input.description : '';
-  const { model: _named, ...drawn } = input;
-  if (brand && !isExpanded) {
-    const bare = bareDescription(description, label);
-    const shown = worker && bare ? `${bare} · ${worker.model}` : bare;
-    return { tool: brand.name, input: { ...drawn, description: shown } };
+/** The CLI's name for a provider worker's Agent input, else undefined. */
+function workerName(input: Record<string, unknown> | undefined, model: unknown) {
+  if (!input || !isProviderWorker(input.subagent_type)) {
+    return undefined;
   }
-  const shown = label && description ? appendLabel(description, label) : input.description;
-  return { input: { ...drawn, description: shown } };
+  return (workerModel(model)?.brand ?? brandOfType(input.subagent_type))?.name;
+}
+
+/** The name the agent list shows for an agent: its CLI for a provider worker, else its type. */
+function listName(agent: Pick<AgentInfo, 'type' | 'model'>): string {
+  return (workerModel(agent.model)?.brand ?? brandOfType(agent.type))?.name ?? agent.type;
+}
+
+const dim = (text: string) => `\u001b[2m${text}\u001b[22m`;
+
+/** `950`, `6.8k`, `12.3k`, `1.2M`, as the agent list counts tokens. */
+function tokens(count: number): string {
+  if (count >= 1_000_000) {
+    return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  if (count >= 1000) {
+    return `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  }
+  return String(Math.max(0, Math.round(count)));
+}
+
+/** `16s`, `1m 4s`, as the transcript formats a duration. */
+function duration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 /**
- * Keeps Claude Code's own rows and changes only their words, so a Multi worker looks
- * like any Claude agent: the Agent row is named for its CLI (`Cursor(Fix tests ·
- * composer-2.5)`, where a Claude agent reads `Agent(Fix tests)`), the agent list shows
- * the run's newest action where it shows a Claude agent's progress, and the spinner
- * names the CLI and its action while it is the main model. A background agent's
- * notification gains `<provider> · <model>`. The stored input and messages stay as
- * they were.
+ * A provider worker's row in the agent list, in the engine's own columns: the name
+ * column (padded as the engine pads it to the longest name), the task with the run's
+ * newest action beside it, and the time and tokens at the right edge. A harness run
+ * answers its one request only when it ends, so its token count would sit still: it
+ * shows the time alone.
+ */
+function listBody(
+  agent: AgentInfo & { columns?: number },
+  row: { name: string; nameWidth: number; step?: string; isHarness: boolean; now: number },
+): string {
+  const name = row.name.padEnd(row.nameWidth);
+  const step = row.step ? `  ${row.step}` : '';
+  const counted = !row.isHarness && agent.tokenCount > 0;
+  const right = [
+    duration(row.now - agent.startTime),
+    ...(counted ? [`↓ ${tokens(agent.tokenCount)} tokens`] : []),
+  ].join(' · ');
+  // The step and the right edge are dim; the gap is counted in visible cells.
+  const visible = name.length + agent.description.length + step.length;
+  const gap = Math.max(2, (agent.columns ?? 0) - visible - right.length);
+  return `${name}${agent.description}${step ? dim(step) : ''}${' '.repeat(gap)}${dim(right)}`;
+}
+
+/** `● 2 background agents launched (↓ to manage)` and a tree of each CLI and task. */
+function launchedGroup({ Box, Text }: Tags, rows: Array<{ name: string; task: string }>) {
+  const lines: RenderElement[] = rows.map((row, index) =>
+    Box({
+      flexDirection: 'row',
+      children: [
+        Text({ dimColor: true, children: index === rows.length - 1 ? '   └ ' : '   ├ ' }),
+        Text({ children: `${row.name} (${row.task})` }),
+      ],
+    }),
+  );
+  return Box({
+    flexDirection: 'column',
+    children: [
+      Box({
+        flexDirection: 'row',
+        children: [
+          Box({ minWidth: 2, children: Text({ color: 'success', children: '●' }) }),
+          Text({ children: `${rows.length} background agents launched ` }),
+          Text({ dimColor: true, children: '(↓ to manage)' }),
+        ],
+      }),
+      ...lines,
+    ],
+  });
+}
+
+/**
+ * Keeps Claude Code's look and names each provider worker for its CLI where the engine
+ * would show its `multi-*` type: the Agent row (`OpenAI(Fix tests · gpt-6-luna)`, where
+ * a Claude agent reads `Agent(Fix tests)`), a launch of several background workers, and
+ * the agent list, which also shows the run's newest action beside the task. While a
+ * CLI is the main model, the spinner names it and its action. The stored input and
+ * messages stay as they were.
  */
 export const register = (on: Parameters<Register>[0]) => {
   on('ui.render', { component: 'ToolUse' }, async ($, event, next) => {
     const input = record(event.props.input);
-    if (event.props.tool !== 'Agent' || !input || !isProviderWorker(input.subagent_type)) {
+    if (event.props.tool !== 'Agent' || !input) {
       return next(event);
     }
     // Read from state while drawing: a spawn that resolves its model redraws the row.
     const model =
       (await read($, spawnModels))[event.props.tool_use_id] ?? resultModel(event.props.output);
-    const drawn = agentRowWords(input, model, event.props.isExpanded === true);
-    return next({ ...event, props: { ...event.props, ...drawn } });
-  });
-  on('ui.render', { component: 'AgentRow' }, async ($, event, next) => {
-    const props = event.props;
-    const step = stepText((await read($, workerSteps))[props.id]);
-    if (!step || props.taskStatus !== 'running') {
+    const name = workerName(input, model);
+    if (!name) {
       return next(event);
     }
-    // The engine's own row, its progress words replaced by the harness's newest action.
-    return next({ ...event, props: { ...props, label: step } });
+    // Only the row's words change: the engine still draws the row. The call's provider
+    // model is not one of the Agent schema's Claude aliases, and the engine draws an
+    // input its schema rejects as a bare `Agent`, so the description carries it.
+    const { model: _named, ...drawn } = input;
+    const id = workerModel(model)?.model;
+    const description = typeof input.description === 'string' ? input.description : '';
+    const shown = id && description ? `${description} · ${id}` : description;
+    return next({
+      ...event,
+      props: { ...event.props, tool: name, input: { ...drawn, description: shown } },
+    });
+  });
+  on('ui.render', { component: 'ToolGroup' }, async ($, event, next) => {
+    const calls = event.props.calls;
+    const inputs = calls.map((call) => record(call.input));
+    const allWorkers =
+      calls.length > 1 &&
+      !event.props.isExpanded &&
+      calls.every(
+        (call, index) =>
+          call.tool === 'Agent' &&
+          !call.isErrored &&
+          !call.isInterrupted &&
+          inputs[index]?.run_in_background === true &&
+          isProviderWorker(inputs[index]?.subagent_type),
+      );
+    if (!allWorkers) {
+      return next(event);
+    }
+    const spawns = await read($, spawnModels);
+    const rows = calls.map((call, index) => {
+      const input = inputs[index];
+      const model =
+        (call.tool_use_id ? spawns[call.tool_use_id] : undefined) ?? resultModel(call.output);
+      return {
+        name: workerName(input, model) ?? String(input?.subagent_type),
+        task: typeof input?.description === 'string' ? input.description : '',
+      };
+    });
+    return launchedGroup($.ui.resolve(event), rows);
+  });
+  on('ui.render', { component: 'AgentRow' }, async ($, event, next) => {
+    const agent = event.props;
+    const model = agent.model ?? (await read($, agentModels))[agent.id];
+    const worker = workerModel(model);
+    const brand = worker?.brand ?? brandOfType(agent.type);
+    if (!brand || agent.isHidden || agent.body !== undefined) {
+      // A Claude agent, a row the person hid, or one their settings already draw.
+      return next(event);
+    }
+    const listed = (await $.agent.list()).filter((other) => other.hasRow);
+    const nameWidth =
+      Math.max(brand.name.length, ...listed.map((other) => listName(other).length)) + 2;
+    const running = agent.taskStatus === 'running';
+    const body = listBody(agent, {
+      name: brand.name,
+      nameWidth,
+      step: running ? (await read($, workerSteps))[agent.id] : undefined,
+      isHarness:
+        typeof model === 'string' ? isHarnessModel(model) : !['openai', 'zen'].includes(brand.key),
+      now: await $.clock.now(),
+    });
+    return next({ ...event, props: { ...agent, body } });
   });
   on('ui.render', { component: 'Spinner' }, async ($, event, next) => {
     const worker = workerModel((await read($, agentModels)).main);
@@ -124,29 +207,8 @@ export const register = (on: Parameters<Register>[0]) => {
     }
     // The CLI and its current step stand in for the sampled word; the engine keeps
     // the elapsed time, tokens and the interrupt hint.
-    const step = stepText((await read($, workerSteps)).main);
+    const step = (await read($, workerSteps)).main;
     const word = step ? `${worker.brand.name} · ${step}` : worker.brand.name;
     return next({ ...event, props: { ...event.props, word } });
   });
-  on(
-    'ui.render',
-    { component: 'UserMessage', props: { origin: { kind: 'task-notification' } } },
-    async ($, event, next) => {
-      if (event.component !== 'UserMessage' || event.props.isExpanded) {
-        return next(event);
-      }
-      const task = event.props.task;
-      const agents = await read($, agentModels);
-      const spawns = await read($, spawnModels);
-      const label = workerLabel(
-        (task?.id ? agents[task.id] : undefined) ??
-          (task?.toolUseId ? spawns[task.toolUseId] : undefined),
-      );
-      // A spawn's labelled description already names it in the notification's summary.
-      if (!label || event.props.text.includes(label)) {
-        return next(event);
-      }
-      return next({ ...event, props: { ...event.props, text: `${event.props.text} · ${label}` } });
-    },
-  );
 };

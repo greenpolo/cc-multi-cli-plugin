@@ -5,7 +5,7 @@ import type {
   MultiCorePolicy,
   MultiCoreUsagePane,
 } from '../types/multi-core.d.ts';
-import { stepText, workerName } from './brand.ts';
+import { shortStep, stepText, workerName } from './brand.ts';
 import { forgetKey, getJson, isActive, postJson, type Wire } from './gateway.ts';
 import { isHarnessModel, isMultiModel } from './provider.ts';
 import { type RowsClient, syncDisplayTools } from './rows.ts';
@@ -105,6 +105,25 @@ async function startPoll($: EngineInterface, key: string, agentId: string | unde
   polls.set(key, poll);
 }
 
+/**
+ * A run's progress shows where Claude shows its own agents' (the agent list, the
+ * spinner); the plugin's status line, drawn as a warning, carries only a failure.
+ */
+async function showStatus(
+  $: EngineInterface,
+  key: string,
+  status: Status,
+  agentId: string | undefined,
+) {
+  if (status.state === 'failed' || status.error) {
+    $.ui.status(statusText(status, agentId));
+  }
+  await recordStep($, key, status.state === 'running' ? status.detail : undefined);
+  if (status.state !== 'running') {
+    stopPoll(key);
+  }
+}
+
 /** One status read; a tick still in flight when the next is due is skipped. */
 async function tick($: EngineInterface, key: string, agentId: string | undefined) {
   const poll = polls.get(key);
@@ -122,11 +141,7 @@ async function tick($: EngineInterface, key: string, agentId: string | undefined
     }
     poll.failures = status && !status.refused ? 0 : poll.failures + 1;
     if (status?.state && (status.startedAt ?? 0) >= poll.since) {
-      $.ui.status(statusText(status, agentId));
-      await recordStep($, key, status.state === 'running' ? status.detail : undefined);
-      if (status.state !== 'running') {
-        stopPoll(key);
-      }
+      await showStatus($, key, status, agentId);
     }
     if (poll.failures >= maximumFailures) {
       stopPoll(key);
@@ -136,12 +151,20 @@ async function tick($: EngineInterface, key: string, agentId: string | undefined
   }
 }
 
+async function sessionCwd($: EngineInterface) {
+  try {
+    return await $.session.cwd();
+  } catch {
+    return '';
+  }
+}
+
 /**
  * The run's newest action, which the agent list and the spinner draw; written only when
  * it changes, so an unchanged poll redraws nothing.
  */
 async function recordStep($: EngineInterface, key: string, detail: unknown) {
-  const step = stepText(detail);
+  const step = shortStep(detail, await sessionCwd($));
   const held = (await read($, workerSteps))[key];
   if (step === (held ?? '')) {
     return;
