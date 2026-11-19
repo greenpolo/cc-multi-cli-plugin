@@ -32,10 +32,10 @@ below lists the full supported catalog; other rows require explicit selection.
 | `deepseek-v4.1-flash`, `deepseek-v4-flash`, `kimi-k3`, `glm-5.3`, `glm-5.3-flash`, `glm-5.2`, `minimax-m3`, `minimax-m2.7` | Chat Completions | Provider-native reasoning |
 | `gpt-6.1-sol`, `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `muse-spark-1.3` | Responses | `low`, `medium`, `high`, `xhigh`, and `max` |
 
-Workers: the Agent tool's `multi-zen` type runs the Zen rows the session's
+Workers: the Agent tool's `Zen` type runs the Zen rows the session's
 `/model` picker shows (the curated defaults unless `--models` selects others);
 pass `model: <id>` (for example `model: kimi-k3`) to pick one, or omit `model` to run the
-default, `deepseek-v4.1-flash`. `multi-zen` runs one provider-wide medium effort —
+default, `deepseek-v4.1-flash`. `Zen` runs one provider-wide medium effort —
 every adjustable model accepts it, and native-reasoning chat models ignore it.
 Effort is never part of the model name, and the session's `/effort` does not
 change it.

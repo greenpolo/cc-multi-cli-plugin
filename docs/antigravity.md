@@ -37,7 +37,7 @@ The default variant order is medium, high, then low. `/effort` accepts only an
 advertised low, medium, or high variant. Unknown models and unavailable effort
 variants fail explicitly.
 
-Workers: the Agent tool's `multi-antigravity` type runs any row above, except
+Workers: the Agent tool's `Antigravity` type runs any row above, except
 an id that only adds an effort suffix to another listed row (`<base>-high`
 beside `<base>`) — that stays selectable through `/effort`, not through
 `model`. Pass `model: <id>` (for example `model: gemini-4-argon`) to pick a
@@ -49,7 +49,7 @@ Antigravity picks its advertised low/medium/high variant from it.
 ### Context window
 
 Gemini picker rows carry a `[1m]` tag on the model ID, so Claude sizes the
-session to the million input tokens Gemini 3.x accepts; a `multi-antigravity`
+session to the million input tokens Gemini 3.x accepts; an `Antigravity`
 worker resolved to one of these rows keeps the tag on its spawned model. The
 tag is Claude-side display metadata: `agy` never sees it, both spellings select
 the same native model, and `/effort` still offers only the advertised low,

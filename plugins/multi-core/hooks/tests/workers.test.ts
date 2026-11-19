@@ -259,9 +259,9 @@ function catalogGateway(on: On) {
     if (event.url.endsWith('/multi/mod/worker-model')) {
       const named = body?.toolUseId === 'toolu_named' ? 'composer-2.5' : (body?.model ?? 'default');
       const known = ['default', 'composer-2.5', 'multi/cursor/composer-2.5'];
-      if (body?.subagentType === 'multi-cursor' && !known.includes(String(named))) {
+      if (body?.subagentType === 'Cursor' && !known.includes(String(named))) {
         return reply(400, {
-          error: `multi-cursor has no model "${named}". Cursor models: default, composer-2.5. Omit model for the default, default.`,
+          error: `Cursor has no model "${named}". Cursor models: default, composer-2.5. Omit model for the default, default.`,
         });
       }
       const id = String(named).replace('multi/cursor/', '');
@@ -288,11 +288,11 @@ test('Agent tool.call forwards gateway-normalized inputs without a rewrite', asy
     tool_use_id: 'toolu_cursor',
     description: 'Fix tests',
     prompt: 'task',
-    subagent_type: 'multi-cursor',
+    subagent_type: 'Cursor',
   } as never);
   // The gateway already removed the provider model; the hook forwards the call unchanged.
   expect(reached[0]?.model).toBeUndefined();
-  expect(reached[0]?.subagent_type).toBe('multi-cursor');
+  expect(reached[0]?.subagent_type).toBe('Cursor');
   // Other agent types keep their Claude alias.
   await $.tool.call({
     tool: 'Agent',
@@ -322,7 +322,7 @@ test('agent.spawn retrieves a removed model by tool use id and labels the spawn'
   const named = await $.agent.spawn({
     prompt: 'task',
     description: 'Fix tests',
-    subagentType: 'multi-cursor',
+    subagentType: 'Cursor',
     tool_use_id: 'toolu_named',
   } as never);
   expect(named.agentId).toBe('agent-1');
@@ -336,7 +336,7 @@ test('agent.spawn retrieves a removed model by tool use id and labels the spawn'
   const admission = sent.filter((item) => item.url.endsWith('/multi/mod/worker')).at(-1);
   expect(admission?.body?.model).toBe('multi/cursor/composer-2.5');
   // No model: the provider default.
-  await $.agent.spawn({ prompt: 'task', subagentType: 'multi-cursor' } as never);
+  await $.agent.spawn({ prompt: 'task', subagentType: 'Cursor' } as never);
   expect(spawned[1]).toBe('multi/cursor/default');
 });
 
@@ -350,11 +350,11 @@ test('agent.spawn refuses an unknown provider model with the provider models nam
   });
   const result = await $.agent.spawn({
     prompt: 'task',
-    subagentType: 'multi-cursor',
+    subagentType: 'Cursor',
     model: 'kimi-k3',
   } as never);
   expect(result.deny).toBe(
-    'multi-cursor has no model "kimi-k3". Cursor models: default, composer-2.5. Omit model for the default, default.',
+    'Cursor has no model "kimi-k3". Cursor models: default, composer-2.5. Omit model for the default, default.',
   );
   expect(started).toBe(false);
 });
@@ -374,10 +374,10 @@ test('a provider worker is refused when the gateway cannot resolve its model', a
   });
   const result = await $.agent.spawn({
     prompt: 'task',
-    subagentType: 'multi-zen',
+    subagentType: 'Zen',
     model: 'kimi-k3',
   } as never);
-  expect(result.deny).toContain('The Multi gateway did not resolve the multi-zen model.');
+  expect(result.deny).toContain('The Multi gateway did not resolve the Zen model.');
   expect(started).toBe(false);
 });
 
@@ -400,13 +400,13 @@ test('the Agent tool description names provider models only while a provider wor
   expect(await describe()).toBe('Launch a new agent.');
   await offer('Explore');
   expect(await describe()).toBe('Launch a new agent.');
-  await offer('multi-cursor');
+  await offer('Cursor');
   const described = await describe();
-  expect(described).toContain('For a multi-* agent type');
+  expect(described).toContain('For a provider worker type');
   expect(described.startsWith('Launch a new agent.')).toBe(true);
   // The offer is withdrawn (settings the harness cannot honour): the paragraph goes too.
   offered = false;
-  await offer('multi-cursor');
+  await offer('Cursor');
   expect(await describe()).toBe('Launch a new agent.');
 });
 

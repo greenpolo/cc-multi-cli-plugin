@@ -323,7 +323,7 @@ test('a provider worker is admitted on the model its Agent call named, not its d
     })),
   );
   const modes = new PermissionModes(
-    async () => ({ 'multi-cursor': { model: 'multi/cursor/default', tools: ['Read'] } }),
+    async () => ({ Cursor: { model: 'multi/cursor/default', tools: ['Read'] } }),
     undefined,
     { workers },
   );
@@ -335,14 +335,14 @@ test('a provider worker is admitted on the model its Agent call named, not its d
     generation,
     parentModel: 'multi/antigravity/model',
     permissionMode: 'bypassPermissions',
-    subagentType: 'multi-cursor',
+    subagentType: 'Cursor',
   };
   const named = await request(base, '/multi/mod/worker-model', { ...spawn, model: 'composer-2.5' });
   assert.equal(named.status, 200);
   assert.equal(named.body.model, 'multi/cursor/composer-2.5');
   assert.equal(named.body.execution, 'harness');
   assert.deepEqual(named.body.worker, {
-    type: 'multi-cursor',
+    type: 'Cursor',
     provider: 'cursor',
     label: 'Cursor',
     id: 'composer-2.5',
@@ -354,7 +354,7 @@ test('a provider worker is admitted on the model its Agent call named, not its d
   assert.equal(refused.status, 400);
   assert.match(
     String(refused.body.error),
-    /multi-cursor has no model "kimi-k3"\. "kimi-k3" belongs to multi-zen\. Cursor models: default, composer-2\.5\./,
+    /Cursor has no model "kimi-k3"\. "kimi-k3" belongs to Zen\. Cursor models: default, composer-2\.5\./,
   );
   // The prepare route accepts the resolved model although the definition names the default.
   const prepared = await request(base, '/multi/mod/worker', {
@@ -366,7 +366,7 @@ test('a provider worker is admitted on the model its Agent call named, not its d
     sessionId: 's',
     agentId: 'child',
     cwd: '/workspace',
-    subagentType: 'multi-cursor',
+    subagentType: 'Cursor',
   });
   assert.equal(started.body.model, 'multi/cursor/composer-2.5');
   assert.equal(

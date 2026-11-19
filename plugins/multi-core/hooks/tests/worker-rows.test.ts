@@ -22,7 +22,7 @@ function gateway(on: On) {
       value: { ok: true, status: 200, headers: {}, text: JSON.stringify(value) },
     });
     if (event.url.endsWith('/multi/mod/worker-model')) {
-      const provider = String(body.subagentType).replace('multi-', '');
+      const provider = String(body.subagentType).toLowerCase();
       return reply({ known: true, execution: 'harness', model: `multi/${provider}/${body.model}` });
     }
     if (event.url.includes('/multi/mod/mode?')) {
@@ -89,7 +89,7 @@ async function notification(
 const input = {
   description: 'Fix tests',
   prompt: 'task',
-  subagent_type: 'multi-cursor',
+  subagent_type: 'Cursor',
   model: 'composer-2.5',
 };
 
@@ -99,7 +99,7 @@ test('a running provider worker row shows its provider and resolved model', asyn
   const drawn = engine(on);
   await $.agent.spawn({
     prompt: 'task',
-    subagentType: 'multi-cursor',
+    subagentType: 'Cursor',
     model: 'composer-2.5',
     tool_use_id: 'toolu_cursor',
   } as never);
@@ -128,7 +128,7 @@ test('a running provider worker row shows its provider and resolved model', asyn
     expect(props.input.description).toBe('Fix tests · composer-2.5');
     // The rest of the call's input is drawn as sent, less the provider model the Agent
     // schema rejects (the engine draws a rejected input as a bare `Agent`).
-    expect(props.input.subagent_type).toBe('multi-cursor');
+    expect(props.input.subagent_type).toBe('Cursor');
     expect(props.input.prompt).toBe('task');
     expect(props.input.model).toBeUndefined();
   }
@@ -141,7 +141,7 @@ test('a completed worker row reads the model from its result after a reload', as
   for (const surface of surfaces) {
     const row = await agentRow($, surface, {
       tool_use_id: 'toolu_restored',
-      input: { ...input, description: 'Review', subagent_type: 'multi-antigravity' },
+      input: { ...input, description: 'Review', subagent_type: 'Antigravity' },
       output: { status: 'completed', resolvedModel: 'multi/antigravity/gemini-3.8-flash[1m]' },
     });
     await row.unmount();
@@ -182,67 +182,12 @@ test('a worker notification keeps the engine’s own words', async ($, on) => {
   await $.agent.spawn({
     prompt: 'task',
     description: 'Fix tests',
-    subagentType: 'multi-cursor',
+    subagentType: 'Cursor',
     model: 'composer-2.5',
     tool_use_id: 'toolu_cursor',
   } as never);
   await notification($, 'terminal', { task: { id: 'agent-cursor', status: 'completed' } });
   expect(drawn.at(-1)?.text).toBe('Agent "Fix tests" completed');
-});
-
-test('a launch of several background workers names each for its CLI', async ($, on) => {
-  mock.clock(on);
-  gateway(on);
-  const drawn = engine(on);
-  const call = (id: string, type: string, description: string) => ({
-    tool_use_id: id,
-    tool: 'Agent',
-    input: { description, prompt: 'task', subagent_type: type, run_in_background: true },
-    isRunning: false,
-    isErrored: false,
-    isInterrupted: false,
-    output: { status: 'async_launched' },
-  });
-  const group = async (calls: unknown[], isExpanded = false) => {
-    const row = await $.ui.mount({
-      plugin: 'multi-core',
-      surface: 'terminal',
-      component: 'ToolGroup',
-      requestId: 'group',
-      props: { calls, isActive: false, isExpanded } as never,
-    });
-    await row.drawn();
-    return row;
-  };
-  const both = [
-    call('toolu_a', 'multi-openai', 'Fix slugify'),
-    call('toolu_b', 'multi-antigravity', 'Fix countWords'),
-  ];
-  const row = await group(both);
-  expect(await row.find({ type: 'Text', text: '2 background agents launched ' })).toBeDefined();
-  expect(await row.find({ type: 'Text', text: 'OpenAI (Fix slugify)' })).toBeDefined();
-  expect(await row.find({ type: 'Text', text: 'Antigravity (Fix countWords)' })).toBeDefined();
-  expect(await row.find({ type: 'Text', text: '   └ ' })).toBeDefined();
-  await row.unmount();
-  expect(drawn.length).toBe(0);
-  // A Claude agent launched beside them keeps the engine's name for it.
-  const mixed = await group([
-    ...both,
-    {
-      ...call('toolu_c', 'Explore', 'Look'),
-      input: { description: 'Look', prompt: 'task', run_in_background: true },
-    },
-  ]);
-  expect(await mixed.find({ type: 'Text', text: '3 background agents launched ' })).toBeDefined();
-  expect(await mixed.find({ type: 'Text', text: 'OpenAI (Fix slugify)' })).toBeDefined();
-  expect(await mixed.find({ type: 'Text', text: 'Agent (Look)' })).toBeDefined();
-  await mixed.unmount();
-  // Claude agents alone, or an unfolded group, are the engine's.
-  await (
-    await group([call('toolu_c', 'Explore', 'Look'), call('toolu_d', 'Plan', 'Plan')])
-  ).unmount();
-  await (await group(both, true)).unmount();
-  expect(drawn.length).toBe(2);
 });
 
 test("turn.step leaves an Agent call's streamed input exactly as the model wrote it", async ($, on) => {
@@ -251,7 +196,7 @@ test("turn.step leaves an Agent call's streamed input exactly as the model wrote
   const written = JSON.stringify({
     description: 'Fix tests',
     prompt: 'task 1',
-    subagent_type: 'multi-cursor',
+    subagent_type: 'Cursor',
     model: 'composer-2.5',
   });
   on('turn.step', async function* (_$, event) {
@@ -291,7 +236,7 @@ async function listRow($: Engine, props: Record<string, unknown>) {
     props: {
       id: 'agent-grok',
       description: 'Port the reader',
-      type: 'multi-grok',
+      type: 'Grok',
       status: 'running',
       kind: 'local_agent',
       taskStatus: 'running',
@@ -327,7 +272,7 @@ test('the agent list names a worker for its CLI, keeps its task and adds its new
     () =>
       ({
         value: [
-          { id: 'agent-grok', type: 'multi-grok', model: 'multi/grok/grok-build', hasRow: true },
+          { id: 'agent-grok', type: 'Grok', model: 'multi/grok/grok-build', hasRow: true },
           { id: 'agent-x', type: 'Explore', model: 'claude-haiku-4-5', hasRow: true },
         ],
       }) as never,
@@ -382,7 +327,7 @@ test('the agent list names a worker for its CLI, keeps its task and adds its new
   await listRow($, { taskStatus: 'completed', status: 'completed' });
   expect(plain(drawn.at(-1)?.body)).toBe(`Grok     Port the reader${' '.repeat(33)}13s`);
   // An OpenAI worker runs Claude's own loop, so its tokens are counted.
-  await listRow($, { type: 'multi-openai', model: 'multi/openai/gpt-6-luna', tokenCount: 6800 });
+  await listRow($, { type: 'OpenAI', model: 'multi/openai/gpt-6-luna', tokenCount: 6800 });
   expect(plain(drawn.at(-1)?.body)).toContain('OpenAI   Port the reader');
   expect(plain(drawn.at(-1)?.body)).toMatch(/13s · ↓ 6\.8k tokens$/);
   // A Claude agent is the engine's row.

@@ -277,7 +277,7 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
   assert(!pickerModels.includes('multi/zen/gpt-5.6-luna'));
   assert(!pickerModels.includes('multi/zen/minimax-m2.7'));
   // One Zen worker: its models are the picker's, never a type per model or effort.
-  assert.deepEqual(result.agents, ['multi-zen']);
+  assert.deepEqual(result.agents, ['Zen']);
   assert.equal(result.zenKeyInChild, undefined);
   assert.equal(result.settings.permissions?.disableAutoMode, undefined);
   assert(result.args.includes('--dangerously-skip-permissions'));
@@ -325,16 +325,16 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
     ['multi/zen/minimax-m2.7', 'multi/zen/glm-5.2'],
   );
   assert.deepEqual(filtered.models, ['multi/zen/minimax-m2.7']);
-  assert.deepEqual(filtered.agents, ['multi-zen']);
+  assert.deepEqual(filtered.agents, ['Zen']);
   const outsideDefaults = JSON.parse((await launchFiltered('multi/zen/deepseek-v4-flash')).stdout);
   assert.deepEqual(
     outsideDefaults.settings.modelPicker.options.map((option: { model: string }) => option.model),
     ['multi/zen/deepseek-v4-flash'],
   );
-  assert.deepEqual(outsideDefaults.agents, ['multi-zen']);
+  assert.deepEqual(outsideDefaults.agents, ['Zen']);
   const all = JSON.parse((await launchFiltered('all')).stdout);
   assert(all.settings.modelPicker.options.length >= ZEN_MODELS.length);
-  assert.deepEqual(all.agents, ['multi-zen']);
+  assert.deepEqual(all.agents, ['Zen']);
   const plus = JSON.parse((await launchFiltered('+multi/zen/deepseek-v4-flash')).stdout);
   assert(
     plus.settings.modelPicker.options.some(
@@ -346,7 +346,7 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
       (option: { model: string }) => option.model === 'multi/zen/minimax-m2.7',
     ),
   );
-  assert.deepEqual(plus.agents, ['multi-zen']);
+  assert.deepEqual(plus.agents, ['Zen']);
   const hidden = JSON.parse(
     (await launchFiltered('', ['--model', 'multi/zen/gpt-5.6-luna'])).stdout,
   );
@@ -494,10 +494,10 @@ result(JSON.stringify({settings,agents,args,models:args.filter(x=>x.startsWith('
   assert.deepEqual(rows[2], custom);
   assert.deepEqual(settings.hooks.Stop, []);
   // One Antigravity worker, no effort variants; its default carries the row's tag.
-  assert.deepEqual(Object.keys(agents), ['multi-antigravity']);
-  assert.equal(agents['multi-antigravity'].model, rows[0].model);
-  assert.equal(agents['multi-antigravity'].effort, undefined);
-  assert.match(agents['multi-antigravity'].description, /\(gemini, sonnet-thinking\)/);
+  assert.deepEqual(Object.keys(agents), ['Antigravity']);
+  assert.equal(agents.Antigravity.model, rows[0].model);
+  assert.equal(agents.Antigravity.effort, undefined);
+  assert.match(agents.Antigravity.description, /\(gemini, sonnet-thinking\)/);
 
   // The opt-out has to stay reversible. A selection saved while rows were tagged is the
   // spelling the user copied out of the picker, so it must still name a row once the tag
@@ -576,31 +576,26 @@ test('launcher registers one worker per provider from the picker rows', () => {
     'custom/model',
   ].map((model) => ({ model }));
   const agents = workerDefinitions(workerCatalog(rows));
-  assert.deepEqual(Object.keys(agents), [
-    'multi-openai',
-    'multi-zen',
-    'multi-cursor',
-    'multi-antigravity',
-  ]);
+  assert.deepEqual(Object.keys(agents), ['OpenAI', 'Zen', 'Cursor', 'Antigravity']);
   // Each default is the provider's newest or native default, not the first row.
-  assert.equal(agents['multi-openai'].model, 'multi/openai/gpt-6.1-sol');
-  assert.equal(agents['multi-openai'].effort, 'medium');
-  assert.equal(agents['multi-zen'].model, 'multi/zen/deepseek-v4.1-flash');
-  assert.equal(agents['multi-zen'].effort, 'medium');
-  assert.equal(agents['multi-cursor'].model, 'multi/cursor/default');
-  assert.equal(agents['multi-cursor'].effort, undefined);
-  assert.equal(agents['multi-antigravity'].model, 'multi/antigravity/gemini-3.8-flash[1m]');
+  assert.equal(agents.OpenAI.model, 'multi/openai/gpt-6.1-sol');
+  assert.equal(agents.OpenAI.effort, 'medium');
+  assert.equal(agents.Zen.model, 'multi/zen/deepseek-v4.1-flash');
+  assert.equal(agents.Zen.effort, 'medium');
+  assert.equal(agents.Cursor.model, 'multi/cursor/default');
+  assert.equal(agents.Cursor.effort, undefined);
+  assert.equal(agents.Antigravity.model, 'multi/antigravity/gemini-3.8-flash[1m]');
   assert.equal(
-    agents['multi-cursor'].description,
+    agents.Cursor.description,
     'Cursor worker (native Cursor agent). Pass model (default, grok-4.7, composer-2.5) or omit it for default.',
   );
   assert.equal(
-    agents['multi-openai'].description,
+    agents.OpenAI.description,
     "OpenAI worker (Claude Code's tools). Pass model (gpt-6-luna, gpt-6.1-sol) or omit it for gpt-6.1-sol.",
   );
-  assert.deepEqual(agents['multi-openai'].tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
-  assert.equal(agents['multi-cursor'].tools.at(-1), 'mcp__multi-core');
-  assert.equal(agents['multi-antigravity'].tools.at(-1), 'mcp__multi-core');
+  assert.deepEqual(agents.OpenAI.tools, ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write']);
+  assert.equal(agents.Cursor.tools.at(-1), 'mcp__multi-core');
+  assert.equal(agents.Antigravity.tools.at(-1), 'mcp__multi-core');
   // No type or model name carries an effort or a preset.
   assert(!JSON.stringify(agents).includes('effort=high'));
   assert.deepEqual(workerDefinitions(workerCatalog([])), {});

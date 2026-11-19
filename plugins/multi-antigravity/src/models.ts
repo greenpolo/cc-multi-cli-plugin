@@ -91,7 +91,7 @@ export function antigravityPickerOptions(models: readonly AntigravityModel[]): A
 }
 
 /**
- * The model a `multi-antigravity` worker runs when the Agent call names none: the newest
+ * The model a `Antigravity` worker runs when the Agent call names none: the newest
  * Gemini generation, a Pro model before a Flash of the same version. `agy models` marks no
  * default and lists in its own order, so the version decides.
  */

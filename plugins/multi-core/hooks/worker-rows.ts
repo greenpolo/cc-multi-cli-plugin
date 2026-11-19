@@ -1,4 +1,4 @@
-import type { AgentInfo, ElementTable, Register, RenderElement } from 'claude-code';
+import type { AgentInfo, Register } from 'claude-code';
 import { atom, read } from 'claude-code';
 import { isProviderWorker } from '../src/gateway/provider-workers.ts';
 import { brandOfType, workerModel } from './brand.ts';
@@ -18,8 +18,6 @@ const workerSteps = atom(
   { plugin: 'multi-core', key: 'workerSteps' } as const,
   {} as Record<string, string>,
 );
-
-type Tags = Pick<ElementTable, 'Box' | 'Text'>;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -85,38 +83,12 @@ function listBody(
   return `${left}${' '.repeat(gap)}${right}`;
 }
 
-/** `● 2 background agents launched (↓ to manage)` and a tree of each CLI and task. */
-function launchedGroup({ Box, Text }: Tags, rows: Array<{ name: string; task: string }>) {
-  const lines: RenderElement[] = rows.map((row, index) =>
-    Box({
-      flexDirection: 'row',
-      children: [
-        Text({ dimColor: true, children: index === rows.length - 1 ? '   └ ' : '   ├ ' }),
-        Text({ children: `${row.name} (${row.task})` }),
-      ],
-    }),
-  );
-  return Box({
-    flexDirection: 'column',
-    children: [
-      Box({
-        flexDirection: 'row',
-        children: [
-          Box({ minWidth: 2, children: Text({ color: 'success', children: '●' }) }),
-          Text({ children: `${rows.length} background agents launched ` }),
-          Text({ dimColor: true, children: '(↓ to manage)' }),
-        ],
-      }),
-      ...lines,
-    ],
-  });
-}
-
 /**
- * Keeps Claude Code's look and names each provider worker for its CLI where the engine
- * would show its `multi-*` type: the Agent row (`OpenAI(Fix tests · gpt-6-luna)`, where
- * a Claude agent reads `Agent(Fix tests)`), a launch of several background workers, and
- * the agent list, which also shows the run's newest action beside the task. While a
+ * Keeps Claude Code's look. A worker's type is its CLI's name (`OpenAI`), which the
+ * engine shows wherever it names an agent; these hooks fill the two places it would
+ * not: the compact Agent row (`OpenAI(Fix tests · gpt-6-luna)`, which the engine draws
+ * as a bare `Agent` for an input naming a provider model), and the agent list, which
+ * also shows the run's newest action beside the task. While a
  * CLI is the main model, the spinner names it and its action. The stored input and
  * messages stay as they were.
  */
@@ -144,39 +116,6 @@ export const register = (on: Parameters<Register>[0]) => {
       ...event,
       props: { ...event.props, tool: name, input: { ...drawn, description: shown } },
     });
-  });
-  on('ui.render', { component: 'ToolGroup' }, async ($, event, next) => {
-    const calls = event.props.calls;
-    const inputs = calls.map((call) => record(call.input));
-    // Only a launch of background agents with a provider worker among them; the engine
-    // names every other agent as it would (its type, or `Agent`).
-    const launched =
-      calls.length > 1 &&
-      !event.props.isExpanded &&
-      calls.every(
-        (call, index) =>
-          call.tool === 'Agent' &&
-          !call.isErrored &&
-          !call.isInterrupted &&
-          inputs[index]?.run_in_background === true,
-      ) &&
-      inputs.some((input) => isProviderWorker(input?.subagent_type));
-    if (!launched) {
-      return next(event);
-    }
-    const spawns = await read($, spawnModels);
-    const rows = calls.map((call, index) => {
-      const input = inputs[index];
-      const model =
-        (call.tool_use_id ? spawns[call.tool_use_id] : undefined) ?? resultModel(call.output);
-      return {
-        name:
-          workerName(input, model) ??
-          (typeof input?.subagent_type === 'string' ? input.subagent_type : 'Agent'),
-        task: typeof input?.description === 'string' ? input.description : '',
-      };
-    });
-    return launchedGroup($.ui.resolve(event), rows);
   });
   on('ui.render', { component: 'AgentRow' }, async ($, event, next) => {
     const agent = event.props;

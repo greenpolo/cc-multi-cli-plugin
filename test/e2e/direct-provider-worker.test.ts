@@ -72,7 +72,7 @@ for (const provider of ['openai', 'zen'] as const) {
     assert.match(result.stdout, /WORKER_OK/);
     assert.match(result.stdout, /"name":"Agent"/);
     if (result.tier === 'live') {
-      assert.match(result.stdout, new RegExp(`(?:multi-${provider}|${provider}-)`));
+      assert.match(result.stdout, new RegExp(`(?:${provider}|${provider}-)`, 'i'));
       const stats = result.transcript.find((event) => event.type === 'result')?.subagent_stats;
       assert.ok(stats && typeof stats === 'object' && 'completed' in stats);
       assert.equal(
@@ -112,7 +112,7 @@ for (const main of ['anthropic', 'openai'] as const) {
         name: 'Agent',
         id: 'toolu_named_worker',
         input: {
-          subagent_type: 'multi-openai',
+          subagent_type: 'OpenAI',
           model,
           description: 'Named worker',
           prompt: 'Reply NAMED_WORKER_OK. No tools.',

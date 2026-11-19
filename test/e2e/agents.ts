@@ -1,3 +1,4 @@
+import { WORKER_TYPES } from '../../plugins/multi-core/src/gateway/provider-workers.ts';
 import type { JsonObject, UpstreamRequest } from './types.ts';
 
 /** Claude Code names its worker tool Agent; older builds call it Task. */
@@ -53,9 +54,10 @@ export function registeredWorker(request: UpstreamRequest, provider: string, mod
     name: match[1] ?? '',
     description: match[2] ?? '',
   }));
-  if (entries.some((entry) => entry.name === `multi-${provider}`)) {
+  const type = WORKER_TYPES[provider as keyof typeof WORKER_TYPES];
+  if (type && entries.some((entry) => entry.name === type)) {
     return {
-      subagent_type: `multi-${provider}`,
+      subagent_type: type,
       ...(model ? { model: `multi/${provider}/${model}` } : {}),
     };
   }

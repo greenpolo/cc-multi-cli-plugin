@@ -100,11 +100,11 @@ test('a Grok route without a configured harness fails as a bad request', async (
 test('the launcher registers one Grok worker whose default is the CLI default', () => {
   const other = { ...model, id: 'grok-4.5', model: 'multi/grok/grok-4.5', default: false };
   const agents = workerDefinitions(workerCatalog([other, model], [other, model]));
-  assert.deepEqual(Object.keys(agents), ['multi-grok']);
-  assert.equal(agents['multi-grok'].model, model.model);
-  assert.match(agents['multi-grok'].description, /^Grok worker \(native Grok Build CLI\)/);
-  assert.match(agents['multi-grok'].description, /omit it for grok-4\.6\.$/);
-  assert.deepEqual(agents['multi-grok'].tools, [
+  assert.deepEqual(Object.keys(agents), ['Grok']);
+  assert.equal(agents.Grok.model, model.model);
+  assert.match(agents.Grok.description, /^Grok worker \(native Grok Build CLI\)/);
+  assert.match(agents.Grok.description, /omit it for grok-4\.6\.$/);
+  assert.deepEqual(agents.Grok.tools, [
     'Read',
     'Grep',
     'Glob',

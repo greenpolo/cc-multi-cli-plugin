@@ -75,7 +75,7 @@ function reportable(reason: string) {
 type SpawnEvent = AgentSpawnInput;
 
 const providerGuidance =
-  "\n\nFor a multi-* agent type (multi-cursor, multi-openai, ...), `model` names one of that provider's models from the type's description, not a Claude alias; omit it for the provider's default.";
+  "\n\nFor a provider worker type (Cursor, OpenAI, ...), `model` names one of that provider's models from the type's description, not a Claude alias; omit it for the provider's default.";
 
 export const register = (on: Parameters<Register>[0], _options: Parameters<Register>[1]) => {
   registerWorkerRows(on);
@@ -272,7 +272,7 @@ async function admit(
 }
 
 /**
- * A Claude subagent: not a `multi-*` worker type, classified as native Claude (a Claude
+ * A Claude subagent: not a provider worker type, classified as native Claude (a Claude
  * model, not a provider model its definition pins), and neither its model nor its
  * parent's (which a fork or an inheriting subagent runs on) is a Multi model.
  */

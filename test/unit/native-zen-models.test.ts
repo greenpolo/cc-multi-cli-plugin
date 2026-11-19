@@ -191,7 +191,7 @@ test('Zen catalog exposes bounded protocols and only supported effort workers', 
     ],
   );
   assert.equal(zenModelOptions(['glm-5.2'])[0].model, 'multi/zen/glm-5.2');
-  // multi-zen carries one effort for every model: each adjustable model must accept it.
+  // Zen carries one effort for every model: each adjustable model must accept it.
   for (const model of ZEN_MODELS) {
     assert(!model.efforts || model.efforts.includes(ZEN_WORKER_EFFORT), model.id);
   }

@@ -20,7 +20,7 @@ import { fromChat } from '../../plugins/multi-zen/src/chat.ts';
 
 const frame = (type: string, value: object, eol = '\n') =>
   `event: ${type}${eol}data: ${JSON.stringify({ type, ...value })}${eol}${eol}`;
-const input = { subagent_type: 'multi-openai', model: 'gpt-6-luna', prompt: 'Inspect café 🐈' };
+const input = { subagent_type: 'OpenAI', model: 'gpt-6-luna', prompt: 'Inspect café 🐈' };
 const tool = (name = 'Agent', value: unknown = input, id = 'toolu_named') => ({
   type: 'tool_use',
   id,
@@ -87,7 +87,7 @@ test('SSE strips one Agent delta across every byte boundary, including UTF-8 and
         subagent_type: input.subagent_type,
         prompt: input.prompt,
       });
-      assert.deepEqual(remembered, [['toolu_named', 'multi-openai', 'gpt-6-luna']]);
+      assert.deepEqual(remembered, [['toolu_named', 'OpenAI', 'gpt-6-luna']]);
     }
     assert.deepEqual(await transform(raw, Array(raw.length).fill(1)), await transform(raw, []));
   }
@@ -140,7 +140,7 @@ test('SSE keeps two tool ids, verdict bytes, stop frames and immediate pings', a
   );
   const raw = Buffer.from(
     first.replace('event: content_block_stop', `${ping}event: content_block_stop`) +
-      callFrames({ ...input, model: 'opus', subagent_type: 'multi-zen' }, 'Agent', 1, 'second') +
+      callFrames({ ...input, model: 'opus', subagent_type: 'Zen' }, 'Agent', 1, 'second') +
       verdict,
   );
   const remembered: unknown[] = [];
@@ -150,8 +150,8 @@ test('SSE keeps two tool ids, verdict bytes, stop frames and immediate pings', a
   assert(result.includes(Buffer.from(verdict)));
   assert(result.indexOf(ping) < result.indexOf('partial_json'));
   assert.deepEqual(remembered, [
-    ['toolu_named', 'multi-openai', 'gpt-6-luna'],
-    ['second', 'multi-zen', 'opus'],
+    ['toolu_named', 'OpenAI', 'gpt-6-luna'],
+    ['second', 'Zen', 'opus'],
   ]);
   assert.equal(data(result).filter((event) => event.type === 'content_block_stop').length, 2);
 });
@@ -195,22 +195,22 @@ test('JSON and bounded model records preserve untouched content, retry, ownershi
   const spawn = {
     sessionId: 's',
     toolUseId: 'toolu_named',
-    subagentType: 'multi-openai',
+    subagentType: 'OpenAI',
     model: 'wrong',
   };
   assert.equal(models.selection(spawn).model, 'gpt-6-luna');
   assert.equal(models.selection(spawn).model, 'gpt-6-luna');
   assert.equal(models.selection({ ...spawn, sessionId: 'other' }).model, 'wrong');
-  assert.equal(models.selection({ ...spawn, subagentType: 'multi-zen' }).model, 'wrong');
+  assert.equal(models.selection({ ...spawn, subagentType: 'Zen' }).model, 'wrong');
   assert.equal(models.selection({ ...spawn, fork: true }).model, 'wrong');
   stripWorkerModel(tool('Agent', { ...input, model: 'other' }), models.remember('other'));
   assert.equal(models.selection({ ...spawn, sessionId: 'other' }).model, 'other');
   models.forgetSession('s');
   assert.equal(models.selection(spawn).model, 'wrong');
-  models.remember('')('unscoped', 'multi-openai', 'fallback');
+  models.remember('')('unscoped', 'OpenAI', 'fallback');
   assert.equal(models.selection({ ...spawn, toolUseId: 'unscoped' }).model, 'fallback');
   for (let i = 0; i < 2048; i++) {
-    models.remember('s')(String(i), 'multi-openai', 'new');
+    models.remember('s')(String(i), 'OpenAI', 'new');
   }
   assert.equal(models.selection({ ...spawn, sessionId: 'other' }).model, 'wrong');
   const untouched = Buffer.from(' { "content": [{"type":"text", "text":"hello"}] } ');
@@ -260,8 +260,7 @@ test('built OpenAI stream and saved response share stripped content before verdi
   );
   assert.equal(JSON.parse(delta.delta.partial_json).model, undefined);
   assert.equal(
-    models.selection({ sessionId: 's', toolUseId: 'toolu_named', subagentType: 'multi-openai' })
-      .model,
+    models.selection({ sessionId: 's', toolUseId: 'toolu_named', subagentType: 'OpenAI' }).model,
     'gpt-6-luna',
   );
 });
@@ -306,8 +305,7 @@ test('Zen Chat normalizes the same block used by streamed deltas and saved conte
   );
   assert.equal(JSON.parse(delta.delta.partial_json).model, undefined);
   assert.equal(
-    models.selection({ sessionId: 's', toolUseId: 'toolu_named', subagentType: 'multi-openai' })
-      .model,
+    models.selection({ sessionId: 's', toolUseId: 'toolu_named', subagentType: 'OpenAI' }).model,
     'gpt-6-luna',
   );
 });
@@ -368,7 +366,7 @@ test('Anthropic JSON relay repairs content-length, scopes route lookup, and leav
     sessionId: 's',
     cwd: '/workspace',
     toolUseId: 'toolu_named',
-    subagentType: 'multi-openai',
+    subagentType: 'OpenAI',
   };
   for (let retry = 0; retry < 2; retry++) {
     assert.equal(
@@ -449,7 +447,7 @@ test('gateway SSE relay and built JSON/SSE retain Agent verdicts and route selec
         sessionId: 's',
         cwd: '/workspace',
         toolUseId: 'toolu_named',
-        subagentType: 'multi-openai',
+        subagentType: 'OpenAI',
         model: 'wrong',
       });
       assert.equal((await modelReply(resolved)).model, 'multi/openai/gpt-6-luna');

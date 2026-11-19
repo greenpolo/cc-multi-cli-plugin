@@ -7,7 +7,7 @@ export const MODELS = {
   'openai-luna': 'gpt-6-luna',
 };
 
-/** The model a `multi-openai` worker runs when the Agent call names none. */
+/** The model a `OpenAI` worker runs when the Agent call names none. */
 export const OPENAI_DEFAULT_WORKER_MODEL = MODELS['openai-sol'];
 
 /** The effort every OpenAI worker runs at: a type carries one, never a name variant. */

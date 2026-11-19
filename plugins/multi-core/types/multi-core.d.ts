@@ -43,7 +43,7 @@ declare module 'claude-code' {
       workerSteps: Record<string, string>;
       /** Agent types positively classified as Claude-loop on a Claude model. */
       claudeTypes: string[];
-      /** Provider (multi-*) worker types the model is offered. */
+      /** Provider worker types (`Cursor`, `OpenAI`, ...) the model is offered. */
       offeredProviders: string[];
       displayTools: MultiCoreDisplayTools;
       /** The usage pane's props, by session id. */

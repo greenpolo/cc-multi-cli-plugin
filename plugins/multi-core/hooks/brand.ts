@@ -1,6 +1,8 @@
 // Each CLI's display name, shared by every surface that names a Multi worker: the
 // Agent row, the spinner and the status line.
 
+import { WORKER_TYPES } from '../src/gateway/provider-workers.ts';
+
 type Brand = { key: string; name: string };
 
 const BRANDS: Readonly<Record<string, Brand>> = {
@@ -18,13 +20,13 @@ export function brandOf(provider: unknown): Brand | undefined {
     : undefined;
 }
 
-/** The brand of a `multi-*` subagent type, else undefined. */
+/** The brand of a provider worker type (`Cursor`, or a legacy `multi-cursor`), else undefined. */
 export function brandOfType(subagentType: unknown): Brand | undefined {
-  if (typeof subagentType !== 'string') {
-    return undefined;
-  }
-  const [, key = ''] = /^multi-([a-z]+)$/.exec(subagentType) ?? [];
-  return brandOf(key);
+  const [provider] =
+    Object.entries(WORKER_TYPES).find(
+      ([key, type]) => subagentType === type || subagentType === `multi-${key}`,
+    ) ?? [];
+  return brandOf(provider);
 }
 
 type WorkerModel = { brand: Brand; model: string };

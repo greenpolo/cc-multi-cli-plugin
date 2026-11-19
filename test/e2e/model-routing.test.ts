@@ -75,7 +75,7 @@ test('model-routing: unknown Agent type returns the available worker list withou
     return;
   }
   assert.match(result.stdout, /Agent type .* not found/);
-  assert.match(result.stdout, /Available agents:.*(?:multi-openai|openai-)/);
+  assert.match(result.stdout, /Available agents:.*(?:OpenAI|openai-)/);
   assert.equal(
     result.requests.filter(
       (request) => request.provider !== 'anthropic' && !request.path.includes('/models'),

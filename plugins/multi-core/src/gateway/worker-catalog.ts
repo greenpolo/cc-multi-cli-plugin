@@ -1,3 +1,5 @@
+import { WORKER_TYPES } from './provider-workers.ts';
+
 /**
  * One Agent-tool type per provider. The Agent tool's `model` parameter names the
  * model; this catalog resolves it against the session's picker rows, the models
@@ -56,7 +58,7 @@ export interface WorkerDefaults {
 }
 
 function workerType(provider: WorkerProvider): string {
-  return `multi-${provider}`;
+  return WORKER_TYPES[provider];
 }
 
 function providerLabel(provider: WorkerProvider): string {
