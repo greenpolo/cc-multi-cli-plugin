@@ -1,7 +1,7 @@
 // The providers of this launch: which are enabled, which connect, what each one's native
 // runs answer to, and the launcher flags each one owns.
 
-import { checkHarnessSettings, type HarnessSettingsOptions } from '../gateway/harness-settings.ts';
+import { readHarnessSettings } from '../gateway/harness-settings.ts';
 import {
   type ConnectedProvider,
   type LoadedProvider,
@@ -43,8 +43,7 @@ export async function connectProviders(
         cwd: process.cwd(),
         env: process.env,
         explicit: enabledProviders?.includes(manifest.name) ?? false,
-        harnessSettings: (cwd, validate, checkRules) =>
-          checkHarnessSettings(cwd, caller.args, caller.settings ?? {}, { validate, checkRules }),
+        harnessSettings: (cwd) => readHarnessSettings(cwd, caller.args, caller.settings ?? {}),
       }),
     ),
   );
@@ -55,36 +54,6 @@ export async function connectProviders(
     }
   }
   return providers;
-}
-
-/**
- * One admission result is shared by every native provider, so it has to be judged by the
- * validator that rejects the least: a rule one harness supports natively must not be refused
- * here because another cannot express it. A harness with its own rule check re-validates on
- * its own dispatch, where the rejection belongs, so one without such a check judges the
- * shared result when present.
- */
-function sharedAdmission(providers: ConnectedProviders): HarnessSettingsOptions | undefined {
-  const harnesses = Object.values(providers).filter((provider) => provider.harness);
-  const judge = harnesses.find((provider) => !provider.checkRules) ?? harnesses[0];
-  return judge?.validatePermissions
-    ? { validate: judge.validatePermissions, checkRules: judge.checkRules }
-    : undefined;
-}
-
-/** Native harness runs answer to the caller's settings; other providers do not. */
-export function nativeSettingsCheck(providers: ConnectedProviders, caller: CallerSettings) {
-  const admission = sharedAdmission(providers);
-  return async (cwd: string) => {
-    if (!admission) {
-      return {};
-    }
-    try {
-      return await checkHarnessSettings(cwd, caller.args, caller.settings ?? {}, admission);
-    } catch (error) {
-      return { nativePermissionError: String(error) };
-    }
-  };
 }
 
 /** Every native harness releases its locks and child processes before the gateway exits. */

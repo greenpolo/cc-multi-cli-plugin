@@ -4,7 +4,6 @@
 
 import { pathToFileURL } from 'node:url';
 import type { WorkerPermissions } from './agent-definitions.ts';
-import type { PermissionContext } from './mode-hook.ts';
 import type { NativeHarness } from './native-harness.ts';
 import { type ProviderManifest, providerDirectory, providerManifests } from './provider.ts';
 import type { PreparedRequest, ProviderRequestInput } from './provider-request.ts';
@@ -26,15 +25,8 @@ export interface LaunchContext {
   env: NodeJS.ProcessEnv;
   /** The session's plugin selection names this provider, rather than leaving it to default. */
   explicit: boolean;
-  /**
-   * The Claude settings a native run in `cwd` answers to, as tool restrictions. `validate`
-   * is the provider's own judgement of whether it can enforce them.
-   */
-  harnessSettings(
-    cwd: string,
-    validate: (context: PermissionContext) => void,
-    checkRules?: (rules: string[] | undefined) => void,
-  ): Promise<WorkerPermissions>;
+  /** The tool restrictions a native run in `cwd` takes from the user's Claude settings. */
+  harnessSettings(cwd: string): Promise<WorkerPermissions>;
 }
 
 /** A provider that is signed in and usable in this session. */
@@ -50,8 +42,6 @@ export interface ConnectedProvider {
   /** `harness` providers: what runs a request, and the native tool names it can announce. */
   harness?: NativeHarness & { close(): Promise<void> };
   displayTools?: readonly string[];
-  /** `harness` providers: the provider's judgement of a permission context; throws to refuse. */
-  validatePermissions?: (context: PermissionContext) => void;
   /** `direct` providers: turn one Claude request into the provider's own. */
   prepare?(input: ProviderRequestInput, model: string): PreparedRequest;
   /** `harness` providers: extra judgement of Claude's tool rules; throws to refuse. */

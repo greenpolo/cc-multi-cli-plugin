@@ -30,9 +30,7 @@ const adapter: ProviderAdapter = {
     }
     const harness = new GrokHarness(models, {
       checkPermissions: async (cwd, context) =>
-        grokPermissionPolicy(
-          mergePermissions(context, await harnessSettings(cwd, grokPermissionPolicy)),
-        ),
+        grokPermissionPolicy(mergePermissions(context, await harnessSettings(cwd))),
     });
     return {
       rows: () =>
@@ -45,7 +43,6 @@ const adapter: ProviderAdapter = {
       worker: { defaultId: () => grokDefaultWorkerModel(models) },
       harness,
       displayTools: GROK_TOOLS,
-      validatePermissions: grokPermissionPolicy,
       usage: grokUsageReader(),
     };
   },

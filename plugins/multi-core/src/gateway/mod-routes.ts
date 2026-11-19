@@ -138,8 +138,6 @@ async function handlePostRoute(
     return compactRoute(res, route, parsed, context);
   }
   switch (route) {
-    case '/multi/mod/policy':
-      return await policyRoute(res, parsed, key, bridge, permissionModes, compactions);
     case '/multi/mod/detach':
       context.forgetReviewContext?.(sessionId);
       compactions?.cancel(sessionId);
@@ -160,6 +158,7 @@ async function handlePostRoute(
     case '/multi/mod/session':
       return sessionRoute(res, parsed, key, bridge, permissionModes);
     case '/multi/mod/offer':
+      await permissionModes?.ready(text(parsed.cwd, 'cwd'));
       return reply(res, {
         ...permissionModes?.workerSelection({ ...parsed, subagentType: parsed.agent }),
         isOffered:
@@ -169,49 +168,16 @@ async function handlePostRoute(
       if (!permissionModes) {
         throw new Error('Worker catalog is unavailable');
       }
+      await permissionModes.ready(text(parsed.cwd, 'cwd'));
       return reply(
         res,
         permissionModes.workerSelection(context.workerModels?.selection(parsed) ?? parsed),
       );
     case '/multi/mod/worker':
-      return await workerRoute(res, parsed, key, bridge, permissionModes);
+      return await workerRoute(res, parsed, key, permissionModes);
     default:
       throw new Error('Unknown mod route');
   }
-}
-
-/**
- * Starts a policy discovery for a prompt, or reports one: with `wait` the reply is held
- * until discovery ends (bounded), so a hook asks once instead of polling.
- */
-async function policyRoute(
-  res: ServerResponse,
-  parsed: Record<string, unknown>,
-  key: string,
-  bridge: ModBridge,
-  permissionModes?: PermissionModes,
-  compactions?: ModCompactions,
-) {
-  const sessionId = text(parsed.sessionId, 'sessionId');
-  if (parsed.generation === undefined) {
-    if (parsed.sourceGeneration !== bridge.mode(key)?.generation) {
-      throw new Error('Policy source generation is stale');
-    }
-    compactions?.cancel(sessionId);
-  }
-  if (!permissionModes) {
-    throw new Error('Policy admission is unavailable');
-  }
-  if (parsed.generation === undefined) {
-    return reply(res, permissionModes.beginPolicy(sessionId, text(parsed.cwd, 'cwd')));
-  }
-  const generation = text(parsed.generation, 'generation');
-  return reply(
-    res,
-    parsed.wait === true
-      ? await permissionModes.policies.wait(sessionId, generation)
-      : permissionModes.policies.status(sessionId, generation),
-  );
 }
 
 /**
@@ -260,33 +226,16 @@ function sessionRoute(
 ) {
   const session = JSON.parse(key)[0] as string;
   const effective = effectivePolicy(value);
-  const generation = optionalGeneration(value);
-  if (generation !== undefined && generation !== bridge.mode(key)?.generation) {
-    return reply(res, { accepted: false, stale: true }, 409);
-  }
-  // A snapshot without a mode admits no policy and never blocks Claude's prompt.
+  // A snapshot without a mode records nothing and never blocks Claude's prompt.
   if (permissionModes && typeof effective.permissionMode === 'string') {
-    const context: PermissionContext = {
+    permissionModes.recordSession(session, {
       ...effective,
       permissionMode: validatedMode(effective.permissionMode),
       model: value.model === undefined ? undefined : text(value.model, 'model'),
       cwd: optionalText(value.cwd),
-    };
-    if (value.policyGeneration !== undefined) {
-      permissionModes.admitPolicy(
-        session,
-        text(value.policyGeneration, 'policyGeneration'),
-        context,
-      );
-    } else {
-      permissionModes.recordHostSession(session, context);
-    }
+    });
   }
-  const snapshot = bridge.recordSession(key, {
-    effective,
-    cwd: optionalText(value.cwd),
-    generation,
-  });
+  const snapshot = bridge.recordSession(key, { effective, cwd: optionalText(value.cwd) });
   if (snapshot && value.event === 'start') {
     process.emit('multi-mod-session-start');
   }
@@ -294,19 +243,23 @@ function sessionRoute(
     ? reply(res, { accepted: true, ...snapshot })
     : reply(res, { accepted: false, stale: true }, 409);
 }
+/**
+ * An Agent call announces its worker, then Claude Code reports the worker's start (with
+ * its `agentId`). Neither is a gate: both only record what the worker's runs answer to.
+ */
 async function workerRoute(
   res: ServerResponse,
   value: Record<string, unknown>,
   key: string,
-  bridge: ModBridge,
   permissionModes?: PermissionModes,
 ) {
   if (!permissionModes) {
     throw new Error('Native worker policy is unavailable');
   }
   const session = JSON.parse(key)[0] as string;
+  await permissionModes.ready(text(value.cwd, 'cwd'));
   if (typeof value.agentId === 'string') {
-    permissionModes.startPreparedModWorker(
+    permissionModes.startWorker(
       session,
       text(value.agentId, 'agentId'),
       text(value.subagentType, 'subagentType'),
@@ -317,14 +270,8 @@ async function workerRoute(
       model: permissionModes.resolve(session, value.agentId).model,
     });
   }
-  if (permissionModes.workerSelection(value).execution === 'harness') {
-    const snapshot = bridge.mode(sessionKey(session, undefined));
-    if (!snapshot || value.generation !== snapshot.generation) {
-      throw new Error('Worker policy generation is unavailable or stale');
-    }
-  }
-  const workerToken = await permissionModes.prepareModWorker(session, value);
-  return reply(res, { accepted: true, workerToken });
+  permissionModes.prepareWorker(session, value);
+  return reply(res, { accepted: true });
 }
 function optionalText(value: unknown) {
   return value === undefined ? undefined : text(value, 'cwd');
@@ -378,7 +325,8 @@ function validatedMode(value: string): PermissionContext['permissionMode'] {
     case 'plan':
       return value;
     default:
-      throw new Error('Unsupported permission mode');
+      // A mode this gateway does not know runs as Claude's default does.
+      return 'default';
   }
 }
 

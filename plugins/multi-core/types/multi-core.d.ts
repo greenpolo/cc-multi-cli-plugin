@@ -3,12 +3,10 @@
 // drawn again when it is written. Plain JSON data; a field without a value is left out.
 export type MultiCorePrompt = { sessionId: string; cwd: string; permissionMode?: string };
 
-/** The prompt-boundary snapshot the gateway holds this session's mode generation for. */
+/** The prompt-boundary snapshot the gateway was last told. */
 export type MultiCorePolicy = {
-  generation?: number;
   prompt?: MultiCorePrompt;
-  harnessReady?: boolean;
-  /** The snapshot last posted for a prompt that needs no harness policy, so an unchanged one posts nothing. */
+  /** The snapshot last posted, so an unchanged one posts nothing. */
   posted?: string;
   /** The session the gateway was greeted for (`session.start`, or the first prompt after a `/clear`). */
   handshake?: string;

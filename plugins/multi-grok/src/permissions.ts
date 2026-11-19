@@ -1,4 +1,4 @@
-import { nativeToolRules } from '../../multi-core/src/gateway/display-rows.ts';
+import { nativeMode, nativeRules } from '../../multi-core/src/gateway/harness-settings.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 import type { GrokPermissionMode } from './cli.ts';
 
@@ -56,8 +56,6 @@ const TOOL_MAP = {
   NotebookEdit: [],
 } as const satisfies Record<string, readonly string[]>;
 
-const SUPPORTED_CLAUDE_TOOLS = new Set([...Object.keys(TOOL_MAP), 'Agent', 'Task']);
-
 const PLAN_DENIED_CLAUDE_TOOLS = new Set(['Bash', 'Edit', 'Write', 'NotebookEdit']);
 
 /** Planning state has no effect outside the native session, so it is always granted. */
@@ -113,39 +111,17 @@ export interface GrokPolicy {
   notice: string;
 }
 
+/** Grok Build has Claude's four native modes; any other Claude mode runs as Auto. */
 function grokMode(mode: PermissionContext['permissionMode']): GrokPermissionMode {
-  if (
-    mode === 'auto' ||
-    mode === 'acceptEdits' ||
-    mode === 'plan' ||
-    mode === 'bypassPermissions'
-  ) {
-    return mode;
-  }
-  throw new Error(
-    'Grok currently supports Auto, acceptEdits, Bypass and Plan; this mode is unsupported.',
-  );
-}
-
-function toolRules(value: string[] | undefined): Set<string> | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  // A display-row grant (`mcp__multi-core`) draws Claude Code rows; it maps to no native tool.
-  const rules = Array.isArray(value) ? nativeToolRules(value) : value;
-  if (!Array.isArray(rules) || rules.some((rule) => !SUPPORTED_CLAUDE_TOOLS.has(rule))) {
-    throw new Error('Grok cannot enforce this Claude tool restriction.');
-  }
-  return new Set(rules);
+  return mode === 'acceptEdits' ? mode : nativeMode(mode).mode;
 }
 
 function grantedTools(context: PermissionContext, plan: boolean): Set<string> {
-  const allowed = toolRules(context.tools);
-  const disallowed = toolRules(context.disallowedTools);
+  const { allowed, denied: disallowed } = nativeRules(context);
   const granted = new Set<string>(ALWAYS_GRANTED);
   for (const [claudeTool, natives] of Object.entries(TOOL_MAP)) {
     const excluded =
-      disallowed?.has(claudeTool) ||
+      disallowed.has(claudeTool) ||
       (allowed !== undefined && !allowed.has(claudeTool)) ||
       (plan && PLAN_DENIED_CLAUDE_TOOLS.has(claudeTool));
     if (!excluded) {
@@ -188,12 +164,12 @@ function policy(
 
 /** This restricts native tools; it never grants permission in place of native policy. */
 export function grokPermissionPolicy(context: PermissionContext): GrokPolicy {
-  if (context.nativePermissionError) {
-    throw new Error(context.nativePermissionError);
-  }
   const mode = grokMode(context.permissionMode);
   const plan = mode === 'plan';
-  return policy(mode, grantedTools(context, plan), policyNotice(mode));
+  const notice = [policyNotice(mode), nativeMode(context.permissionMode).notice, context.notice]
+    .filter(Boolean)
+    .join(' ');
+  return policy(mode, grantedTools(context, plan), notice);
 }
 
 /** A summary turn runs with planning state only and no way to touch the workspace. */

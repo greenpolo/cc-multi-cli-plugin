@@ -161,7 +161,6 @@ export abstract class CliHarness<Saved extends HarnessSessionBase, Selection> {
         permissionMode: context.permissionMode,
         tools: context.tools,
         disallowedTools: context.disallowedTools,
-        nativePermissionError: context.nativePermissionError,
         compaction: context.compaction,
       },
     ]);

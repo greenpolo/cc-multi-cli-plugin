@@ -6,7 +6,6 @@ import {
   cursorModelOptions,
   cursorPickerOptions,
 } from './models.ts';
-import { assertCursorToolRules, cursorPermissionPolicy } from './permissions.ts';
 import { CURSOR_TOOLS } from './progress.ts';
 import { cursorUsageReader } from './usage-adapter.ts';
 import { CursorWorkspaces } from './workspaces.ts';
@@ -48,8 +47,7 @@ const adapter: ProviderAdapter = {
       (cwd) =>
         new CursorHarness(models, {
           cwd,
-          checkPermissions: () =>
-            harnessSettings(cwd, cursorPermissionPolicy, assertCursorToolRules),
+          checkPermissions: () => harnessSettings(cwd),
         }),
     );
     return {
@@ -67,8 +65,6 @@ const adapter: ProviderAdapter = {
       worker: { defaultId: () => CURSOR_DEFAULT_WORKER_MODEL },
       harness,
       displayTools: CURSOR_TOOLS,
-      validatePermissions: cursorPermissionPolicy,
-      checkRules: assertCursorToolRules,
       usage: cursorUsageReader(harness),
       billed: {
         scope: 'Cursor native agent lifetime; local billing entries are per turn',

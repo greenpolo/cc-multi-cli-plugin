@@ -115,63 +115,6 @@ function atLeastVersion(actual: number[], required: number[]): boolean {
   return true;
 }
 
-/**
- * Claude Code has to start, load the plugin worker and run session.start before
- * the mod can acknowledge. A cold start on Windows takes well over five seconds
- * (large binary, antivirus scan), so the wait is generous and overridable.
- */
-const modSessionStartTimeoutMs = Number(process.env.MULTI_MOD_START_TIMEOUT_MS ?? 30000);
-
-/**
- * Wait for the mod's acknowledgement, or for a Claude that exits first: that ends the
- * launch with Claude's own exit code. A timeout is the launcher's error.
- */
-export async function awaitStartOrExit(
-  modStart: { ready: Promise<void>; cancel: () => void },
-  exited: Promise<number>,
-  child: { kill: () => boolean },
-  shutdown: () => Promise<void>,
-) {
-  try {
-    const earlyExit = await Promise.race([modStart.ready.then(() => undefined), exited]);
-    if (earlyExit !== undefined) {
-      modStart.cancel();
-      await shutdown();
-      process.exit(earlyExit);
-    }
-  } catch (error) {
-    child.kill();
-    await shutdown();
-    throw error;
-  }
-}
-
-export function awaitModSessionStart(): { ready: Promise<void>; cancel: () => void } {
-  let cancel = () => {};
-  const ready = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      process.off('multi-mod-session-start', acknowledged);
-      reject(
-        new Error(
-          'Claude Code 2.1.272 or newer with loaded function hooks is required; the Multi mod did not acknowledge session.start.',
-        ),
-      );
-    }, modSessionStartTimeoutMs);
-    const acknowledged = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    cancel = () => {
-      clearTimeout(timer);
-      process.off('multi-mod-session-start', acknowledged);
-    };
-    process.once('multi-mod-session-start', acknowledged);
-  });
-  // A cancelled wait never settles; a timed-out one is handled by whoever awaits it.
-  ready.catch(() => {});
-  return { ready, cancel };
-}
-
 export async function anthropicSignedIn(): Promise<boolean> {
   // Ask Claude, including its OS credential store and configured helpers. Never read its tokens.
   if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) {

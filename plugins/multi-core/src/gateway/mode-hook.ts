@@ -3,8 +3,7 @@ import path from 'node:path';
 import type { WorkerPermissions } from './agent-definitions.ts';
 import { setBounded } from './bounded.ts';
 import { mergePermissions } from './harness-settings.ts';
-import { ModPolicies } from './mod-policy.ts';
-import { harnessProvider, nativeSpelling } from './provider.ts';
+import { harnessProvider } from './provider.ts';
 import { type ResolvedWorker, resolveWorker, type WorkerCatalog } from './worker-catalog.ts';
 
 const MODES = ['default', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions', 'plan'] as const;
@@ -18,11 +17,9 @@ export interface PermissionContext extends WorkerPermissions {
   compaction?: string;
 }
 
+/** A mode this gateway does not know is treated as Claude's default; a native run uses Auto for it. */
 function permissionMode(value: unknown): PermissionMode {
-  if (!MODES.includes(value as PermissionMode)) {
-    throw new Error('Missing or unsupported Claude permission mode');
-  }
-  return value as PermissionMode;
+  return MODES.find((mode) => mode === value) ?? 'default';
 }
 
 function requiredString(value: unknown, name: string): string {
@@ -36,30 +33,31 @@ function executionForModel(model: unknown): WorkerExecution {
   return harnessProvider(model) ? 'harness' : 'claude';
 }
 
-/** Prompt-time snapshots: the existing selector takes effect at the next prompt. */
+/**
+ * One record per session: the permission mode, workspace and model of its latest prompt.
+ * A worker adds its agent type's own tool rules and otherwise inherits the session's
+ * record. Nothing here refuses a run: a session or worker the hooks have not reported
+ * yet resolves to the session's record, or to Auto without one.
+ */
 export class PermissionModes {
-  readonly policies: ModPolicies;
   /**
    * Armed compaction boundaries, keyed by exactly one [session, 'main' | worker]. The
-   * main loop's boundary is applied by `resolve` and never written into its snapshot,
+   * main loop's boundary is applied by `resolve` and never written into its record,
    * so no worker inherits it; a worker's `previous` is what it ran under before.
    */
   private readonly compactions = new Map<string, { id: string; previous?: PermissionContext }>();
-  private readonly parents = new Map<string, PermissionContext>();
-  private readonly hostOnly = new Set<string>();
-  /** The last admitted settings restrictions per session, retained across host snapshots. */
-  private readonly admitted = new Map<string, WorkerPermissions>();
+  private readonly sessions = new Map<string, PermissionContext>();
   private readonly workers = new Map<
     string,
     WorkerPermissions & { cwd: string; compaction?: string }
   >();
-  private readonly pendingWorkers = new Map<
+  /** Agent calls not yet started, oldest first: what each start inherits from its parent. */
+  private readonly spawns = new Map<
     string,
     WorkerPermissions & { cwd: string; type: string; expiresAt: number }
   >();
   private readonly catalogs = new Map<string, Record<string, WorkerPermissions>>();
-  /** Last start refusal per worker, so a later harness request can explain it. */
-  private readonly refusals = new Map<string, { reason: string; at: number }>();
+  private readonly loading = new Map<string, Promise<void>>();
   private readonly definitions: (cwd: string) => Promise<Record<string, WorkerPermissions>>;
   private readonly platform: NodeJS.Platform;
   /** The provider worker types, whose Agent-call `model` is resolved here. */
@@ -67,105 +65,65 @@ export class PermissionModes {
 
   constructor(
     definitions: (cwd: string) => Promise<Record<string, WorkerPermissions>>,
-    restrictions: (cwd: string) => Promise<WorkerPermissions> = async () => ({}),
     options: { platform?: NodeJS.Platform; workers?: WorkerCatalog } = {},
   ) {
     this.definitions = definitions;
     this.platform = options.platform ?? process.platform;
     this.workerCatalog = options.workers ?? {};
-    this.policies = new ModPolicies(async (cwd) => ({
-      cwd,
-      workers: await definitions(cwd),
-      restrictions: await restrictions(cwd),
-    }));
   }
 
-  beginPolicy(session: string, cwd: string) {
-    this.parents.delete(session);
-    for (const key of [...this.compactions.keys()]) {
-      if (JSON.parse(key)[0] === session) {
-        this.clearCompaction(key);
-      }
+  /**
+   * The agent definitions of a workspace, read once and then refreshed behind each prompt.
+   * A workspace whose definitions cannot be read has none; its workers inherit the session.
+   */
+  async ready(cwd: string): Promise<void> {
+    if (!this.catalogs.has(cwd)) {
+      await this.refresh(cwd);
     }
-    for (const key of this.pendingWorkers.keys()) {
-      if (JSON.parse(key)[0] === session) {
-        this.pendingWorkers.delete(key);
-      }
+  }
+
+  private refresh(cwd: string): Promise<void> {
+    const running = this.loading.get(cwd);
+    if (running) {
+      return running;
     }
-    return this.policies.begin(session, cwd);
-  }
-
-  admitPolicy(session: string, generation: string, context: PermissionContext) {
-    const policy = this.policies.consume(session, generation, requiredString(context.cwd, 'cwd'));
-    remember(this.catalogs, policy.cwd, policy.workers);
-    this.recordModSession(session, {
-      ...mergePermissions(context, policy.restrictions),
-      nativePermissionError: policy.restrictions.nativePermissionError,
-    });
-    remember(this.admitted, session, structuredClone(policy.restrictions));
-  }
-
-  async precompute(cwd: string): Promise<void> {
-    const catalog = await this.definitions(cwd);
-    remember(this.catalogs, cwd, structuredClone(catalog));
+    const load = this.definitions(cwd)
+      .then(
+        (catalog) => remember(this.catalogs, cwd, structuredClone(catalog)),
+        () => {
+          if (!this.catalogs.has(cwd)) {
+            remember(this.catalogs, cwd, {});
+          }
+        },
+      )
+      .finally(() => this.loading.delete(cwd));
+    this.loading.set(cwd, load);
+    return load;
   }
 
   offered(cwd: string, type: string): boolean {
     const catalog = this.catalogs.get(cwd);
-    return Boolean(catalog && Object.hasOwn(catalog, type) && !catalog[type].nativePermissionError);
+    return Boolean(catalog && Object.hasOwn(catalog, type));
   }
 
-  recordModSession(session: string, context: PermissionContext): void {
-    this.parents.delete(session);
-    this.hostOnly.delete(session);
-    permissionMode(context.permissionMode);
-    remember(this.parents, session, structuredClone(context));
+  /** The prompt-boundary record: every provider reads the mode Claude Code is in from it. */
+  recordSession(session: string, context: PermissionContext): void {
+    remember(this.sessions, session, {
+      ...structuredClone(context),
+      permissionMode: permissionMode(context.permissionMode),
+    });
+    if (context.cwd) {
+      void this.refresh(context.cwd);
+    }
   }
 
-  /**
-   * A Claude-loop snapshot records identity, but grants no external harness execution
-   * to the main loop. It does not revoke harness workers already acknowledged under an
-   * admitted policy; those keep that policy's restrictions (see resolveHarness).
-   */
-  recordHostSession(session: string, context: PermissionContext): void {
-    this.recordModSession(session, context);
-    this.hostOnly.add(session);
-  }
-
+  /** The context a native run answers to; the request's own model names what runs. */
   resolveHarness(session: string, agent?: string, model?: string): PermissionContext {
-    if (agent && !this.workers.has(JSON.stringify([session, agent]))) {
-      const refusal = this.refusals.get(JSON.stringify([session, agent]));
-      const detail = refusal
-        ? ` Spawn acknowledgement failed at ${new Date(refusal.at).toISOString()}: ${refusal.reason}.`
-        : '';
-      throw new Error(
-        `Native harness worker has no acknowledged spawn.${detail} Workflow-started native workers are unsupported until Claude Code supplies spawn context; use the Agent tool instead. If this came from the Agent tool, submit a new prompt and retry.`,
-      );
-    }
-    if (this.hostOnly.has(session) && !(agent && this.admitted.has(session))) {
-      throw new Error(
-        'Native harness settings policy has not been admitted. If starting a native worker from a Workflow, use the Agent tool instead; Workflow starts lack the spawn context needed for safe admission.',
-      );
-    }
-    const context = this.hostOnly.has(session)
-      ? this.withAdmittedPolicy(session, this.resolve(session, agent))
-      : this.resolve(session, agent);
-    if (model && context.model && !sameModel(context.model, model)) {
-      throw new Error('Harness model is inconsistent with its admitted permission context');
-    }
-    return context;
+    const context = this.resolve(session, agent);
+    return model ? { ...context, model } : context;
   }
 
-  /** Reapply the admitted settings restrictions a later host snapshot does not carry. */
-  private withAdmittedPolicy(session: string, context: PermissionContext): PermissionContext {
-    const restrictions = this.admitted.get(session) ?? {};
-    return {
-      ...mergePermissions(context, restrictions),
-      nativePermissionError: context.nativePermissionError ?? restrictions.nativePermissionError,
-    };
-  }
-
-  recordModWorker(
+  private recordWorker(
     session: string,
     agent: string,
     context: WorkerPermissions & { cwd?: string; compaction?: string },
@@ -177,48 +135,33 @@ export class PermissionModes {
       permissionMode: context.permissionMode,
       tools: context.tools?.slice(),
       disallowedTools: context.disallowedTools?.slice(),
-      ...(context.nativePermissionError
-        ? { nativePermissionError: context.nativePermissionError }
-        : {}),
     });
   }
 
-  async prepareModWorker(session: string, input: Record<string, unknown>): Promise<string> {
+  /**
+   * An Agent call is about to start a worker: remember what it inherits from the loop
+   * that called it. The worker itself is recorded when Claude Code reports its start.
+   */
+  prepareWorker(session: string, input: Record<string, unknown>): void {
     const type = requiredString(input.subagentType, 'subagentType');
     const cwd = requiredString(input.cwd, 'cwd');
-    const parent = this.resolve(
-      session,
-      typeof input.parentAgentId === 'string' ? input.parentAgentId : undefined,
-    );
-    validateWorkerRequest(input, parent, cwd);
     const selection = this.workerSelection(input);
-    const definition = input.fork === true ? {} : this.catalogs.get(cwd)?.[type];
-    if (!definition) {
-      throw new Error(`Cannot resolve permissions for Claude worker ${type}`);
-    }
-    const model = selection.model;
-    if (selection.execution === 'harness') {
-      this.resolveHarness(session);
-      // A provider worker's model was resolved against its catalog, not its default.
-      validateWorkerDefinition(definition, input, !selection.worker);
-      if (parent.nativePermissionError) {
-        throw new Error(parent.nativePermissionError);
-      }
-    }
-    this.prunePendingWorkers();
-    const token = randomUUID();
-    const inherited = input.parentAgentId ? mergePermissions(parent, definition) : definition;
-    remember(this.pendingWorkers, JSON.stringify([session, token]), {
-      ...inherited,
+    const definition = input.fork === true ? {} : (this.catalogs.get(cwd)?.[type] ?? {});
+    const parentAgent = typeof input.parentAgentId === 'string' ? input.parentAgentId : undefined;
+    const inherited = parentAgent
+      ? mergePermissions(this.resolve(session, parentAgent), definition)
+      : definition;
+    this.pruneSpawns();
+    remember(this.spawns, JSON.stringify([session, randomUUID()]), {
+      tools: inherited.tools,
+      disallowedTools: inherited.disallowedTools,
       cwd,
       type,
-      expiresAt: Date.now() + 15000,
-      model,
-      // Only an explicit mode is stored; an inherited one follows the parent at resolve time.
+      expiresAt: Date.now() + 60_000,
+      model: selection.model,
+      // Only an explicit mode is stored; an inherited one follows the session at resolve time.
       permissionMode: definition.permissionMode,
-      nativePermissionError: definition.nativePermissionError,
     });
-    return token;
   }
 
   /**
@@ -258,87 +201,36 @@ export class PermissionModes {
     return { model, execution: executionForModel(model), known: definition !== undefined };
   }
 
-  private prunePendingWorkers() {
-    for (const [key, pending] of this.pendingWorkers) {
-      if (pending.expiresAt <= Date.now()) {
-        this.pendingWorkers.delete(key);
+  private pruneSpawns() {
+    for (const [key, spawn] of this.spawns) {
+      if (spawn.expiresAt <= Date.now()) {
+        this.spawns.delete(key);
       }
     }
   }
 
   /**
-   * Bind SubagentStart to the one pending Agent-tool spawn it acknowledges. Claude
+   * Claude Code reports a worker's start. It takes the oldest waiting Agent call of its
+   * type, so several workers of one provider started together each get a record; Claude
    * starts an `isolation: "worktree"` worker in `<spawn cwd>/.claude/worktrees/<name>`,
-   * so that exact child path also matches. The worker records its actual start cwd
-   * for workspace routing, while settings admission stays keyed to the spawn cwd:
-   * a worktree of an admitted checkout inherits that checkout's admitted policy
-   * (worktrees do not receive the parent's untracked settings.local.json). No other
-   * cwd, including any other subdirectory, is accepted.
+   * which matches its spawn. A start no Agent call announced (a Workflow's, say) runs
+   * under its agent type's own rules and the session's record.
    */
-  startPreparedModWorker(session: string, agent: string, type: string, cwd: string): void {
-    try {
-      const candidates = [...this.pendingWorkers].filter(
-        ([key, value]) =>
-          JSON.parse(key)[0] === session &&
-          value.type === type &&
-          value.expiresAt > Date.now() &&
-          (value.cwd === cwd || isClaudeWorktreeOf(value.cwd, cwd, this.platform)),
-      );
-      if (candidates.length !== 1) {
-        throw new Error(
-          `Worker start has no unique acknowledged spawn (${this.startMismatch(session, type, cwd, candidates.length)})`,
-        );
-      }
-      const [key] = candidates[0];
-      this.recordPreparedModWorker(session, agent, JSON.parse(key)[1], cwd);
-      this.refusals.delete(JSON.stringify([session, agent]));
-    } catch (error) {
-      this.recordRefusal(session, agent, error instanceof Error ? error.message : String(error));
-      throw error;
+  startWorker(session: string, agent: string, type: string, cwd: string): void {
+    this.pruneSpawns();
+    const waiting = [...this.spawns].filter(
+      ([key, value]) => JSON.parse(key)[0] === session && value.type === type,
+    );
+    const [key, spawn] =
+      waiting.find(
+        ([, value]) => value.cwd === cwd || isClaudeWorktreeOf(value.cwd, cwd, this.platform),
+      ) ??
+      waiting[0] ??
+      [];
+    if (key) {
+      this.spawns.delete(key);
     }
-  }
-
-  private startMismatch(session: string, type: string, cwd: string, matches: number): string {
-    if (matches > 1) {
-      return `${matches} pending ${type} spawns match start=${cwd}`;
-    }
-    const pending = [...this.pendingWorkers]
-      .filter(([key, value]) => JSON.parse(key)[0] === session && value.type === type)
-      .map(([, value]) => value);
-    if (pending.length === 0) {
-      return `no pending ${type} spawn for start=${cwd}`;
-    }
-    if (pending.every((value) => value.expiresAt <= Date.now())) {
-      return `pending ${type} spawn expired`;
-    }
-    const parents = pending.map((value) => value.cwd).join(', ');
-    return `cwd mismatch parent=${parents} start=${cwd}`;
-  }
-
-  private recordRefusal(session: string, agent: string, reason: string) {
-    const key = JSON.stringify([session, agent]);
-    this.refusals.delete(key);
-    // Diagnostics only: evict the oldest entry rather than refusing new work.
-    const oldest = this.refusals.keys().next();
-    if (this.refusals.size >= 256 && !oldest.done) {
-      this.refusals.delete(oldest.value);
-    }
-    this.refusals.set(key, { reason: reason.slice(0, 2048), at: Date.now() });
-  }
-
-  recordPreparedModWorker(session: string, agent: string, token: unknown, cwd?: string): void {
-    requiredString(agent, 'agentId');
-    if (this.workers.has(JSON.stringify([session, agent]))) {
-      throw new Error('Worker identity is already registered');
-    }
-    const workerToken = requiredString(token, 'workerToken');
-    const key = JSON.stringify([session, workerToken]);
-    const context = this.pendingWorkers.get(key);
-    this.pendingWorkers.delete(key);
-    if (!context || context.expiresAt <= Date.now()) {
-      throw new Error('Worker policy acknowledgement is unavailable');
-    }
-    this.recordModWorker(session, agent, cwd ? { ...context, cwd } : context);
+    this.recordWorker(session, agent, { ...(spawn ?? this.catalogs.get(cwd)?.[type]), cwd });
   }
 
   authorizeModCompaction(session: string, agent?: string): void {
@@ -351,16 +243,14 @@ export class PermissionModes {
     }
     const previous = this.compactions.get(key)?.previous ?? current;
     remember(this.compactions, key, { id, previous });
-    this.recordModWorker(session, agent, { ...current, tools: [], compaction: id });
+    this.recordWorker(session, agent, { ...current, tools: [], compaction: id });
   }
 
   /** Arm a tool-free boundary when SessionStart restored no prompt snapshot. */
   authorizeRestoredModCompaction(session: string): void {
-    if (this.parents.has(session)) {
-      this.authorizeModCompaction(session);
-      return;
+    if (!this.sessions.has(session)) {
+      this.recordSession(session, { permissionMode: 'default', tools: [], disallowedTools: [] });
     }
-    this.recordModSession(session, { permissionMode: 'default', tools: [], disallowedTools: [] });
     this.authorizeModCompaction(session);
   }
 
@@ -386,16 +276,13 @@ export class PermissionModes {
     this.compactions.delete(key);
     const [session, agent] = JSON.parse(key) as [string, string];
     if (agent !== 'main' && saved.previous && this.workers.has(key)) {
-      this.recordModWorker(session, agent, saved.previous);
+      this.recordWorker(session, agent, saved.previous);
     }
   }
 
   forgetSession(session: string): void {
-    this.parents.delete(session);
-    this.hostOnly.delete(session);
-    this.admitted.delete(session);
-    this.policies.forget(session);
-    for (const entries of [this.workers, this.pendingWorkers, this.compactions, this.refusals]) {
+    this.sessions.delete(session);
+    for (const entries of [this.workers, this.spawns, this.compactions]) {
       for (const key of entries.keys()) {
         if (JSON.parse(key)[0] === session) {
           entries.delete(key);
@@ -404,39 +291,36 @@ export class PermissionModes {
     }
   }
 
-  /** Plan mode binds automatic review too. An unknown session or worker throws. */
+  /** Plan mode binds automatic review too. */
   planning(session: string, agent?: string): boolean {
     return this.resolve(session, agent).permissionMode === 'plan';
   }
 
   resolve(session: string, agent?: string): PermissionContext {
-    const parent = this.parents.get(session);
-    if (!parent) {
-      throw new Error('Claude permission mode is unavailable; submit a new prompt');
-    }
+    const held = this.sessions.get(session) ?? { permissionMode: 'auto' };
     if (!agent) {
       const armed = this.compactions.get(JSON.stringify([session, 'main']));
-      const context = structuredClone(parent);
+      const context = structuredClone(held);
       return armed ? { ...context, tools: [], compaction: armed.id } : context;
     }
     const worker = this.workers.get(JSON.stringify([session, agent]));
     if (!worker) {
-      throw new Error('Claude worker permission context is unavailable');
+      // A worker the hooks have not reported inherits the session's record as it is.
+      return structuredClone(held);
     }
-    // These parent modes override a worker's own, as in Claude; a planning parent keeps
+    // These session modes override a worker's own, as in Claude; a planning session keeps
     // every worker, including one already running or resumed, in plan.
     const inherited = ['auto', 'acceptEdits', 'bypassPermissions', 'plan'].includes(
-      parent.permissionMode,
+      held.permissionMode,
     );
     return mergePermissions(
       {
         ...worker,
-        nativePermissionError: worker.nativePermissionError ?? parent.nativePermissionError,
         permissionMode: inherited
-          ? parent.permissionMode
-          : permissionMode(worker.permissionMode ?? parent.permissionMode),
+          ? held.permissionMode
+          : permissionMode(worker.permissionMode ?? held.permissionMode),
       },
-      parent,
+      held,
     );
   }
 }
@@ -461,54 +345,6 @@ function isClaudeWorktreeOf(
     parts[2] !== '.' &&
     parts[2] !== '..'
   );
-}
-
-/** Claude's context tag is presentation metadata, so two spellings name one model. */
-function sameModel(left: unknown, right: unknown): boolean {
-  if (typeof left !== 'string' || typeof right !== 'string') {
-    return left === right;
-  }
-  return nativeSpelling(left) === nativeSpelling(right);
-}
-
-function validateWorkerDefinition(
-  definition: WorkerPermissions,
-  input: Record<string, unknown>,
-  fixedModel = true,
-) {
-  if (definition.nativePermissionError) {
-    throw new Error(definition.nativePermissionError);
-  }
-  if (
-    fixedModel &&
-    definition.model &&
-    definition.model !== 'inherit' &&
-    input.model !== undefined &&
-    !sameModel(input.model, definition.model)
-  ) {
-    throw new Error('Worker model is inconsistent with its catalog definition');
-  }
-}
-
-function validateWorkerRequest(
-  input: Record<string, unknown>,
-  parent: PermissionContext,
-  cwd: string,
-) {
-  if (permissionMode(input.permissionMode) !== parent.permissionMode) {
-    throw new Error('Worker parent permission mode is inconsistent');
-  }
-  if (
-    parent.model &&
-    !sameModel(input.parentModel, parent.model) &&
-    (executionForModel(parent.model) === 'harness' ||
-      executionForModel(input.parentModel) === 'harness')
-  ) {
-    throw new Error('Worker parent model is inconsistent');
-  }
-  if (parent.cwd && parent.cwd !== cwd) {
-    throw new Error('Worker workspace has no acknowledged policy');
-  }
 }
 
 /**

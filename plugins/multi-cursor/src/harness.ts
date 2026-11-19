@@ -179,6 +179,7 @@ export class CursorHarness {
   private readonly resumeAgent: (id: string, options: AgentOptions) => Promise<Agent>;
   private readonly createAgent: CreateCursorHarnessAgent;
   private readonly checkPermissions: () => Promise<WorkerPermissions>;
+  private readonly announced = new Set<string>();
   private readonly getRun: (id: string, cwd: string) => Promise<Run>;
   private closed = false;
   private readonly closedAgents = new WeakSet<Agent>();
@@ -661,6 +662,16 @@ export class CursorHarness {
     return session.saved.pendingRun;
   }
 
+  /** Said once per workspace and wording: what of Claude's settings this run does not carry. */
+  private settingsNotice(context: PermissionContext) {
+    const notice = cursorPermissionPolicy(context).notice;
+    const noticeChanged = notice !== undefined && !this.announced.has(notice);
+    if (notice !== undefined) {
+      this.announced.add(notice);
+    }
+    return { notice, noticeChanged };
+  }
+
   private async execute(
     body: MessagesRequest,
     held: Session,
@@ -703,7 +714,7 @@ export class CursorHarness {
         tag: 'Cursor',
         interrupted: session.saved.interrupted,
         rewound,
-        noticeChanged: false,
+        ...this.settingsNotice(context),
       });
       signal.throwIfAborted();
       if (this.closed) {

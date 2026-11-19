@@ -18,8 +18,6 @@ import { withoutGateway } from './install/process.ts';
 import {
   anthropicSignedIn,
   assertFunctionHooksSupported,
-  awaitModSessionStart,
-  awaitStartOrExit,
   claudeExecutable,
   findPluginRoot,
   launcherArguments,
@@ -44,7 +42,6 @@ import {
   connectProviders,
   enabledProviders,
   handleCommand,
-  nativeSettingsCheck,
 } from './launch/providers.ts';
 import { checkLauncherArgumentLimit, workerCatalog, workerDefinitions } from './launch/workers.ts';
 
@@ -96,10 +93,9 @@ async function main() {
         [...args, '--settings', callerSettingsFile],
         pluginInventory,
       ),
-    nativeSettingsCheck(providers, caller),
     { workers },
   );
-  await permissionModes.precompute(process.cwd());
+  await permissionModes.ready(process.cwd());
   const receipts = new ReceiptLedger({
     file: process.env.MULTI_RECEIPTS_FILE
       ? path.resolve(process.env.MULTI_RECEIPTS_FILE)
@@ -165,7 +161,6 @@ async function main() {
     await rm(settingsDir, { recursive: true, force: true });
     throw error;
   }
-  const modStart = awaitModSessionStart();
   const child = spawn(childInvocation.command, childInvocation.args, {
     stdio: 'inherit',
     env: childEnvironment,
@@ -180,19 +175,15 @@ async function main() {
     await receipts.drain();
     await rm(settingsDir, { recursive: true, force: true });
   };
-  // Attached before anything is awaited: a Claude that cannot start, or that exits at
-  // once (--version, an argument error), must end the launcher with its own exit code
-  // rather than after the mod's acknowledgement times out.
-  const exited = new Promise<number>((resolve) => {
-    child.once('exit', (code) => resolve(code ?? 1));
+  // Claude's own exit ends the launcher with Claude's exit code. Nothing here waits on the
+  // mod: a first-run consent screen can hold its start for as long as the user reads it.
+  child.once('exit', (code) => {
+    void shutdown().finally(() => process.exit(code ?? 1));
   });
   child.once('error', (error) => {
-    modStart.cancel();
     console.error(error.message);
     void shutdown().finally(() => process.exit(1));
   });
-  await awaitStartOrExit(modStart, exited, child, shutdown);
-  void exited.then((code) => shutdown().finally(() => process.exit(code)));
   if (process.platform === 'win32') {
     // Windows console control events do not provide POSIX process groups. Claude's
     // child owns Ctrl+C handling; forward termination explicitly to its process tree.

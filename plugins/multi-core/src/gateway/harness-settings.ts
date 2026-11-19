@@ -2,40 +2,34 @@ import childProcess from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pluginPermissions, type WorkerPermissions } from './agent-definitions.ts';
+import type { WorkerPermissions } from './agent-definitions.ts';
+import { nativeToolRules } from './display-rows.ts';
 import type { PermissionContext } from './mode-hook.ts';
+
+// What a native harness run takes from the user's Claude settings. A harness runs its own
+// tools, so only what it can enforce carries over: bare tool denials and tool lists. Anything
+// else (ask rules, sandbox settings, argument-specific rules) is skipped and named in a
+// one-line notice. Nothing here refuses a run.
 
 export interface HarnessSettingsOptions {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   osRelease?: string;
-  readFile?: typeof fs.readFile;
-  readDir?: typeof fs.readdir;
-  runCommand?: (command: string, args: readonly string[]) => Promise<string>;
-  /** The harness's own judgement of the merged rules. It must be synchronous: admission
-   * throws, and a returned promise would be ignored. */
-  validate: (context: PermissionContext) => void;
-  /** Judges each settings file's deny rules as it is read, which buys the per-file
-   * attribution in the error message. Without it only the merged result is judged. */
-  checkRules?: (rules: string[] | undefined) => void;
 }
 
-/** Every discovery option resolved to a value; not part of the public surface. */
-type SettingsDiscovery = Required<Omit<HarnessSettingsOptions, 'checkRules'>> &
-  Pick<HarnessSettingsOptions, 'checkRules'>;
+type SettingsDiscovery = Required<HarnessSettingsOptions>;
 
-export const policyCommandTimeoutMs = 10_000;
+/** A bare tool name: the only kind of denial a native harness can enforce. */
+const BARE_TOOL = /^[A-Za-z][\w-]*$/;
+
+const policyCommandTimeoutMs = 10_000;
 
 /**
  * Policy probes run from fixed system directories: a bare name would let a
  * Windows working directory (searched first) or a user PATH entry answer for
  * the managed policy.
  */
-export function systemCommandPath(
-  command: string,
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+function systemCommandPath(command: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv) {
   if (platform === 'win32') {
     const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? 'C:\\Windows';
     const system32 = path.win32.join(root, 'System32');
@@ -47,10 +41,14 @@ export function systemCommandPath(
   return command === 'defaults' ? '/usr/bin/defaults' : command;
 }
 
-const defaultRunCommand = (command: string, args: readonly string[]): Promise<string> =>
+const runCommand = (
+  options: SettingsDiscovery,
+  command: string,
+  args: readonly string[],
+): Promise<string> =>
   new Promise((resolve, reject) => {
     childProcess.execFile(
-      systemCommandPath(command),
+      systemCommandPath(command, options.platform, options.env),
       [...args],
       { encoding: 'utf8', timeout: policyCommandTimeoutMs, windowsHide: true, cwd: os.tmpdir() },
       (error, stdout, stderr) => {
@@ -64,6 +62,18 @@ const defaultRunCommand = (command: string, args: readonly string[]): Promise<st
     );
   });
 
+/** One sentence naming everything skipped, or none when everything carried over. */
+function skippedNotice(skipped: ReadonlySet<string>): string | undefined {
+  return skipped.size
+    ? `Claude settings that do not apply to native runs were skipped: ${[...skipped].join(', ')}.`
+    : undefined;
+}
+
+function joinNotices(...notices: (string | undefined)[]): string | undefined {
+  const present = [...new Set(notices.filter((notice) => notice !== undefined))];
+  return present.length ? present.join(' ') : undefined;
+}
+
 /** Restriction layers intersect grants and accumulate denials; none can widen another. */
 export function mergePermissions(
   context: PermissionContext,
@@ -73,93 +83,129 @@ export function mergePermissions(
   if (rules.tools !== undefined) {
     tools = tools === undefined ? rules.tools : tools.filter((tool) => rules.tools?.includes(tool));
   }
+  const notice = joinNotices(context.notice, rules.notice);
   return {
     ...context,
     tools,
     disallowedTools: [...(context.disallowedTools ?? []), ...(rules.disallowedTools ?? [])],
+    ...(notice === undefined ? {} : { notice }),
   };
 }
 
-/** Re-read on each native dispatch; Claude-side rules cannot constrain SDK tools. */
-export async function checkHarnessSettings(
+/**
+ * A context's tool rules as a harness applies them. A scoped grant (`Bash(git:*)`) grants its
+ * tool and a scoped denial denies nothing, because the scope has no native form; a rule for
+ * a tool the harness does not have matches nothing. A display-row grant draws Claude Code
+ * rows and maps to no native tool.
+ */
+export function nativeRules(context: Pick<PermissionContext, 'tools' | 'disallowedTools'>): {
+  allowed?: Set<string>;
+  denied: Set<string>;
+} {
+  const allowed = nativeToolRules(context.tools)?.map((tool) => tool.replace(/\(.*$/, ''));
+  const denied = nativeToolRules(context.disallowedTools)?.filter((tool) => BARE_TOOL.test(tool));
+  return { allowed: allowed && new Set(allowed), denied: new Set(denied) };
+}
+
+/** The mode a native run uses for a Claude mode: only Plan and Bypass differ from Auto. */
+export function nativeMode(mode: string | undefined): {
+  mode: 'auto' | 'plan' | 'bypassPermissions';
+  notice?: string;
+} {
+  if (mode === 'plan' || mode === 'bypassPermissions' || mode === 'auto') {
+    return { mode };
+  }
+  if (mode === 'acceptEdits') {
+    return { mode: 'auto' };
+  }
+  return {
+    mode: 'auto',
+    notice: `Claude's ${mode ?? 'current'} mode has no native equivalent; this run uses Auto.`,
+  };
+}
+
+/** The managed policy is read once: it cannot change under a session, and reading it runs commands. */
+const managedOnce = new Map<string, Promise<Layer[]>>();
+
+/**
+ * The tool restrictions a native run in `cwd` takes from Claude's settings. The settings
+ * files are read on each call, so an edit applies to the next native run.
+ */
+export async function readHarnessSettings(
   cwd: string,
   args: readonly string[],
   inlineSettings: Record<string, unknown>,
-  options: HarnessSettingsOptions,
+  options: HarnessSettingsOptions = {},
 ): Promise<WorkerPermissions> {
-  const { sources, restrictions } = settingSources(args);
-  await pluginPermissions(cwd, [...args, '--settings', JSON.stringify(inlineSettings)]);
-  let context = mergePermissions({ permissionMode: 'auto' }, restrictions);
-  const { validate, checkRules } = options;
-  const settingsOptions: SettingsDiscovery = {
+  const discovery: SettingsDiscovery = {
     platform: options.platform ?? process.platform,
     env: options.env ?? process.env,
     osRelease: options.osRelease ?? os.release(),
-    readFile: options.readFile ?? fs.readFile,
-    readDir: options.readDir ?? fs.readdir,
-    runCommand: options.runCommand ?? defaultRunCommand,
-    validate,
-    checkRules,
   };
-  context = mergePolicies(context, await managedSettings(settingsOptions));
-  context = mergePermissions(context, claudeSettingsRestrictions(inlineSettings, checkRules));
+  const skipped = new Set<string>();
+  const { sources, restrictions } = settingSources(args, skipped);
+  let managed = managedOnce.get(discovery.platform);
+  if (!managed) {
+    managed = managedSettings(discovery);
+    managedOnce.set(discovery.platform, managed);
+  }
+  const layers: Layer[] = [
+    ...(await managed),
+    settingsLayer(inlineSettings),
+    ...(await fileLayers(cwd, sources, discovery.env)),
+  ];
+  let context = mergePermissions({ permissionMode: 'auto' }, restrictions);
+  for (const layer of layers) {
+    context = mergePermissions(context, { disallowedTools: layer.denied });
+    for (const item of layer.skipped) {
+      skipped.add(item);
+    }
+  }
+  const notice = skippedNotice(skipped);
+  return {
+    tools: context.tools,
+    disallowedTools: context.disallowedTools,
+    ...(notice === undefined ? {} : { notice }),
+  };
+}
+
+/** The user, project and local settings files Claude Code reads for `cwd`, as selected. */
+async function fileLayers(
+  cwd: string,
+  sources: ReadonlySet<string>,
+  env: NodeJS.ProcessEnv,
+): Promise<Layer[]> {
+  const files: string[] = [];
   if (sources.has('user')) {
-    context = mergePermissions(
-      context,
-      await checkFile(
-        path.join(
-          settingsOptions.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
-          'settings.json',
-        ),
-        settingsOptions.readFile,
-        checkRules,
-      ),
-    );
+    const directory = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    files.push(path.join(directory, 'settings.json'));
   }
   for (let directory = path.resolve(cwd); ; directory = path.dirname(directory)) {
     if (sources.has('project')) {
-      context = mergePermissions(
-        context,
-        await checkFile(
-          path.join(directory, '.claude', 'settings.json'),
-          settingsOptions.readFile,
-          checkRules,
-        ),
-      );
+      files.push(path.join(directory, '.claude', 'settings.json'));
     }
     if (sources.has('local')) {
-      context = mergePermissions(
-        context,
-        await checkFile(
-          path.join(directory, '.claude', 'settings.local.json'),
-          settingsOptions.readFile,
-          checkRules,
-        ),
-      );
+      files.push(path.join(directory, '.claude', 'settings.local.json'));
     }
     if (directory === path.dirname(directory)) {
       break;
     }
   }
-  validate(context);
-  return { tools: context.tools, disallowedTools: context.disallowedTools };
+  return Promise.all(files.map(fileLayer));
 }
 
-function mergePolicies(
-  initial: PermissionContext,
-  policies: readonly WorkerPermissions[],
-): PermissionContext {
-  let context = initial;
-  for (const policy of policies) {
-    context = mergePermissions(context, policy);
-  }
-  return context;
+/** What one settings source contributes: the tools it denies outright, and what it held besides. */
+interface Layer {
+  denied: string[];
+  skipped: string[];
 }
 
-function settingSources(args: readonly string[]): {
-  sources: Set<string>;
-  restrictions: WorkerPermissions;
-} {
+const UNREADABLE: Layer = { denied: [], skipped: ['a settings source that could not be read'] };
+
+function settingSources(
+  args: readonly string[],
+  skipped: Set<string>,
+): { sources: Set<string>; restrictions: WorkerPermissions } {
   let context: PermissionContext = { permissionMode: 'auto' };
   let sources = 'user,project,local';
   for (let index = 0; index < args.length; index++) {
@@ -174,113 +220,80 @@ function settingSources(args: readonly string[]): {
       continue;
     }
     const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : args[++index];
-    if (!value?.match(/^(?!--)/)) {
-      throw new Error(`${name} requires a value`);
+    if (value === undefined || value.startsWith('--')) {
+      // Claude Code reports its own argument errors; nothing to translate here.
+      continue;
     }
     if (name === '--setting-sources') {
       sources = value;
     } else {
       const [list, lastIndex] = toolArguments(value, args, index);
       index = lastIndex;
-      context = mergePermissions(context, toolRestriction(name, list));
+      context = mergePermissions(context, toolRestriction(name, list, skipped));
     }
   }
-  return { sources: selectedSources(sources), restrictions: context };
+  return { sources: new Set(sources.split(',').filter(Boolean)), restrictions: context };
 }
 
-function selectedSources(sources: string): Set<string> {
-  const selected = new Set(sources.split(',').filter(Boolean));
-  if ([...selected].some((source) => !['user', 'project', 'local'].includes(source))) {
-    throw new Error('Native harness received unsupported --setting-sources');
-  }
-  return selected;
-}
-
-async function checkFile(
-  file: string,
-  readFile: typeof fs.readFile,
-  checkRules: HarnessSettingsOptions['checkRules'],
-): Promise<WorkerPermissions> {
+async function fileLayer(file: string): Promise<Layer> {
   let text: string;
   try {
-    text = await readFile(file, 'utf8');
+    text = await fs.readFile(file, 'utf8');
   } catch (error) {
-    if (missing(error)) {
-      return {};
-    }
-    throw error;
+    return missing(error) ? { denied: [], skipped: [] } : UNREADABLE;
   }
   try {
-    return claudeSettingsRestrictions(JSON.parse(text), checkRules);
-  } catch (error) {
-    throw new Error(`Native harness settings admission failed for ${file}: ${String(error)}`);
+    return settingsLayer(JSON.parse(text));
+  } catch {
+    // Claude Code reports an invalid settings file itself.
+    return UNREADABLE;
   }
 }
 
-async function managedSettings(options: SettingsDiscovery): Promise<WorkerPermissions[]> {
+async function managedSettings(options: SettingsDiscovery): Promise<Layer[]> {
   // Claude Code documents these file locations: macOS uses
   // /Library/Application Support/ClaudeCode, Linux and WSL use /etc/claude-code,
   // and Windows uses C:\Program Files\ClaudeCode (ProgramData is legacy and ignored).
-  // WSL is therefore admitted through the Linux file source; Claude only consults
-  // the Windows chain when its documented wslInheritsWindowsSettings controls are active.
-  if (!['linux', 'darwin', 'win32'].includes(options.platform)) {
-    throw new Error(`Native harness managed-policy admission does not support ${options.platform}`);
-  }
   const platformPath = options.platform === 'win32' ? path.win32 : path.posix;
-  const effectivePlatform =
-    options.platform === 'linux' && /microsoft/i.test(options.osRelease)
-      ? 'linux'
-      : options.platform;
-  let directory: string;
-  if (effectivePlatform === 'darwin') {
+  let directory = '/etc/claude-code';
+  if (options.platform === 'darwin') {
     directory = '/Library/Application Support/ClaudeCode';
-  } else if (effectivePlatform === 'win32') {
+  } else if (options.platform === 'win32') {
     directory = String.raw`C:\Program Files\ClaudeCode`;
-  } else {
-    directory = '/etc/claude-code';
   }
-  const files = await managedPolicyFiles(options, platformPath, directory);
-  const policies: WorkerPermissions[] = [];
-  for (const file of files) {
-    let source: string;
-    try {
-      source = await options.readFile(file, 'utf8');
-    } catch (error) {
-      if (missing(error)) {
-        continue;
-      }
-      throw error;
+  const layers: Layer[] = [];
+  for (const file of await managedPolicyFiles(platformPath, directory)) {
+    layers.push(await fileLayer(file));
+  }
+  try {
+    if (options.platform === 'darwin') {
+      layers.push(
+        ...(await managedCommandPolicy(options, 'defaults', ['read', 'com.anthropic.claudecode'])),
+      );
+    } else if (options.platform === 'win32') {
+      layers.push(...(await managedRegistryPolicies(options)));
     }
-    policies.push(managedPolicy(source, file, options.checkRules));
+  } catch {
+    layers.push(UNREADABLE);
   }
-  if (effectivePlatform === 'darwin') {
-    policies.push(
-      ...(await managedCommandPolicy(options, 'defaults', ['read', 'com.anthropic.claudecode'])),
-    );
-  } else if (effectivePlatform === 'win32') {
-    policies.push(...(await managedRegistryPolicies(options)));
-  }
-  return policies;
+  return layers;
 }
 
 async function managedPolicyFiles(
-  options: SettingsDiscovery,
   platformPath: typeof path.posix,
   directory: string,
 ): Promise<string[]> {
   const files = [platformPath.join(directory, 'managed-settings.json')];
   try {
-    const names = await options.readDir(platformPath.join(directory, 'managed-settings.d'));
+    const names = await fs.readdir(platformPath.join(directory, 'managed-settings.d'));
     files.push(
       ...names
         .filter((name) => !name.startsWith('.') && name.endsWith('.json'))
         .sort()
         .map((name) => platformPath.join(directory, 'managed-settings.d', name)),
     );
-  } catch (error) {
-    if (!missing(error)) {
-      throw error;
-    }
+  } catch {
+    // No drop-in directory, or one that cannot be listed: the main file is all there is.
   }
   return files;
 }
@@ -290,10 +303,10 @@ async function managedCommandPolicy(
   command: string,
   args: readonly string[],
   retry?: () => Promise<string | undefined>,
-): Promise<WorkerPermissions[]> {
+): Promise<Layer[]> {
   let source: string | undefined;
   try {
-    source = await options.runCommand(command, args);
+    source = await runCommand(options, command, args);
   } catch (error) {
     if (managedPolicyCommandAbsent(command, error)) {
       return [];
@@ -308,9 +321,7 @@ async function managedCommandPolicy(
   if (source === undefined || !source.trim()) {
     return [];
   }
-  return [
-    managedPolicy(parsePolicyValue(source), `${command} ${args.join(' ')}`, options.checkRules),
-  ];
+  return [settingsLayer(JSON.parse(parsePolicyValue(source)))];
 }
 
 function managedPolicyCommandAbsent(command: string, error: unknown): boolean {
@@ -329,8 +340,8 @@ function failedWithExitCode(error: unknown, code: number): error is Error & { co
   return error instanceof Error && 'code' in error && error.code === code;
 }
 
-async function managedRegistryPolicies(options: SettingsDiscovery): Promise<WorkerPermissions[]> {
-  const policies: WorkerPermissions[] = [];
+async function managedRegistryPolicies(options: SettingsDiscovery): Promise<Layer[]> {
+  const policies: Layer[] = [];
   for (const root of ['HKLM', 'HKCU']) {
     const key = `${root}\\SOFTWARE\\Policies\\ClaudeCode`;
     const source = await managedCommandPolicy(
@@ -362,7 +373,7 @@ async function managedRegistryValue(
     '[Console]::Out.Write([string]$value)',
   ].join('\n');
   try {
-    return await options.runCommand('powershell.exe', [
+    return await runCommand(options, 'powershell.exe', [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
@@ -394,88 +405,54 @@ function parsePolicyValue(source: string): string {
   }
 }
 
-function managedPolicy(
-  source: string,
-  file: string,
-  checkRules: HarnessSettingsOptions['checkRules'],
-): WorkerPermissions {
-  const settings = JSON.parse(source.trim() || '{}');
-  if (
-    !settings ||
-    typeof settings !== 'object' ||
-    Array.isArray(settings) ||
-    Object.keys(settings).some((key) => !['permissions', 'hooks', 'sandbox'].includes(key))
-  ) {
-    throw new Error(`Native harness cannot enforce managed policy ${file}; unsupported settings.`);
-  }
-  if (
-    settings.permissions &&
-    Object.keys(settings.permissions).some(
-      (key) => !['allow', 'deny', 'ask', 'defaultMode'].includes(key),
-    )
-  ) {
-    throw new Error(`Native harness cannot enforce managed permission controls in ${file}`);
-  }
-  return claudeSettingsRestrictions(settings, checkRules);
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
-/** Claude cannot enforce these restrictions over tools a native harness executes. */
-function claudeSettingsRestrictions(
-  settings: unknown,
-  checkRules: HarnessSettingsOptions['checkRules'],
-): WorkerPermissions {
-  const value = settingsRecord(settings);
-  if (value.disableAllHooks === true) {
-    throw new Error('Native harnesses require Claude mode hooks; disableAllHooks is unsupported.');
+/** Bare denials carry over; MCP rules concern tools no harness runs; the rest is named. */
+function bareRules(rules: unknown, skipped: string[] | Set<string>): string[] {
+  const kept: string[] = [];
+  for (const rule of Array.isArray(rules) ? rules : []) {
+    if (typeof rule !== 'string' || rule.startsWith('mcp__')) {
+      continue;
+    }
+    if (BARE_TOOL.test(rule)) {
+      kept.push(rule);
+    } else if (Array.isArray(skipped)) {
+      skipped.push('argument-specific deny rules');
+    } else {
+      skipped.add('argument-specific deny rules');
+    }
   }
-  const permissions = settingsRecord(value.permissions ?? {});
-  assertNativeAskRules(permissions.ask);
-  const denied = permissions.deny;
-  if (
-    denied !== undefined &&
-    (!Array.isArray(denied) || denied.some((rule) => typeof rule !== 'string'))
-  ) {
-    throw new Error('Native harnesses cannot enforce Claude permissions.deny');
-  }
-  checkRules?.(denied);
-  // Claude's PreToolUse/PermissionRequest hooks never run for native harness tools.
-  // They are not translatable policy, so they neither block admission nor apply.
-  const sandbox = settingsRecord(value.sandbox ?? {});
-  if (Object.keys(sandbox).some((key) => key !== 'enabled' || sandbox.enabled !== false)) {
-    throw new Error(
-      'Native harnesses cannot enforce Claude sandbox settings; native execution is unavailable.',
-    );
-  }
-  return { disallowedTools: denied };
+  return kept;
 }
 
-function settingsRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid Claude settings for native harness execution');
+function settingsLayer(settings: unknown): Layer {
+  const value = record(settings);
+  const permissions = record(value.permissions);
+  const skipped: string[] = [];
+  if (Array.isArray(permissions.ask) && permissions.ask.length) {
+    skipped.push('ask rules');
   }
-  return value as Record<string, unknown>;
-}
-
-function assertNativeAskRules(value: unknown): void {
-  if (
-    value !== undefined &&
-    (!Array.isArray(value) || value.length > 0 || value.some((rule) => typeof rule !== 'string'))
-  ) {
-    throw new Error(
-      'Native harnesses cannot enforce Claude permissions.ask; native execution is unavailable.',
-    );
+  const sandbox = record(value.sandbox);
+  if (sandbox.enabled === true) {
+    skipped.push('sandbox settings');
   }
+  return { denied: bareRules(permissions.deny, skipped), skipped };
 }
 
 function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
-function toolRestriction(name: string, list: string[]): WorkerPermissions {
+function toolRestriction(name: string, list: string[], skipped: Set<string>): WorkerPermissions {
   if (name !== '--tools') {
-    return { disallowedTools: list };
+    return { disallowedTools: bareRules(list, skipped) };
   }
-  return list.includes('default') ? {} : { tools: list };
+  // A scoped grant (`Bash(git:*)`) still grants its tool; the scope has no native form.
+  return list.includes('default') ? {} : { tools: list.map((tool) => tool.replace(/\(.*$/, '')) };
 }
 
 function toolArguments(value: string, args: readonly string[], start: number): [string[], number] {

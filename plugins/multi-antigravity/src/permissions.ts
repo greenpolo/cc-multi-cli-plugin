@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { nativeToolRules } from '../../multi-core/src/gateway/display-rows.ts';
+import { nativeMode, nativeRules } from '../../multi-core/src/gateway/harness-settings.ts';
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 
 /** Native names reachable from each mapped Claude tool. */
@@ -111,21 +111,13 @@ export interface AntigravityPolicy {
 
 /** This restricts native tools; it never grants permission in place of native policy. */
 export function antigravityPermissionPolicy(context: PermissionContext): AntigravityPolicy {
-  if (context.nativePermissionError) {
-    throw new Error(context.nativePermissionError);
-  }
-  if (!['auto', 'acceptEdits', 'plan', 'bypassPermissions'].includes(context.permissionMode)) {
-    throw new Error(
-      'Antigravity currently supports Auto, acceptEdits, Bypass and Plan; this mode is unsupported.',
-    );
-  }
-  const allowed = toolRules(context.tools);
-  const disallowed = toolRules(context.disallowedTools);
-  const plan = context.permissionMode === 'plan';
+  const native = nativeMode(context.permissionMode);
+  const { allowed, denied: disallowed } = nativeRules(context);
+  const plan = native.mode === 'plan';
   const denied = new Set<string>(ALWAYS_DENIED);
   for (const [claudeTool, natives] of Object.entries(TOOL_MAP)) {
     const excluded =
-      disallowed?.has(claudeTool) ||
+      disallowed.has(claudeTool) ||
       (allowed !== undefined && !allowed.has(claudeTool)) ||
       (plan && PLAN_DENIED_CLAUDE_TOOLS.has(claudeTool));
     if (excluded) {
@@ -140,7 +132,7 @@ export function antigravityPermissionPolicy(context: PermissionContext): Antigra
     denied: [...denied],
     allowed: [...mapped.filter((tool) => !denied.has(tool)), ...CONTROL_TOOLS],
     plan,
-    notice: policyNotice(context.permissionMode),
+    notice: [policyNotice(plan), native.notice, context.notice].filter(Boolean).join(' '),
   };
 }
 
@@ -149,36 +141,11 @@ export function antigravityCompactionDenyList(): string[] {
   return [...new Set([...Object.values(TOOL_MAP).flat(), ...ALWAYS_DENIED])];
 }
 
-function policyNotice(mode: PermissionContext['permissionMode']): string {
-  if (mode === 'plan') {
+function policyNotice(plan: boolean): string {
+  if (plan) {
     return 'Plan: only native read, search and web lookup tools run.';
   }
   return 'Claude Code rules take precedence; native permission prompts are skipped. No reviewer.';
-}
-
-function toolRules(value: string[] | undefined): Set<string> | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  // A display-row grant (`mcp__multi-core`) draws Claude Code rows; it maps to no native tool.
-  const rules = Array.isArray(value) ? nativeToolRules(value) : value;
-  const supported = new Set([
-    'Read',
-    'Grep',
-    'Glob',
-    'Bash',
-    'Edit',
-    'Write',
-    'WebFetch',
-    'WebSearch',
-    'NotebookEdit',
-    'Agent',
-    'Task',
-  ]);
-  if (!Array.isArray(rules) || rules.some((rule) => !supported.has(rule))) {
-    throw new Error('Antigravity cannot enforce this Claude tool restriction.');
-  }
-  return new Set(rules);
 }
 
 function toolList(serialized: string): string[] {

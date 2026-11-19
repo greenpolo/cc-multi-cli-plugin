@@ -4,7 +4,7 @@ import type { MultiCoreDisplayTools, MultiCorePolicy } from '../types/multi-core
 import { register as registerCompaction } from './compact.ts';
 import { isActive, postJson, type Wire } from './gateway.ts';
 import { register as registerLifecycle } from './lifecycle.ts';
-import { type PromptSnapshot, policyClient, recordPrompt, snapshotKey } from './policy.ts';
+import { type PromptSnapshot, recordPrompt, snapshotKey } from './policy.ts';
 import { isHarnessModel } from './provider.ts';
 import {
   callDisplayRow,
@@ -95,27 +95,19 @@ export const register: Register = (on, options) => {
  * prompt greets it again before recording its snapshot.
  */
 async function greet($: EngineInterface, sessionId: string, cwd: string) {
-  const response = await postJson(wire($), '/multi/mod/session', {
+  await postJson(wire($), '/multi/mod/session', {
     sessionId,
     cwd,
     model: await $.session.model(),
     event: 'start',
   });
-  await update($, policy, (held) =>
-    defined({
-      ...held,
-      generation: typeof response?.generation === 'number' ? response.generation : undefined,
-      handshake: sessionId,
-    }),
-  );
+  await update($, policy, (held) => defined({ ...held, handshake: sessionId }));
 }
 
 /**
  * Records the prompt-boundary snapshot: the permission mode and workspace every
- * provider reads. A harness prompt waits for its translated settings policy; any other
- * model's snapshot is posted only when it differs from the one the gateway holds, so
- * ordinary Claude turns cost no round trip. The snapshot is always kept here, because a
- * harness worker spawned later admits against it.
+ * provider reads. It is posted only when it differs from the one the gateway holds, so
+ * an unchanged prompt costs no round trip.
  */
 async function recordSnapshot($: EngineInterface, event: PromptEvent) {
   if (!(await isActive(wire($)))) {
@@ -127,27 +119,13 @@ async function recordSnapshot($: EngineInterface, event: PromptEvent) {
   }
   const prompt = snapshotOf(event);
   const model = await $.session.model();
-  const current = await read($, policy);
-  const harness = isHarnessModel(model);
   const key = snapshotKey(prompt, model);
-  let generation = current.generation;
-  let posted: string | undefined;
-  if (harness || current.posted !== key || generation === undefined) {
-    generation = await recordPrompt(policyClient(wire($), model), prompt, generation);
-    posted = harness || generation === undefined ? undefined : key;
-  } else {
-    posted = key;
+  let posted = (await read($, policy)).posted;
+  if (posted !== key) {
+    posted = (await recordPrompt(wire($), prompt, model)) ? key : undefined;
   }
-  await update($, policy, (latest) =>
-    defined<MultiCorePolicy>({
-      ...latest,
-      prompt,
-      generation,
-      posted,
-      harnessReady: harness && generation !== undefined,
-    }),
-  );
-  if (harness) {
+  await update($, policy, (latest) => defined<MultiCorePolicy>({ ...latest, prompt, posted }));
+  if (isHarnessModel(model)) {
     // The display rows of this prompt's native run anchor only once their tools exist.
     await syncDisplayTools(rowsClient($));
   }
