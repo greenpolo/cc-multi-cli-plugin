@@ -164,6 +164,21 @@ test('native conversion preserves tool IDs, error results, permissions text and 
     () => toResponses({ ...body, tools: [{ type: 'web_search_20250305' }] }, 'gpt'),
     /Unsupported/,
   );
+  // Claude Code's advisorModel adds an Anthropic-only server tool; other providers omit it.
+  const advised = toResponses(
+    {
+      ...body,
+      tools: [
+        { type: 'advisor_20260301', name: 'advisor' },
+        { name: 'Read', input_schema: { type: 'object' } },
+      ],
+    },
+    'gpt',
+  );
+  assert.deepEqual(
+    advised.tools.map((tool) => tool.name),
+    ['Read'],
+  );
 });
 
 test('Responses stream preserves native tool arguments, usage and stop reason', async () => {
@@ -1113,6 +1128,26 @@ test('HTTP failures retain status and retry-after without returning private upst
     assert.equal(response.headers.get('retry-after'), '17');
     assert(!(await response.text()).includes('secret provider diagnostic'));
   }
+});
+
+test('an expired Zen key is named instead of a bare HTTP status, without the upstream body', async (t) => {
+  const call = await gateway(
+    t,
+    async () =>
+      new Response(
+        JSON.stringify({
+          error: { type: 'api_key_expired', message: 'secret provider diagnostic' },
+        }),
+        { status: 401 },
+      ),
+    { zen: { apiKey: 'zen-expired-fixture' } },
+  );
+  const response = await call({ ...body, model: 'multi/zen/kimi-k3' });
+  assert.equal(response.status, 401);
+  const text = await response.text();
+  assert.match(text, /Zen API key has expired/);
+  assert.match(text, /connect zen --replace/);
+  assert(!text.includes('secret provider diagnostic'));
 });
 
 test('invalid request shapes fail locally and legacy thinking budgets respect explicit effort', async (t) => {

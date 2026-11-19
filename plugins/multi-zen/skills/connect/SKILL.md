@@ -28,6 +28,9 @@ Windows cmd:
 Use the command for the target shell; Windows installs `.cmd` and `.ps1` shims,
 not an extensionless executable.
 
+If Claude reports that the Zen key has expired, add `--replace` to the command so
+the helper saves a new key over the old one.
+
 The helper prompts privately and saves the key in OpenCode's auth store. Tell the
 user to relaunch Claude afterward. Never accept, request, read, or print the key
 in chat or pass it as a command argument.

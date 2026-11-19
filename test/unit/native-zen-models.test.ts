@@ -8,7 +8,7 @@ import {
   saveZenKey,
   validateZenKey,
   ZenAuthError,
-  zenAuthFile,
+  zenAuthFiles,
 } from '../../plugins/multi-zen/src/auth.ts';
 import {
   ZEN_MODELS,
@@ -20,10 +20,9 @@ import { removeTemporary } from '../temporary.ts';
 
 function hostAuthOptions(dataHome: string) {
   const env: NodeJS.ProcessEnv = { OPENCODE_API_KEY: undefined };
+  env.XDG_DATA_HOME = dataHome;
   if (process.platform === 'win32') {
     env.LOCALAPPDATA = dataHome;
-  } else {
-    env.XDG_DATA_HOME = dataHome;
   }
   return { platform: process.platform, env };
 }
@@ -54,34 +53,67 @@ async function withEnvironment(
 }
 
 test('Zen auth resolves Unix and Windows OpenCode data roots with explicit overrides', () => {
-  assert.equal(
-    zenAuthFile({ platform: 'linux', homedir: '/home/test', env: {} }),
+  assert.deepEqual(zenAuthFiles({ platform: 'linux', homedir: '/home/test', env: {} }), [
     '/home/test/.local/share/opencode/auth.json',
-  );
-  assert.equal(
-    zenAuthFile({
+  ]);
+  assert.deepEqual(
+    zenAuthFiles({
       platform: 'darwin',
       homedir: '/Users/test',
       env: { XDG_DATA_HOME: '/custom/data' },
     }),
-    '/custom/data/opencode/auth.json',
+    ['/custom/data/opencode/auth.json'],
   );
-  assert.equal(
-    zenAuthFile({
+  // OpenCode 1.1+ writes the XDG path on Windows too; the older LOCALAPPDATA store
+  // is still read when only it exists.
+  assert.deepEqual(
+    zenAuthFiles({
       platform: 'win32',
       homedir: 'C:\\Users\\test',
       env: { LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local' },
     }),
-    'C:\\Users\\test\\AppData\\Local\\opencode\\auth.json',
+    [
+      'C:\\Users\\test\\.local\\share\\opencode\\auth.json',
+      'C:\\Users\\test\\AppData\\Local\\opencode\\auth.json',
+    ],
   );
-  assert.equal(
-    zenAuthFile({
+  assert.deepEqual(
+    zenAuthFiles({
       platform: 'win32',
       homedir: 'C:\\Users\\test',
       env: { OPENCODE_AUTH_FILE: 'D:\\auth.json' },
     }),
-    'D:\\auth.json',
+    ['D:\\auth.json'],
   );
+});
+
+// Windows paths need a Windows filesystem; the CI matrix runs this on windows-latest.
+test('Zen auth reads the legacy Windows store when the preferred one is missing, and saves there', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'multi-zen-auth-'));
+  try {
+    const legacy = path.join(root, 'legacy');
+    const windows = {
+      platform: 'win32' as const,
+      env: {
+        OPENCODE_API_KEY: undefined,
+        XDG_DATA_HOME: path.join(root, 'xdg'),
+        LOCALAPPDATA: legacy,
+      },
+    };
+    await mkdir(path.join(legacy, 'opencode'), { recursive: true });
+    await writeFile(
+      path.join(legacy, 'opencode', 'auth.json'),
+      JSON.stringify({ opencode: { type: 'api', key: 'legacy-fixture' } }),
+    );
+    assert.equal(await readZenKey(windows), 'legacy-fixture');
+    await saveZenKey('replaced-fixture', windows);
+    const saved = JSON.parse(await readFile(path.join(legacy, 'opencode', 'auth.json'), 'utf8'));
+    assert.equal(saved.opencode.key, 'replaced-fixture');
+  } finally {
+    await removeTemporary(root);
+  }
 });
 
 test('Zen auth prefers an explicit API key without exposing its value', async () => {
@@ -183,7 +215,6 @@ test('Zen catalog exposes bounded protocols and only supported effort workers', 
       ['minimax-m3', 'chat'],
       ['minimax-m2.7', 'chat'],
       ['deepseek-v4.1-flash', 'chat'],
-      ['deepseek-v4-flash', 'chat'],
       ['kimi-k3', 'chat'],
       ['glm-5.3', 'chat'],
       ['glm-5.3-flash', 'chat'],

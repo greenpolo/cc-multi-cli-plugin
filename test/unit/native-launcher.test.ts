@@ -326,19 +326,19 @@ result(JSON.stringify({settings,agents:Object.keys(agents),models:args.filter(x=
   );
   assert.deepEqual(filtered.models, ['multi/zen/minimax-m2.7']);
   assert.deepEqual(filtered.agents, ['multi-zen']);
-  const outsideDefaults = JSON.parse((await launchFiltered('multi/zen/deepseek-v4-flash')).stdout);
+  const outsideDefaults = JSON.parse((await launchFiltered('multi/zen/glm-5.2')).stdout);
   assert.deepEqual(
     outsideDefaults.settings.modelPicker.options.map((option: { model: string }) => option.model),
-    ['multi/zen/deepseek-v4-flash'],
+    ['multi/zen/glm-5.2'],
   );
   assert.deepEqual(outsideDefaults.agents, ['multi-zen']);
   const all = JSON.parse((await launchFiltered('all')).stdout);
   assert(all.settings.modelPicker.options.length >= ZEN_MODELS.length);
   assert.deepEqual(all.agents, ['multi-zen']);
-  const plus = JSON.parse((await launchFiltered('+multi/zen/deepseek-v4-flash')).stdout);
+  const plus = JSON.parse((await launchFiltered('+multi/zen/glm-5.2')).stdout);
   assert(
     plus.settings.modelPicker.options.some(
-      (option: { model: string }) => option.model === 'multi/zen/deepseek-v4-flash',
+      (option: { model: string }) => option.model === 'multi/zen/glm-5.2',
     ),
   );
   assert(

@@ -124,15 +124,6 @@ export const ZEN_MODELS: readonly ZenModel[] = Object.freeze([
     maxOutputTokens: 384000,
   },
   {
-    id: 'deepseek-v4-flash',
-    protocol: 'chat',
-    label: 'DeepSeek V4 Flash',
-    description: 'OpenCode Zen · Chat Completions',
-    images: false,
-    documents: false,
-    maxOutputTokens: 384000,
-  },
-  {
     id: 'kimi-k3',
     protocol: 'chat',
     label: 'Kimi K3',

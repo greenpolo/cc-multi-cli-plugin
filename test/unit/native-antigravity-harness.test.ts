@@ -22,6 +22,7 @@ import {
   antigravityHistoryHash,
   prepareAntigravityRequest,
 } from '../../plugins/multi-antigravity/src/request.ts';
+import { HarnessSetupError } from '../../plugins/multi-core/src/gateway/harness-failure.ts';
 import type { PermissionContext } from '../../plugins/multi-core/src/gateway/mode-hook.ts';
 import { removeTemporary } from '../temporary.ts';
 
@@ -771,7 +772,9 @@ test('native admission requires our installed hook and rejects custom model sett
 
   await assert.rejects(
     checkAntigravityHooks({ globalFile, settingsFile }),
-    /requires its native permission hook/,
+    (error: unknown) =>
+      error instanceof HarnessSetupError &&
+      /requires its native permission hook/.test(error.message),
   );
 
   await installAntigravityHook(globalFile);

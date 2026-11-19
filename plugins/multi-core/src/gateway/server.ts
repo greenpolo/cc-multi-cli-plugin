@@ -603,12 +603,12 @@ export function createNativeGateway({
     if (!upstream.ok) {
       // Do not print upstream bodies or credentials in gateway diagnostics.
       onEvent(prepared.failureEvent(upstream.status, agentId));
-      await upstream.body?.cancel();
       throw new UpstreamFailure(
         upstream.status,
         upstream.headers.get('retry-after'),
         prepared.label,
         prepared.authHelp,
+        await explainUpstreamFailure(prepared, upstream),
       );
     }
     if (!upstream.body) {
@@ -1161,6 +1161,39 @@ async function readRequest(req: http.IncomingMessage) {
   return { raw, parsed, body: parsed as MessagesRequest };
 }
 
+/** Upstream error bodies are short JSON; a provider explanation never needs more. */
+const MAX_FAILURE_BODY_BYTES = 16 * 1024;
+
+/** The provider's fixed explanation for a failure body, read bounded and never logged. */
+async function explainUpstreamFailure(
+  prepared: PreparedRequest,
+  upstream: Response,
+): Promise<string | undefined> {
+  if (!(prepared.explainFailure && upstream.body)) {
+    await upstream.body?.cancel();
+    return undefined;
+  }
+  const reader = upstream.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < MAX_FAILURE_BODY_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const text = Buffer.concat(chunks).subarray(0, MAX_FAILURE_BODY_BYTES).toString('utf8');
+  return prepared.explainFailure(upstream.status, text);
+}
+
 function errorStatus(error: unknown): number {
   if (error instanceof ProviderAuthError) {
     return 401;
@@ -1172,7 +1205,9 @@ function errorStatus(error: unknown): number {
     return 403;
   }
   if (error instanceof FollowUpUnavailable) {
-    return 404;
+    // Not 404: Claude Code renders any 404 as "model not found", hiding this message.
+    // 410 is not retried by Claude Code and shows the message as written.
+    return 410;
   }
   if (error instanceof UpstreamFailure) {
     return error.status;

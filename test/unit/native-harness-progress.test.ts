@@ -853,7 +853,7 @@ test('a follow-up is recovered from the harness record after a restart, and fail
   const stolen = await failure(
     await after.send(agyModel.model, 'agy-worker', rowResults(answer), 'session-b'),
   );
-  assert.equal(stolen.status, 404);
+  assert.equal(stolen.status, 410);
   assert.match(stolen.message, /no longer available/);
 
   // Rows no record holds are an explicit error, not a silent "Native run finished.".
@@ -868,7 +868,7 @@ test('a follow-up is recovered from the harness record after a restart, and fail
   const missing = await failure(
     await after.send(agyModel.model, 'agy-worker', forged, 'session-a'),
   );
-  assert.equal(missing.status, 404);
+  assert.equal(missing.status, 410);
   assert.match(missing.message, /no longer available/);
   assert.equal(counter.runs, 1, 'recovery never reruns the native turn');
 });
