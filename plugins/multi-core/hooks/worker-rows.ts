@@ -45,8 +45,6 @@ function listName(agent: Pick<AgentInfo, 'type' | 'model'>): string {
   return (workerModel(agent.model)?.brand ?? brandOfType(agent.type))?.name ?? agent.type;
 }
 
-const dim = (text: string) => `\u001b[2m${text}\u001b[22m`;
-
 /** `950`, `6.8k`, `12.3k`, `1.2M`, as the agent list counts tokens. */
 function tokens(count: number): string {
   if (count >= 1_000_000) {
@@ -82,10 +80,9 @@ function listBody(
     duration(row.now - agent.startTime),
     ...(counted ? [`↓ ${tokens(agent.tokenCount)} tokens`] : []),
   ].join(' · ');
-  // The step and the right edge are dim; the gap is counted in visible cells.
-  const visible = name.length + agent.description.length + step.length;
-  const gap = Math.max(2, (agent.columns ?? 0) - visible - right.length);
-  return `${name}${agent.description}${step ? dim(step) : ''}${' '.repeat(gap)}${dim(right)}`;
+  const left = `${name}${agent.description}${step}`;
+  const gap = Math.max(2, (agent.columns ?? 0) - left.length - right.length);
+  return `${left}${' '.repeat(gap)}${right}`;
 }
 
 /** `● 2 background agents launched (↓ to manage)` and a tree of each CLI and task. */
@@ -151,7 +148,9 @@ export const register = (on: Parameters<Register>[0]) => {
   on('ui.render', { component: 'ToolGroup' }, async ($, event, next) => {
     const calls = event.props.calls;
     const inputs = calls.map((call) => record(call.input));
-    const allWorkers =
+    // Only a launch of background agents with a provider worker among them; the engine
+    // names every other agent as it would (its type, or `Agent`).
+    const launched =
       calls.length > 1 &&
       !event.props.isExpanded &&
       calls.every(
@@ -159,10 +158,10 @@ export const register = (on: Parameters<Register>[0]) => {
           call.tool === 'Agent' &&
           !call.isErrored &&
           !call.isInterrupted &&
-          inputs[index]?.run_in_background === true &&
-          isProviderWorker(inputs[index]?.subagent_type),
-      );
-    if (!allWorkers) {
+          inputs[index]?.run_in_background === true,
+      ) &&
+      inputs.some((input) => isProviderWorker(input?.subagent_type));
+    if (!launched) {
       return next(event);
     }
     const spawns = await read($, spawnModels);
@@ -171,7 +170,9 @@ export const register = (on: Parameters<Register>[0]) => {
       const model =
         (call.tool_use_id ? spawns[call.tool_use_id] : undefined) ?? resultModel(call.output);
       return {
-        name: workerName(input, model) ?? String(input?.subagent_type),
+        name:
+          workerName(input, model) ??
+          (typeof input?.subagent_type === 'string' ? input.subagent_type : 'Agent'),
         task: typeof input?.description === 'string' ? input.description : '',
       };
     });

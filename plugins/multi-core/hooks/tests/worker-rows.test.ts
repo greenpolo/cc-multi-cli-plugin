@@ -225,8 +225,22 @@ test('a launch of several background workers names each for its CLI', async ($, 
   expect(await row.find({ type: 'Text', text: '   └ ' })).toBeDefined();
   await row.unmount();
   expect(drawn.length).toBe(0);
-  // A group holding a Claude agent, or unfolded, is the engine's.
-  await (await group([both[0], call('toolu_c', 'Explore', 'Look')])).unmount();
+  // A Claude agent launched beside them keeps the engine's name for it.
+  const mixed = await group([
+    ...both,
+    {
+      ...call('toolu_c', 'Explore', 'Look'),
+      input: { description: 'Look', prompt: 'task', run_in_background: true },
+    },
+  ]);
+  expect(await mixed.find({ type: 'Text', text: '3 background agents launched ' })).toBeDefined();
+  expect(await mixed.find({ type: 'Text', text: 'OpenAI (Fix slugify)' })).toBeDefined();
+  expect(await mixed.find({ type: 'Text', text: 'Agent (Look)' })).toBeDefined();
+  await mixed.unmount();
+  // Claude agents alone, or an unfolded group, are the engine's.
+  await (
+    await group([call('toolu_c', 'Explore', 'Look'), call('toolu_d', 'Plan', 'Plan')])
+  ).unmount();
   await (await group(both, true)).unmount();
   expect(drawn.length).toBe(2);
 });
