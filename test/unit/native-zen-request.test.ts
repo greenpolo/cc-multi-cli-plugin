@@ -122,6 +122,20 @@ test('Zen request enforces capabilities, output limits, and protocol-specific ef
   assert.equal('reasoning_effort' in chat.body, false);
   assert.equal('effort' in chat.body, false);
   assert.equal(toChat(request(chatModel), 'kimi-k3').messages[1]?.role, 'user');
+  const advised = toChat(
+    {
+      ...request(chatModel),
+      tools: [
+        { type: 'advisor_20260301', name: 'advisor' },
+        { name: 'Read', input_schema: { type: 'object' } },
+      ],
+    },
+    'kimi-k3',
+  );
+  assert.deepEqual(
+    advised.tools?.map((tool) => tool.function.name),
+    ['Read'],
+  );
 });
 
 test('Zen Responses prompt prefixes are stable when later turns append', () => {

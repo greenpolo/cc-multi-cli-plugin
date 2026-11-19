@@ -164,6 +164,21 @@ test('native conversion preserves tool IDs, error results, permissions text and 
     () => toResponses({ ...body, tools: [{ type: 'web_search_20250305' }] }, 'gpt'),
     /Unsupported/,
   );
+  // Claude Code's advisorModel adds an Anthropic-only server tool; other providers omit it.
+  const advised = toResponses(
+    {
+      ...body,
+      tools: [
+        { type: 'advisor_20260301', name: 'advisor' },
+        { name: 'Read', input_schema: { type: 'object' } },
+      ],
+    },
+    'gpt',
+  );
+  assert.deepEqual(
+    advised.tools.map((tool) => tool.name),
+    ['Read'],
+  );
 });
 
 test('Responses stream preserves native tool arguments, usage and stop reason', async () => {

@@ -4,6 +4,19 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## Unreleased
+
+- **Use OpenAI and Zen models with `advisorModel` set.** Claude Code's advisor is an
+  Anthropic-only server tool; the OpenAI and Zen routes now leave it out instead of
+  failing the whole request with HTTP 400 "Unsupported server tool".
+
+- **See why a native worker's answer is unavailable.** When the reply that display
+  rows belong to can no longer be found, the gateway now answers 410 instead of 404,
+  so Claude Code shows the real explanation rather than "model not found".
+
+- **Remove Zen `deepseek-v4-flash`.** OpenCode deprecated it on 2026-10-26;
+  `deepseek-v4.1-flash` remains.
+
 ## 0.4.0 — 2026-10-28
 
 Gateway Auto-mode arbiter, GPT-6.1 Terra and Sol, Gemini 4 Argon and resilient startup

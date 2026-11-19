@@ -1,4 +1,7 @@
-import { isDirectToolAvailable } from '../../multi-core/src/gateway/direct-tools.ts';
+import {
+  isAnthropicAdvisorTool,
+  isDirectToolAvailable,
+} from '../../multi-core/src/gateway/direct-tools.ts';
 import type {
   ContentBlock,
   Emit,
@@ -418,6 +421,7 @@ function lowerUserBlocks(content: ContentBlock[], messages: ChatMessage[]) {
 
 function chatTools(body: MessagesRequest): ChatTool[] {
   return (body.tools ?? [])
+    .filter((tool) => !isAnthropicAdvisorTool(tool))
     .filter(
       (tool) =>
         !isDeferredTool(tool) ||

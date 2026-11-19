@@ -1172,7 +1172,9 @@ function errorStatus(error: unknown): number {
     return 403;
   }
   if (error instanceof FollowUpUnavailable) {
-    return 404;
+    // Not 404: Claude Code renders any 404 as "model not found", hiding this message.
+    // 410 is not retried by Claude Code and shows the message as written.
+    return 410;
   }
   if (error instanceof UpstreamFailure) {
     return error.status;
