@@ -7,11 +7,20 @@ import {
 import { nativeSpelling } from '../../multi-core/src/gateway/provider.ts';
 import { antigravityEnvironment } from './cli.ts';
 
+/** The effort variants `agy models` advertises as an ID suffix; not every model has each. */
+const ANTIGRAVITY_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+export type AntigravityEffort = (typeof ANTIGRAVITY_EFFORTS)[number];
+const EFFORT_SUFFIX = /-(low|medium|high|xhigh)$/;
+
+export function isAntigravityEffort(value: unknown): value is AntigravityEffort {
+  return ANTIGRAVITY_EFFORTS.some((effort) => effort === value);
+}
+
 export interface AntigravityModel {
   id: string;
   model: string;
   label: string;
-  effort?: 'low' | 'medium' | 'high';
+  effort?: AntigravityEffort;
 }
 
 function parseAntigravityModels(output: string): AntigravityModel[] {
@@ -76,14 +85,14 @@ export function antigravityPickerOptions(models: readonly AntigravityModel[]): A
   const nativeIds = new Set(models.map(({ id }) => id));
   const rows = new Map<string, AntigravityModel>();
   for (const option of models) {
-    const base = option.id.replace(/-(low|medium|high)$/, '');
+    const base = option.id.replace(EFFORT_SUFFIX, '');
     if (base === option.id || nativeIds.has(base)) {
       rows.set(option.id, option);
     } else if (!rows.has(base)) {
       rows.set(base, {
         id: base,
         model: `multi/antigravity/${base}`,
-        label: option.label.replace(/(?:\s*[-·]\s*|\s+|\s*\()(low|medium|high)\)?$/i, ''),
+        label: option.label.replace(/(?:\s*[-·]\s*|\s+|\s*\()(low|medium|high|xhigh)\)?$/i, ''),
       });
     }
   }
@@ -157,10 +166,10 @@ export function selectAntigravityModel(
   if (effort === undefined) {
     return selected;
   }
-  if (effort !== 'low' && effort !== 'medium' && effort !== 'high') {
-    throw new Error('Antigravity effort must be an advertised low, medium or high variant.');
+  if (!isAntigravityEffort(effort)) {
+    throw new Error('Antigravity effort must be an advertised low, medium, high or xhigh variant.');
   }
-  const base = selected.id.replace(/-(low|medium|high)$/, '');
+  const base = selected.id.replace(EFFORT_SUFFIX, '');
   if (base === selected.id) {
     return { ...selected, effort };
   }
@@ -197,7 +206,7 @@ export function oneMillionContext(
   id: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const family = id.replace(/-(low|medium|high)$/, '');
+  const family = id.replace(EFFORT_SUFFIX, '');
   if (optedOut(env.MULTI_DISABLE_1M_CONTEXT) || !ONE_MILLION_FAMILIES.test(family)) {
     return model;
   }

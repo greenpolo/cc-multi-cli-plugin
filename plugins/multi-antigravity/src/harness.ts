@@ -46,7 +46,7 @@ import type {
 import { runAntigravity } from './cli.ts';
 import { antigravitySettingsFile } from './hooks.ts';
 import type { AntigravityModel } from './models.ts';
-import { selectAntigravityModel } from './models.ts';
+import { isAntigravityEffort, selectAntigravityModel } from './models.ts';
 import { type AntigravityPolicy, antigravityCompactionDenyList } from './permissions.ts';
 import {
   observeAntigravityCall,
@@ -78,7 +78,7 @@ function modelEffort(model: AntigravityModel): AntigravityRunOptions['effort'] {
     return model.effort;
   }
   const suffix = model.id.split('-').at(-1);
-  return suffix === 'low' || suffix === 'medium' || suffix === 'high' ? suffix : undefined;
+  return isAntigravityEffort(suffix) ? suffix : undefined;
 }
 
 function deniedForRun(policy: AntigravityPolicy, context: PermissionContext) {
