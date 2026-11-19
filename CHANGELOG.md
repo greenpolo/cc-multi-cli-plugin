@@ -4,6 +4,17 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## Unreleased
+
+- **See each CLI at a glance in Claude Code.** A Cursor, OpenAI, Antigravity, Grok
+  or Zen worker's row now leads with the CLI's name in its own colour and the model
+  beside it (`● Cursor composer-2.5  Fix tests`) instead of `Agent(Fix tests · Cursor ·
+  composer-2.5)`. In the agent list under the prompt, each worker gets a coloured
+  column, its current step, a token trend line and its elapsed time. While a CLI is
+  the main model, the spinner names it and its current step instead of a random
+  word, and the status line reads `Cursor composer-2.5 · running 12s · edit: a.ts`
+  without internal ids. ctrl+o still shows the full row.
+
 ## 0.4.0 — 2026-10-28
 
 Gateway Auto-mode arbiter, GPT-6.1 Terra and Sol, Gemini 4 Argon and resilient startup

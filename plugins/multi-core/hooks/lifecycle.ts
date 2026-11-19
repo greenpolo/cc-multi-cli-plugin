@@ -5,6 +5,7 @@ import type {
   MultiCorePolicy,
   MultiCoreUsagePane,
 } from '../types/multi-core.d.ts';
+import { stepText, workerName } from './brand.ts';
 import { forgetKey, getJson, isActive, postJson, type Wire } from './gateway.ts';
 import { isHarnessModel, isMultiModel } from './provider.ts';
 import { type RowsClient, syncDisplayTools } from './rows.ts';
@@ -19,6 +20,10 @@ const agentModels = atom(
 );
 const spawnModels = atom(
   { plugin: 'multi-core', key: 'spawnModels' } as const,
+  {} as Record<string, string>,
+);
+const workerSteps = atom(
+  { plugin: 'multi-core', key: 'workerSteps' } as const,
   {} as Record<string, string>,
 );
 const claudeTypes = atom({ plugin: 'multi-core', key: 'claudeTypes' } as const, [] as string[]);
@@ -118,6 +123,7 @@ async function tick($: EngineInterface, key: string, agentId: string | undefined
     poll.failures = status && !status.refused ? 0 : poll.failures + 1;
     if (status?.state && (status.startedAt ?? 0) >= poll.since) {
       $.ui.status(statusText(status, agentId));
+      await recordStep($, key, status.state === 'running' ? status.detail : undefined);
       if (status.state !== 'running') {
         stopPoll(key);
       }
@@ -128,6 +134,22 @@ async function tick($: EngineInterface, key: string, agentId: string | undefined
   } finally {
     poll.isBusy = false;
   }
+}
+
+/**
+ * The run's newest action, which the agent list and the spinner draw; written only when
+ * it changes, so an unchanged poll redraws nothing.
+ */
+async function recordStep($: EngineInterface, key: string, detail: unknown) {
+  const step = stepText(detail);
+  const held = (await read($, workerSteps))[key];
+  if (step === (held ?? '')) {
+    return;
+  }
+  await update($, workerSteps, (steps) => {
+    const { [key]: _old, ...others } = steps;
+    return step ? withBounded(others, key, step) : others;
+  });
 }
 
 async function prepareStep(
@@ -149,7 +171,7 @@ async function prepareStep(
     if (event.agentId === undefined) {
       $.ui.status(
         typeof state?.reviewStatement === 'string'
-          ? `${event.model} · ${state.reviewStatement}`
+          ? `${workerName(event.model) ?? event.model} · ${state.reviewStatement}`
           : undefined,
       );
     }
@@ -182,6 +204,7 @@ export const register = (on: Parameters<Register>[0], _options: Parameters<Regis
       });
     }
     const wasRunning = stopPoll(key);
+    await recordStep($, key, undefined);
     // Retain a child's identity between turns: compaction can precede its next step.
     if (event.isAborted && isHarnessModel(model)) {
       await postJson(wire($), '/multi/mod/compact/cancel', {
@@ -212,6 +235,7 @@ async function forgetSession($: EngineInterface, sessionId: string, signal: Abor
   await update($, policy, () => ({}));
   await update($, agentModels, () => ({}));
   await update($, spawnModels, () => ({}));
+  await update($, workerSteps, () => ({}));
   await update($, claudeTypes, () => []);
   await update($, offeredProviders, () => []);
   await update($, displayTools, () => ({ registered: [] }));
@@ -228,8 +252,13 @@ async function forgetSession($: EngineInterface, sessionId: string, signal: Abor
   await forgetKey(wire($), sessionId);
 }
 
+/** `Cursor composer-2.5 · running 3s · read: a.ts`; a worker's line says it is one. */
 function statusText(status: Status, agentId: string | undefined) {
   const elapsed = Math.floor((status.elapsedMs ?? 0) / 1000);
+  const name = workerName(status.model) ?? status.model;
   // A failed or refused run names its reason, so the line says why, not only that.
-  return `${status.model} · ${agentId ?? 'main'} · ${status.state} · ${elapsed}s ${status.error ?? status.detail ?? ''}`;
+  const tail = status.error ?? stepText(status.detail);
+  return [name, agentId ? 'worker' : '', `${status.state} ${elapsed}s`, tail]
+    .filter(Boolean)
+    .join(' · ');
 }

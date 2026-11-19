@@ -182,7 +182,7 @@ test('a harness step polls the run status on the clock until its turn completes'
   await clock.advance(500);
   expect(lifecycleReads.length).toBe(1);
   expect(lifecycleReads[0]).toContain('sessionId=s&agentId=main');
-  expect(lines.at(-1)).toBe('multi/cursor/auto · main · running · 3s reading');
+  expect(lines.at(-1)).toBe('Cursor auto · running 3s · reading');
   await clock.advance(1000);
   expect(lifecycleReads.length).toBe(3);
   await $.turn.complete({
@@ -410,10 +410,10 @@ test('review status belongs to the main loop and is cleared when switching to Cl
     }
   };
   await step('multi/openai/test');
-  expect(statuses).toEqual(['multi/openai/test · review-policy']);
+  expect(statuses).toEqual(['OpenAI test · review-policy']);
   await step('multi/zen/test', 'worker');
   await step('claude-sonnet-5', 'worker');
   expect(statuses.length).toBe(1);
   await step('claude-sonnet-5');
-  expect(statuses).toEqual(['multi/openai/test · review-policy', undefined]);
+  expect(statuses).toEqual(['OpenAI test · review-policy', undefined]);
 });
