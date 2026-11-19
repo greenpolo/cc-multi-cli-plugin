@@ -1,19 +1,15 @@
-// Each CLI's name and colour, shared by every surface that marks a Multi worker: the
-// Agent row, the agent list, the spinner and the status line. Colours are raw hex,
-// mid-tone so they read on light and dark terminals alike.
+// Each CLI's display name, shared by every surface that names a Multi worker: the
+// Agent row, the spinner and the status line.
 
-export type Brand = { key: string; name: string; color: string };
+type Brand = { key: string; name: string };
 
 const BRANDS: Readonly<Record<string, Brand>> = {
-  openai: { key: 'openai', name: 'OpenAI', color: '#3fb68b' },
-  zen: { key: 'zen', name: 'Zen', color: '#36b9c9' },
-  cursor: { key: 'cursor', name: 'Cursor', color: '#5b9bf8' },
-  antigravity: { key: 'antigravity', name: 'Antigravity', color: '#a77bf3' },
-  grok: { key: 'grok', name: 'Grok', color: '#f08a4b' },
+  openai: { key: 'openai', name: 'OpenAI' },
+  zen: { key: 'zen', name: 'Zen' },
+  cursor: { key: 'cursor', name: 'Cursor' },
+  antigravity: { key: 'antigravity', name: 'Antigravity' },
+  grok: { key: 'grok', name: 'Grok' },
 };
-
-/** The longest CLI name, so rows that pad to it line up whichever CLIs run. */
-export const nameWidth = Math.max(...Object.values(BRANDS).map((brand) => brand.name.length));
 
 /** The brand of a provider key (`cursor`), else undefined. */
 export function brandOf(provider: unknown): Brand | undefined {
@@ -31,7 +27,7 @@ export function brandOfType(subagentType: unknown): Brand | undefined {
   return brandOf(key);
 }
 
-export type WorkerModel = { brand: Brand; model: string };
+type WorkerModel = { brand: Brand; model: string };
 
 /** The brand and model id of a Multi model (`multi/cursor/composer-2.5`), else undefined. */
 export function workerModel(model: unknown): WorkerModel | undefined {

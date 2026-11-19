@@ -104,18 +104,17 @@ test('a running provider worker row shows its provider and resolved model', asyn
     tool_use_id: 'toolu_cursor',
   } as never);
   for (const surface of surfaces) {
-    // Compact: the CLI's name in its colour leads, the model beside it, then the task.
+    // Compact: the engine's own row, named for the CLI, the model beside the task.
     const row = await agentRow($, surface, {
       tool_use_id: 'toolu_cursor',
       input,
       isRunning: true,
     });
-    expect((await row.find({ type: 'Text', text: 'Cursor' }))?.props.color).toBe('#5b9bf8');
-    expect((await row.find({ type: 'Text', text: '●' }))?.props.color).toBe('#5b9bf8');
-    expect(await row.find({ type: 'Text', text: ' composer-2.5' })).toBeDefined();
-    expect(await row.find({ type: 'Text', text: '  Fix tests' })).toBeDefined();
-    expect(await row.find({ type: 'Text', text: /Agent/ })).toBeUndefined();
     await row.unmount();
+    const compact = drawn.at(-1) as { tool: string; input: Record<string, unknown> };
+    expect(compact.tool).toBe('Cursor');
+    expect(compact.input.description).toBe('Fix tests · composer-2.5');
+    expect(compact.input.model).toBeUndefined();
     // ctrl+o keeps the engine's full row, labelled.
     const full = await agentRow($, surface, {
       tool_use_id: 'toolu_cursor',
@@ -144,11 +143,10 @@ test('a completed worker row reads the model from its result after a reload', as
       input: { ...input, description: 'Review', subagent_type: 'multi-antigravity' },
       output: { status: 'completed', resolvedModel: 'multi/antigravity/gemini-3.8-flash[1m]' },
     });
-    expect(await row.find({ type: 'Text', text: 'Antigravity' })).toBeDefined();
-    expect(await row.find({ type: 'Text', text: ' gemini-3.8-flash' })).toBeDefined();
-    // A finished worker's dot turns the engine's success colour.
-    expect((await row.find({ type: 'Text', text: '●' }))?.props.color).toBe('success');
     await row.unmount();
+    const compact = drawn.at(-1) as { tool: string; input: Record<string, unknown> };
+    expect(compact.tool).toBe('Antigravity');
+    expect(compact.input.description).toBe('Review · gemini-3.8-flash');
     const full = await agentRow($, surface, {
       tool_use_id: 'toolu_restored',
       input: { ...input, description: 'Review', subagent_type: 'multi-antigravity' },
@@ -252,17 +250,12 @@ test("turn.step leaves an Agent call's streamed input exactly as the model wrote
   expect(json.join('')).toBe(written);
 });
 
-async function listRow(
-  $: Engine,
-  surface: (typeof surfaces)[number],
-  props: Record<string, unknown>,
-  now: number,
-) {
+async function listRow($: Engine, props: Record<string, unknown>) {
   const row = await $.ui.mount({
     plugin: 'multi-core',
-    surface,
+    surface: 'terminal',
     component: 'AgentRow',
-    requestId: String(props.id ?? 'agent-grok'),
+    requestId: 'agent-grok',
     props: {
       id: 'agent-grok',
       description: 'Port the reader · Grok · grok-build',
@@ -271,67 +264,72 @@ async function listRow(
       kind: 'local_agent',
       taskStatus: 'running',
       label: 'Port the reader · Grok · grok-build',
-      startTime: now - 72_000,
+      startTime: 0,
       cwd: '/workspace',
       model: 'multi/grok/grok-build',
       tokenCount: 41_000,
-      tokenSamples: [1000, 4000, 9000, 20_000, 41_000],
+      tokenSamples: [],
       hasRow: true,
       rowIds: ['agent-grok'],
-      columns: 100,
       isHidden: false,
       ...props,
     } as never,
   });
   await row.drawn();
-  return row;
+  await row.unmount();
 }
 
-test('a worker in the agent list shows its CLI, task, step, token trend and time', async ($, on) => {
+test('the agent list keeps its own row and shows a worker’s newest action', async ($, on) => {
   const clock = mock.clock(on);
-  gateway(on);
+  mock.env(on, { MULTI_GATEWAY_TOKEN: 'token', MULTI_MOD_GATEWAY_URL: 'http://127.0.0.1:4000' });
+  on('session.id', () => ({ value: 's' }));
+  on('ui.status', () => ({ value: undefined }));
+  on('http.fetch', (_$, event) => {
+    const reply = (value: unknown) => ({
+      value: { ok: true, status: 200, headers: {}, text: JSON.stringify(value) },
+    });
+    if (event.url.includes('/multi/mod/lifecycle')) {
+      return reply({
+        model: 'multi/grok/grok-build',
+        state: 'running',
+        detail: 'read_file: src/reader.ts',
+        elapsedMs: 3000,
+        startedAt: Number.MAX_SAFE_INTEGER,
+      });
+    }
+    return reply({ revision: 1, names: [], accepted: true });
+  });
+  on('turn.step', async function* (_$, event) {
+    yield { kind: 'text', index: 0, text: 'done' };
+    return {
+      turnId: event.turnId,
+      index: 0,
+      answer: 'done',
+      toolUses: [],
+      stopReason: 'end_turn' as const,
+      usage: null,
+    };
+  });
   const drawn = engine(on);
-  for (const surface of surfaces) {
-    const row = await listRow($, surface, {}, clock.now());
-    const name = await row.find({ type: 'Text', text: /^▌Grok/ });
-    expect(name?.props.color).toBe('#f08a4b');
-    // The spawn's label is not repeated: the CLI's column already names it.
-    expect(await row.find({ type: 'Text', text: 'Port the reader' })).toBeDefined();
-    expect(await row.find({ type: 'Text', text: '  working' })).toBeDefined();
-    expect(await row.find({ type: 'Text', text: /^ {2}[▁-█]{5}$/ })).toBeDefined();
-    expect(await row.find({ type: 'Text', text: '  41k 1m12s' })).toBeDefined();
-    await row.unmount();
-    const done = await listRow(
-      $,
-      surface,
-      { taskStatus: 'completed', status: 'completed' },
-      clock.now(),
-    );
-    expect((await done.find({ type: 'Text', text: '  done' }))?.props.color).toBe('success');
-    await done.unmount();
-    // A narrow list drops the trend line first.
-    const narrow = await listRow($, surface, { columns: 50 }, clock.now());
-    expect(await narrow.find({ type: 'Text', text: /[▁-█]/ })).toBeUndefined();
-    await narrow.unmount();
+  // Before any action, the engine's own words stand.
+  await listRow($, {});
+  expect(drawn.at(-1)?.label).toBe('Port the reader · Grok · grok-build');
+  for await (const _chunk of $.turn.step({
+    turnId: 't',
+    index: 0,
+    model: 'multi/grok/grok-build',
+    messageCount: 1,
+    agentId: 'agent-grok',
+  })) {
+    // The worker's run is under way once its step began.
   }
-  expect(drawn.length).toBe(0);
-});
-
-test('Claude agents and hidden rows keep the engine’s agent list row', async ($, on) => {
-  const clock = mock.clock(on);
-  gateway(on);
-  const drawn = engine(on);
-  await (
-    await listRow(
-      $,
-      'terminal',
-      { type: 'Explore', model: 'claude-haiku-4-5', id: 'agent-x' },
-      clock.now(),
-    )
-  ).unmount();
-  expect(drawn.length).toBe(1);
-  await (await listRow($, 'terminal', { isHidden: true }, clock.now())).unmount();
-  expect(drawn.length).toBe(2);
+  await clock.advance(500);
+  await listRow($, {});
+  expect(drawn.at(-1)?.label).toBe('read_file: src/reader.ts');
+  expect(drawn.at(-1)?.description).toBe('Port the reader · Grok · grok-build');
+  // A finished worker's row is the engine's alone.
+  await listRow($, { taskStatus: 'completed', status: 'completed' });
+  expect(drawn.at(-1)?.label).toBe('Port the reader · Grok · grok-build');
 });
 
 test('the spinner names the CLI and its current step while it is the main model', async ($, on) => {
