@@ -17,6 +17,15 @@ export const zenSignaturePrefixes: readonly string[] = ZEN_SIGNATURE_PREFIXES;
 
 const zenAuthHelp = ' Check the Zen API key.';
 
+const zenKeyExpired =
+  'Your OpenCode Zen API key has expired. Create a new key at https://opencode.ai/auth, ' +
+  'run `multi connect zen --replace`, and relaunch Claude.';
+
+/** Zen names an expired key in its error body; the generic HTTP status hides that. */
+function explainZenFailure(_status: number, body: string): string | undefined {
+  return body.includes('api_key_expired') ? zenKeyExpired : undefined;
+}
+
 /** The Zen request for one Claude request to a `multi/zen/` model. */
 export function prepareZenRequest(
   { method, pathname, body, session, fallbackSession, agentId }: ProviderRequestInput,
@@ -41,6 +50,7 @@ export function prepareZenRequest(
     inputTokens: () => prepared.inputTokens,
     requestEvent: (agent) => ({ route: 'zen-request', agentId: agent, model: body.model }),
     failureEvent: (status, agent) => ({ route: 'zen', agentId: agent, status }),
+    explainFailure: explainZenFailure,
     send: (signal: AbortSignal, fetchImpl: GatewayFetch) =>
       fetchImpl(`${ZEN_URL}/${prepared.endpoint}`, {
         method: 'POST',

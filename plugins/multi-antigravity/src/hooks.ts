@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteFile } from '../../multi-core/src/gateway/atomic-write.ts';
+import { HarnessSetupError } from '../../multi-core/src/gateway/harness-failure.ts';
 import { lockStateFile } from '../../multi-core/src/gateway/state-lock.ts';
 
 const namespace = 'multi-cli-antigravity';
@@ -122,7 +123,7 @@ export async function ensureAntigravityHooks(
   }
   const settings = await readHooks(files.settingsFile ?? antigravitySettingsFile(options));
   if (settings.modelProvider !== undefined || settings.customModels !== undefined) {
-    throw new Error(
+    throw new HarnessSetupError(
       'Antigravity requires native account authentication and models; custom provider settings are unsupported.',
     );
   }

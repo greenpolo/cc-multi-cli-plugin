@@ -16,7 +16,7 @@ Zen uses an API key stored in OpenCode's auth store. The writer requests mode
 | Platform | Default auth file |
 | --- | --- |
 | Linux and macOS | `$XDG_DATA_HOME/opencode/auth.json`, or `~/.local/share/opencode/auth.json` |
-| Windows | `%LOCALAPPDATA%\opencode\auth.json` |
+| Windows | `%XDG_DATA_HOME%\opencode\auth.json`, or `%USERPROFILE%\.local\share\opencode\auth.json` (OpenCode 1.1 and newer); the older `%LOCALAPPDATA%\opencode\auth.json` is read when only it exists |
 | Any platform with an override | The path in `OPENCODE_AUTH_FILE` |
 
 `OPENCODE_API_KEY` can provide the key for a process. The connection helper preserves other provider entries in the OpenCode auth store.
@@ -29,7 +29,7 @@ below lists the full supported catalog; other rows require explicit selection.
 
 | Model IDs | Protocol | Effort |
 | --- | --- | --- |
-| `deepseek-v4.1-flash`, `deepseek-v4-flash`, `kimi-k3`, `glm-5.3`, `glm-5.3-flash`, `glm-5.2`, `minimax-m3`, `minimax-m2.7` | Chat Completions | Provider-native reasoning |
+| `deepseek-v4.1-flash`, `kimi-k3`, `glm-5.3`, `glm-5.3-flash`, `glm-5.2`, `minimax-m3`, `minimax-m2.7` | Chat Completions | Provider-native reasoning |
 | `gpt-6.1-sol`, `gpt-6-luna`, `gpt-6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `muse-spark-1.3` | Responses | `low`, `medium`, `high`, `xhigh`, and `max` |
 
 Workers: the Agent tool's `multi-zen` type runs the Zen rows the session's

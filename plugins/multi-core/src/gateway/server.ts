@@ -56,6 +56,7 @@ import { ReceiptLedger } from './receipts.ts';
 import {
   displayRowsRemoved,
   emitTerminal,
+  explainUpstreamFailure,
   failResponse,
   failureMessage,
   finishHarnessDelivery,
@@ -528,12 +529,12 @@ export function createNativeGateway({
     if (!upstream.ok) {
       // Do not print upstream bodies or credentials in gateway diagnostics.
       onEvent(prepared.failureEvent(upstream.status, agentId));
-      await upstream.body?.cancel();
       throw new UpstreamFailure(
         upstream.status,
         upstream.headers.get('retry-after'),
         prepared.label,
         prepared.authHelp,
+        await explainUpstreamFailure(prepared, upstream),
       );
     }
     if (!upstream.body) {

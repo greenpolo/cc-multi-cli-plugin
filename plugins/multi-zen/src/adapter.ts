@@ -57,9 +57,11 @@ async function secretInput(): Promise<string> {
   });
 }
 
-async function connectZen(): Promise<number> {
-  if (await readZenKey()) {
-    console.log('Zen credentials found. Relaunch Claude to load Zen models.');
+async function connectZen(replace: boolean): Promise<number> {
+  if (!replace && (await readZenKey())) {
+    console.log(
+      'Zen credentials found. Relaunch Claude to load Zen models, or run `multi connect zen --replace` to save a new key.',
+    );
     return 0;
   }
   console.log('Create a Zen API key at https://opencode.ai/auth');
@@ -106,10 +108,10 @@ const adapter: ProviderAdapter = {
   account: {
     verb: 'connect',
     run(args) {
-      if (args.length) {
+      if (!args.every((arg) => arg === '--replace')) {
         throw new Error('Unsupported connect arguments');
       }
-      return connectZen();
+      return connectZen(args.length > 0);
     },
   },
 };

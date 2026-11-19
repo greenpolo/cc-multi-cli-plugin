@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { type NormalizedContent, normalizeConversation, textContent } from './conversation.ts';
-import { isDirectToolAvailable } from './direct-tools.ts';
+import { isAnthropicAdvisorTool, isDirectToolAvailable } from './direct-tools.ts';
 import type {
   Emit,
   MessagesRequest,
@@ -427,6 +427,7 @@ export function toResponses(
   // Claude's tool-search flow keeps deferred schemas out of the initial model
   // request. A loaded tool is resent without defer_loading on the next turn.
   const tools = (body.tools ?? [])
+    .filter((tool) => !isAnthropicAdvisorTool(tool))
     .filter(
       (tool) =>
         !isDeferredTool(tool) ||

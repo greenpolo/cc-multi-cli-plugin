@@ -13,8 +13,14 @@ export class ProviderAuthError extends Error {}
 export class UpstreamFailure extends Error {
   status: number;
   retryAfter: string | null;
-  constructor(status: number, retryAfter: string | null, provider: string, authHelp: string) {
-    super(`${provider} returned HTTP ${status}.${status === 401 ? authHelp : ''}`);
+  constructor(
+    status: number,
+    retryAfter: string | null,
+    provider: string,
+    authHelp: string,
+    explanation?: string,
+  ) {
+    super(explanation ?? `${provider} returned HTTP ${status}.${status === 401 ? authHelp : ''}`);
     this.status = status;
     this.retryAfter = retryAfter;
   }
@@ -59,6 +65,11 @@ export interface PreparedRequest {
   requestEvent(agentId?: string): ProviderEvent;
   failureEvent(status: number, agentId?: string): ProviderEvent;
   send(signal: AbortSignal, fetchImpl: GatewayFetch): Promise<Response>;
+  /**
+   * A fixed explanation for a recognised upstream failure body, replacing the generic
+   * "returned HTTP n". The body is never echoed: only the provider's own text is returned.
+   */
+  explainFailure?(status: number, body: string): string | undefined;
   translate(
     stream: ReadableStream<Uint8Array>,
     emit: Emit | undefined,

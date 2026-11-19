@@ -22,21 +22,61 @@ export interface ZenAuthPathOptions {
   homedir?: string;
 }
 
-function zenAuthFile({
+/**
+ * OpenCode's auth stores, preferred first. OpenCode 1.1 and newer use the XDG data
+ * home on every platform, so Windows keeps `~\.local\share\opencode` and falls back
+ * to the older `%LOCALAPPDATA%\opencode`. `OPENCODE_AUTH_FILE` overrides both.
+ */
+function zenAuthFiles({
   platform = process.platform,
   env = process.env,
   homedir = os.homedir(),
-}: ZenAuthPathOptions = {}): string {
+}: ZenAuthPathOptions = {}): [string, ...string[]] {
   const explicit = env.OPENCODE_AUTH_FILE;
   if (explicit) {
-    return explicit;
+    return [explicit];
   }
   const pathApi = pathForPlatform(platform);
-  const dataHome =
-    platform === 'win32'
-      ? env.LOCALAPPDATA || pathApi.join(homedir, 'AppData', 'Local')
-      : env.XDG_DATA_HOME || pathApi.join(homedir, '.local', 'share');
-  return pathApi.join(dataHome, 'opencode', 'auth.json');
+  const xdg = pathApi.join(
+    env.XDG_DATA_HOME || pathApi.join(homedir, '.local', 'share'),
+    'opencode',
+    'auth.json',
+  );
+  if (platform !== 'win32') {
+    return [xdg];
+  }
+  const legacy = pathApi.join(
+    env.LOCALAPPDATA || pathApi.join(homedir, 'AppData', 'Local'),
+    'opencode',
+    'auth.json',
+  );
+  return xdg === legacy ? [xdg] : [xdg, legacy];
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+/** The first auth store that exists, with its text; undefined when none does. */
+async function existingAuthFile(
+  options: ZenAuthPathOptions,
+): Promise<{ file: string; source: string } | undefined> {
+  for (const file of zenAuthFiles(options)) {
+    try {
+      return { file, source: await readFile(file, 'utf8') };
+    } catch (error) {
+      if (!isMissing(error)) {
+        throw new ZenAuthError('Cannot read OpenCode auth.json.');
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The auth store a key is read from or saved to: the first that exists, else the preferred one. */
+async function zenAuthFile(options: ZenAuthPathOptions = {}): Promise<string> {
+  const existing = await existingAuthFile(options).catch(() => undefined);
+  return existing?.file ?? zenAuthFiles(options)[0];
 }
 
 /** Read only the OpenCode Zen API key; credentials stay owned by OpenCode. */
@@ -46,15 +86,11 @@ export async function readZenKey(options: ZenAuthPathOptions = {}): Promise<stri
     return validateZenKey(configured);
   }
 
-  let source: string;
-  try {
-    source = await readFile(zenAuthFile(options), 'utf8');
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-      return undefined;
-    }
-    throw new ZenAuthError('Cannot read OpenCode auth.json.');
+  const existing = await existingAuthFile(options);
+  if (!existing) {
+    return undefined;
   }
+  const { source } = existing;
 
   let parsed: unknown;
   try {
@@ -82,7 +118,7 @@ export async function saveZenKey(key: string, options: ZenAuthPathOptions = {}):
   const validated = validateZenKey(key);
   const platform = options.platform ?? process.platform;
   const pathApi = pathForPlatform(platform);
-  const file = zenAuthFile(options);
+  const file = await zenAuthFile(options);
   let entries: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
@@ -91,7 +127,7 @@ export async function saveZenKey(key: string, options: ZenAuthPathOptions = {}):
     }
     entries = parsed;
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+    if (!isMissing(error)) {
       throw new ZenAuthError(
         'Cannot update OpenCode auth.json. Existing credentials were preserved.',
       );

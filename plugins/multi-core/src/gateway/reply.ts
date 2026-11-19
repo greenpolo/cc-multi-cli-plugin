@@ -25,7 +25,7 @@ import type {
 } from './messages.ts';
 import { nativeHarnessErrorStatus } from './native-harness.ts';
 import { harnessProvider } from './provider.ts';
-import { ProviderAuthError, UpstreamFailure } from './provider-request.ts';
+import { type PreparedRequest, ProviderAuthError, UpstreamFailure } from './provider-request.ts';
 import {
   BadRequest,
   externalModel,
@@ -153,7 +153,9 @@ function errorStatus(error: unknown): number {
     return 403;
   }
   if (error instanceof FollowUpUnavailable) {
-    return 404;
+    // Not 404: Claude Code renders any 404 as "model not found", hiding this message.
+    // 410 is not retried by Claude Code and shows the message as written.
+    return 410;
   }
   if (error instanceof UpstreamFailure) {
     return error.status;
@@ -236,4 +238,37 @@ export function failureMessage(error: unknown, model: string): MessagesResponse 
 
 function latchSafe(text: string): string {
   return text.replace(/safeguards|dangerous-tool-use|beta/gi, 'verdict');
+}
+
+/** Upstream error bodies are short JSON; a provider explanation never needs more. */
+const MAX_FAILURE_BODY_BYTES = 16 * 1024;
+
+/** The provider's fixed explanation for a failure body, read bounded and never logged. */
+export async function explainUpstreamFailure(
+  prepared: PreparedRequest,
+  upstream: Response,
+): Promise<string | undefined> {
+  if (!(prepared.explainFailure && upstream.body)) {
+    await upstream.body?.cancel();
+    return undefined;
+  }
+  const reader = upstream.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < MAX_FAILURE_BODY_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const text = Buffer.concat(chunks).subarray(0, MAX_FAILURE_BODY_BYTES).toString('utf8');
+  return prepared.explainFailure(upstream.status, text);
 }
