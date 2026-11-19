@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { isRecord } from '../../multi-core/src/gateway/record.ts';
 
-export class ZenAuthError extends Error {}
+class ZenAuthError extends Error {}
 
 export function validateZenKey(value: string): string {
   if (!/^[\x21-\x7e]+$/.test(value)) {
@@ -27,7 +27,7 @@ export interface ZenAuthPathOptions {
  * home on every platform, so Windows keeps `~\.local\share\opencode` and falls back
  * to the older `%LOCALAPPDATA%\opencode`. `OPENCODE_AUTH_FILE` overrides both.
  */
-export function zenAuthFiles({
+function zenAuthFiles({
   platform = process.platform,
   env = process.env,
   homedir = os.homedir(),

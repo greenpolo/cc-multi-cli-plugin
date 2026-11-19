@@ -1,24 +1,14 @@
 import type { AgentSpawnInput, EngineInterface, Register } from 'claude-code';
 import { atom, read, update } from 'claude-code';
-import { isProviderWorker } from '../src/gateway/provider-workers.ts';
-import type { MultiCoreDisplayTools, MultiCorePolicy } from '../types/multi-core.d.ts';
-import {
-  accepted,
-  type GatewayResponse,
-  getJson,
-  isActive,
-  postJson,
-  type Wire,
-} from './gateway.ts';
-import { ensureHarnessPolicy, policyClient } from './policy.ts';
-import { isHarnessModel, isMultiModel } from './provider.ts';
+import type { MultiCoreDisplayTools } from '../types/multi-core.d.ts';
+import { type GatewayResponse, isActive, postJson, type Wire } from './gateway.ts';
+import { isHarnessModel, isMultiModel, isProviderWorker } from './provider.ts';
 import { type RowsClient, syncDisplayTools } from './rows.ts';
-import { defined, withBounded, withItem } from './state.ts';
-import { labelled, register as registerWorkerRows } from './worker-rows.ts';
+import { withBounded, withItem } from './state.ts';
+import { register as registerWorkerRows } from './worker-rows.ts';
 
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
-const policy = atom({ plugin: 'multi-core', key: 'policy' } as const, {} as MultiCorePolicy);
 const agentModels = atom(
   { plugin: 'multi-core', key: 'agentModels' } as const,
   {} as Record<string, string>,
@@ -75,7 +65,7 @@ function reportable(reason: string) {
 type SpawnEvent = AgentSpawnInput;
 
 const providerGuidance =
-  "\n\nFor a multi-* agent type (multi-cursor, multi-openai, ...), `model` names one of that provider's models from the type's description, not a Claude alias; omit it for the provider's default.";
+  "\n\nFor a provider worker type (Cursor, OpenAI, ...), `model` names one of that provider's models from the type's description, not a Claude alias; omit it for the provider's default.";
 
 export const register = (on: Parameters<Register>[0], _options: Parameters<Register>[1]) => {
   registerWorkerRows(on);
@@ -140,8 +130,7 @@ export const register = (on: Parameters<Register>[0], _options: Parameters<Regis
     if (model) {
       await update($, agentModels, (held) => withBounded(held, event.agent_id, model));
     }
-    // Registration is observational for Claude-loop workers. An unregistered
-    // harness worker still cannot dispatch: resolveHarness rejects its scope.
+    // Registration is observational: an unregistered worker inherits the session's record.
     return next(event);
   });
   on('agent.spawn', async ($, event, next) => {
@@ -162,10 +151,7 @@ export const register = (on: Parameters<Register>[0], _options: Parameters<Regis
       // Written to state, so the Agent row and the task notification draw the model.
       await update($, spawnModels, (held) => withBounded(held, event.tool_use_id, resolvedModel));
     }
-    const denial = await admit($, spawn, resolved.selection);
-    if (denial) {
-      return { deny: denial };
-    }
+    await announce($, spawn, resolved.selection);
     const result = await next(spawn);
     const { agentId, model } = result;
     if (agentId && model) {
@@ -239,41 +225,28 @@ async function providerSpawn(
   if (selection.refused || !selection.model) {
     return { deny: selection.error ?? `The ${event.subagentType} model was not resolved.` };
   }
-  // The task's description is what the running-agents list and its notification show.
-  const description = labelled(event.description, selection.model);
-  return { event: { ...event, model: selection.model, description }, selection };
-}
-
-/** Admit a harness spawn against the current policy generation; undefined admits it. */
-async function admit(
-  $: EngineInterface,
-  event: SpawnEvent,
-  selection: GatewayResponse | undefined,
-): Promise<string | undefined> {
-  const payload = await spawnPayload($, event);
-  if (!harnessSpawn(event, selection)) {
-    // Keep context for a possible later harness child, but never veto the
-    // engine's native worker because Multi could not reconstruct its policy.
-    await postJson(wire($), '/multi/mod/worker', payload);
-    return undefined;
-  }
-  await prepareHarness($);
-  // The worker's rows anchor in its own transcript only once their tools exist.
-  await syncDisplayTools(rowsClient($));
-  const mode = accepted(
-    await getJson(wire($), '/multi/mod/mode', { sessionId: payload.sessionId }),
-  );
-  const response = await postJson(wire($), '/multi/mod/worker', {
-    ...payload,
-    generation: mode?.generation,
-  });
-  return response?.accepted
-    ? undefined
-    : reportable(response?.error ?? 'Multi harness worker policy was not acknowledged.');
+  // The task keeps the model's own description: the agent list names the CLI itself.
+  return { event: { ...event, model: selection.model }, selection };
 }
 
 /**
- * A Claude subagent: not a `multi-*` worker type, classified as native Claude (a Claude
+ * Tell the gateway about the worker this Agent call starts. It only records what the
+ * worker inherits; nothing here can refuse the spawn.
+ */
+async function announce(
+  $: EngineInterface,
+  event: SpawnEvent,
+  selection: GatewayResponse | undefined,
+) {
+  await postJson(wire($), '/multi/mod/worker', await spawnPayload($, event));
+  if (harnessSpawn(event, selection)) {
+    // The worker's rows anchor in its own transcript only once their tools exist.
+    await syncDisplayTools(rowsClient($));
+  }
+}
+
+/**
+ * A Claude subagent: not a provider worker type, classified as native Claude (a Claude
  * model, not a provider model its definition pins), and neither its model nor its
  * parent's (which a fork or an inheriting subagent runs on) is a Multi model.
  */
@@ -292,23 +265,4 @@ function harnessSpawn(
 ): boolean {
   const inferred = event.fork ? event.parentModel : (event.model ?? event.parentModel);
   return selection?.execution === 'harness' || (!selection?.known && isHarnessModel(inferred));
-}
-
-/**
- * Admits the prompt's harness policy once for every helper it spawns. The snapshot is
- * state, so the admission outlives a reload; concurrent helpers share one admission in
- * `policy.ts`.
- */
-async function prepareHarness($: EngineInterface) {
-  const held = await read($, policy);
-  if (!held.prompt || held.harnessReady) {
-    return;
-  }
-  const admitted: MultiCorePolicy = { ...held };
-  await ensureHarnessPolicy(policyClient(wire($), await $.session.model()), admitted);
-  await update($, policy, (latest) =>
-    JSON.stringify(latest.prompt) === JSON.stringify(held.prompt)
-      ? defined({ ...latest, generation: admitted.generation, harnessReady: admitted.harnessReady })
-      : latest,
-  );
 }

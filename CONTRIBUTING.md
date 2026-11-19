@@ -16,13 +16,13 @@ npm run check
 ```
 
 The checks cover banner freshness, version consistency, formatting and lint,
-unused code, strict TypeScript, and offline tests. They do not require provider logins or paid inference.
+unused code, and strict TypeScript. They do not require provider logins or paid inference.
 
 ## Making a change
 
 1. Create a branch and keep the change focused on one problem.
-2. Add or update meaningful unit tests for behavior changes. Documentation-only
-   changes do not need new tests.
+2. There are no offline tests. Verify behavior changes with the relevant live check
+   against the real CLI or provider.
 3. Update usage docs and `CHANGELOG.md` when behavior visible to users changes.
 4. Run `npm run check` before opening a pull request.
 
@@ -36,9 +36,9 @@ Changes to live integrations also need the relevant opt-in checks listed in
 usage. Keep probes bounded; Cursor checks must explicitly disable Fast mode.
 Describe checks you could not run and why in the pull request.
 
-For Claude Mods hook or surface changes, also run `npm run test:mod` with the
-installed Claude Code executable. It runs local plugin tests without provider
-inference and is not included in `npm run check` or the current CI matrix.
+For Claude Mods hook or surface changes, also run `npm run typecheck:mod`. It
+type-checks the hooks against the declarations Claude Code writes when it loads the
+plugin.
 
 ## Reporting problems
 

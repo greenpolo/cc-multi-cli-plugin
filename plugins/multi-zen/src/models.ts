@@ -186,7 +186,7 @@ export function zenModelOptions(availableIds?: readonly string[]): ZenModelOptio
   }));
 }
 
-/** The model a `multi-zen` worker runs when the Agent call names none. */
+/** The model a `Zen` worker runs when the Agent call names none. */
 export const ZEN_DEFAULT_WORKER_MODEL = DEFAULT_ZEN_MODELS[0];
 
 /**

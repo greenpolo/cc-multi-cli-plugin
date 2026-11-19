@@ -12,7 +12,8 @@ export interface WorkerPermissions {
   permissionMode?: string;
   tools?: string[];
   disallowedTools?: string[];
-  nativePermissionError?: string;
+  /** What a native run is told about settings it could not take over. */
+  notice?: string;
 }
 
 const MAX_AGENT_FILES = 1000;
@@ -321,9 +322,9 @@ async function pluginDefinition(file: string): Promise<[string, WorkerPermission
     const reason = error instanceof Error ? error.message : String(error);
     if (!reportedMalformed.has(file)) {
       reportedMalformed.add(file);
-      process.stderr.write(`Multi: ${reason}; native workers of that type are refused.\n`);
+      process.stderr.write(`Multi: ${reason}; its tool rules are not applied to native workers.\n`);
     }
-    return [name, { nativePermissionError: `${reason}: Multi cannot read its tool rules` }];
+    return [name, {}];
   }
 }
 

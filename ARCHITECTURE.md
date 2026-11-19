@@ -23,6 +23,16 @@ not when a client detaches. [The local Mods reference](docs/claude-mods.md)
 is required reading for changes to Claude Code UI or extensibility. Provider adapters own their model
 catalogs, authentication, execution, and review boundaries.
 
+Each provider is one folder, `plugins/multi-<name>/`. Its `provider.json` manifest
+states its name, label, kind (`direct`: Claude Code runs the tools; `harness`: the
+provider's SDK or CLI does), display order, and review and usage text. Its
+`src/adapter.ts` default-exports the adapter core loads: sign-in and model discovery
+for a launch, the harness or request builder that runs it, its launcher flags, and its
+account verb. Core reads the manifests (`gateway/provider.ts`), loads the adapters
+(`gateway/provider-adapter.ts`), and imports no provider code. The hooks run inside
+Claude Code and cannot read those files, so they keep one small table
+(`hooks/provider.ts`) that `npm run check:providers` compares with the manifests.
+
 ```text
 Claude Code session (/model, workers, prompts)
                   |
@@ -51,10 +61,9 @@ a caller-set
 the session-start environment back (`nested-env.ts`, a PATH shim and the
 bootstrap), so it never routes through the session gateway. Hosted-API
 providers build their own requests: `gateway/provider-request.ts` defines the
-contract, `multi-openai/src/gateway-request.ts` and
-`multi-zen/src/gateway-request.ts` implement it, and the gateway owns keepalive,
-events, and failure mapping. `gateway/provider.ts` is the one reader of a model
-ID's provider prefix. The Responses translation and SSE reader live in
+contract, each direct provider's `gateway-request.ts` implements it, and the gateway
+owns keepalive, events, and failure mapping. `gateway/provider.ts` is the one reader
+of a model ID's provider prefix. The Responses translation and SSE reader live in
 `gateway/responses.ts`. `/model` exposes provider model and effort rows. Each connected
 provider's Agent-tool worker type runs that provider's picker rows; the Agent
 tool's `model` parameter picks which. Each run reports a visible lifecycle: row,
@@ -63,8 +72,8 @@ elapsed time, streamed progress, completion, failure, and cancellation.
 ## Worker types
 
 The Agent tool offers exactly one type per signed-in or enabled provider:
-`multi-openai`, `multi-zen`, `multi-cursor`, `multi-antigravity`, and
-`multi-grok`. A type's models are exactly that provider's rows in the session's
+`OpenAI`, `Zen`, `Cursor`, `Antigravity`, and
+`Grok`. A type's models are exactly that provider's rows in the session's
 `/model` picker, so `--models`, `MULTI_MODELS`, and the provider-specific
 `_EXTRA_MODELS`/`_MODELS` environment variables bound them. The Agent tool's
 `model` parameter names a model as a short id (`composer-2.5`, `gpt-6-luna`) or
@@ -138,14 +147,18 @@ than queued against a native conversation that has moved on.
 
 Claude's permission mode controls each provider at prompt boundaries through the
 UserPromptSubmit and SubagentStart hooks. Direct-model review uses the mode in
-the request's `classifier_context.permission_mode`; Mods record the workspace
-and parent request identity at prompt boundaries.
-Harness settings admission is `gateway/harness-settings.ts`. The gateway intersects worker rules,
-provider capabilities, project settings, and platform policy. Unsupported modes,
-unknown workers, untranslatable policies, and unavailable permission context fail
-explicitly. A provider without a reviewer runs Auto unreviewed and says so;
-Plan refuses its actions. Plan denies shell and edit capabilities. Bypass disables Cursor native
-Auto review while retaining explicit restrictions. See [docs/permissions.md](docs/permissions.md).
+the request's `classifier_context.permission_mode`. The gateway keeps one record per
+session (`gateway/mode-hook.ts`): the mode, workspace and model of the latest prompt.
+A worker adds its agent type's own tool rules and inherits the rest; a worker the
+hooks did not announce inherits the session's record.
+
+No native run is refused over its mode or over a setting its harness cannot enforce.
+Plan stays read-only and Bypass stays unreviewed; every other mode runs as Auto.
+`gateway/harness-settings.ts` reads what carries over from Claude's settings: bare
+tool denials and tool lists. Ask rules, sandbox settings and argument-specific deny
+rules have no native form, so they are skipped and named in a one-line notice at the
+start of the run. A provider without a reviewer runs Auto unreviewed and says so;
+Plan refuses its actions. See [docs/permissions.md](docs/permissions.md).
 
 Native harness actions do not enter Claude's PreToolUse or PermissionRequest
 admission path. Their worker admission loads the selected settings and managed
@@ -274,7 +287,7 @@ features requested by the maintainer.
 - Never replay observed external tool events as Claude tool calls.
 - Apply Claude permission mode and explicit capability restrictions at prompt boundaries.
 - Propagate cancellation and expose progress, completion, and failure.
-- Fail on ambiguous ownership, unsupported policy, or unknown workers.
+- Fail on ambiguous ownership or unknown models; never refuse a native run over its permission mode or an unenforceable Claude setting.
 - A provider without a reviewer runs Auto unreviewed and says so; Plan refuses actions.
 - Never borrow another provider's reviewer or infer billing from a model name.
 - Never rewind native state or repeat uncertain actions.

@@ -1,0 +1,17 @@
+{
+  "name": "openai",
+  "label": "OpenAI",
+  "kind": "direct",
+  "order": 10,
+  "runs": "Claude Code's tools",
+  "review": {
+    "mode": "reviewer",
+    "statement": "reviewed by the OpenAI account reviewer",
+    "missing": "OpenAI reviewer unavailable; no auto mode: actions run unreviewed"
+  },
+  "usage": {
+    "name": "OpenAI / Codex",
+    "url": "https://chatgpt.com/codex/settings/usage",
+    "unavailable": ["Sign in with codex login to read account quota windows."]
+  }
+}

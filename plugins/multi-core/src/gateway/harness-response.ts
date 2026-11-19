@@ -185,7 +185,7 @@ export class HarnessResponse {
 }
 
 /** Estimates are never presented as billed usage. */
-export function usageSource(
+function usageSource(
   usage: HarnessUsageFields | undefined,
 ): NonNullable<MessagesResponse['multi_usage']>['source'] {
   if (usage === undefined) {

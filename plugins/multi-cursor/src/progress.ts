@@ -254,7 +254,7 @@ function diffHunks(diff: string) {
  * file is a Write row with the added lines as `content`; any other edit is an
  * Edit row with each hunk's old and new side as `old_string`/`new_string`.
  */
-export function cursorEditMirror(toolCall: ToolCall): DerivedMirror | undefined {
+function cursorEditMirror(toolCall: ToolCall): DerivedMirror | undefined {
   if (toolCall.type !== 'edit' || toolCall.result?.status !== 'success') {
     return undefined;
   }

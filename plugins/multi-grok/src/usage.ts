@@ -21,7 +21,7 @@ export interface GrokAuthOptions {
   homedir?: string;
 }
 
-export function grokAuthFile(options: GrokAuthOptions = {}): string {
+function grokAuthFile(options: GrokAuthOptions = {}): string {
   const platform = options.platform ?? process.platform;
   const join = platform === 'win32' ? path.win32.join : path.posix.join;
   return join(options.homedir ?? os.homedir(), '.grok', 'auth.json');

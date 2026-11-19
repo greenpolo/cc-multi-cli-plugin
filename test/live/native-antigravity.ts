@@ -12,7 +12,7 @@ import {
   runAntigravity,
 } from '../../plugins/multi-antigravity/src/cli.ts';
 import { AntigravityHarness } from '../../plugins/multi-antigravity/src/harness.ts';
-import { checkAntigravityHooks } from '../../plugins/multi-antigravity/src/hooks.ts';
+import { ensureAntigravityHooks } from '../../plugins/multi-antigravity/src/hooks.ts';
 import {
   type AntigravityModel,
   discoverAntigravityModels,
@@ -91,7 +91,7 @@ const context: PermissionContext = {
   tools: ['Read', 'Write'],
 };
 const checkPermissions = async (runCwd: string, runContext: PermissionContext) => {
-  await checkAntigravityHooks();
+  await ensureAntigravityHooks();
   return antigravityPermissionPolicy({ ...runContext, cwd: runCwd });
 };
 const run = async (options: AntigravityRunOptions) => {

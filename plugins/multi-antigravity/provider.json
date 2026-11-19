@@ -1,0 +1,20 @@
+{
+  "name": "antigravity",
+  "label": "Antigravity",
+  "kind": "harness",
+  "order": 30,
+  "runs": "native Antigravity CLI",
+  "endpoint": "agy",
+  "unavailable": "Antigravity is unavailable. Install and connect the multi-antigravity plugin.",
+  "review": {
+    "mode": "none",
+    "statement": "no auto mode: actions run unreviewed"
+  },
+  "usage": {
+    "name": "Antigravity",
+    "unavailable": [
+      "Native Antigravity account quota could not be retrieved.",
+      "Run /usage or /credits inside agy to view your account."
+    ]
+  }
+}

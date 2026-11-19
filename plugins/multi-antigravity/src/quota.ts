@@ -53,7 +53,7 @@ export function formatAntigravityQuota(status: AntigravityAccountStatus): {
 }
 
 /** Parse the command envelope emitted by `agy -p /usage --output-format json`. */
-export function parseAntigravityCommandEnvelope(value: unknown): Partial<AntigravityAccountStatus> {
+function parseAntigravityCommandEnvelope(value: unknown): Partial<AntigravityAccountStatus> {
   if (!isRecord(value) || !isRecord(value.command) || !isRecord(value.command.data)) {
     return {};
   }

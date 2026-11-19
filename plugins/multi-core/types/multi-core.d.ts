@@ -3,12 +3,10 @@
 // drawn again when it is written. Plain JSON data; a field without a value is left out.
 export type MultiCorePrompt = { sessionId: string; cwd: string; permissionMode?: string };
 
-/** The prompt-boundary snapshot the gateway holds this session's mode generation for. */
+/** The prompt-boundary snapshot the gateway was last told. */
 export type MultiCorePolicy = {
-  generation?: number;
   prompt?: MultiCorePrompt;
-  harnessReady?: boolean;
-  /** The snapshot last posted for a prompt that needs no harness policy, so an unchanged one posts nothing. */
+  /** The snapshot last posted, so an unchanged one posts nothing. */
   posted?: string;
   /** The session the gateway was greeted for (`session.start`, or the first prompt after a `/clear`). */
   handshake?: string;
@@ -39,9 +37,11 @@ declare module 'claude-code' {
       agentModels: Record<string, string>;
       /** The model a provider worker resolved to, by its Agent call's tool_use_id. */
       spawnModels: Record<string, string>;
+      /** A harness run's newest action, by agent id (`main` for the main loop), while it runs. */
+      workerSteps: Record<string, string>;
       /** Agent types positively classified as Claude-loop on a Claude model. */
       claudeTypes: string[];
-      /** Provider (multi-*) worker types the model is offered. */
+      /** Provider worker types (`Cursor`, `OpenAI`, ...) the model is offered. */
       offeredProviders: string[];
       displayTools: MultiCoreDisplayTools;
       /** The usage pane's props, by session id. */

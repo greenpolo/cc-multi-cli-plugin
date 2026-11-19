@@ -79,7 +79,7 @@ export function cursorModelOptions(catalog: ModelListItem[]): CursorModelOption[
   return [...options.values()];
 }
 
-/** The model a `multi-cursor` worker runs when the Agent call names none: Cursor's Auto. */
+/** The model a `Cursor` worker runs when the Agent call names none: Cursor's Auto. */
 export const CURSOR_DEFAULT_WORKER_MODEL = 'default';
 
 /** Curated picker lineup; the full catalog stays routable. */

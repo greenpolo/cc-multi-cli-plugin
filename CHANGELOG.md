@@ -6,6 +6,56 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Workers look like Claude's own agents.** The worker types are now the CLIs'
+  own names, `OpenAI`, `Zen`, `Cursor`, `Antigravity` and `Grok`, in place of
+  `multi-openai` and the rest, so Claude Code names them the way it names `Explore`
+  or `Plan`: the Agent row reads `OpenAI(Fix slugify · gpt-6-luna)`, a launch of
+  several background workers lists `├ OpenAI (Fix slugify)`, and the agent list
+  under the prompt reads `OpenAI  Fix slugify`. An agent file or prompt that names
+  `subagent_type: multi-openai` must now name `OpenAI`. The plugins and their
+  commands (`/multi-openai:login`) keep their names. A running worker's newest action appears
+  beside its task, with paths relative to the project. A Cursor, Antigravity or Grok
+  worker shows its time without a token count, since that count only arrives when it
+  finishes. The task's description and the "finished" notice keep the model's own
+  words, without ` · OpenAI · model`. While a CLI is the main model, the spinner
+  names it and its current action. Run progress no longer goes to the plugin status
+  line, which Claude Code draws as a warning. That line now appears only when a run
+  fails.
+
+- **A native run is never refused over its permission mode or your Claude settings.**
+  Cursor, Antigravity and Grok now run under every Claude mode: Plan stays read-only,
+  Bypass stays unreviewed, and any other mode (Default, dontAsk) runs as Auto. Ask
+  rules, sandbox settings and argument-specific deny rules such as `Bash(rm:*)` have
+  no native form; they are skipped and named in one line at the start of the run,
+  instead of stopping it. Bare tool denials and tool lists still apply. A
+  `.cursor/permissions.json` no longer blocks Cursor.
+
+- **Start several workers of one provider together, and from a Workflow.** Starting
+  two Cursor (or Antigravity, or Grok) workers at once no longer fails with "no
+  unique acknowledged spawn", and a native worker started by a Workflow now runs. The
+  gateway keeps one permission record per session and every worker inherits it; the
+  per-prompt policy handshake between the hooks and the gateway is gone.
+
+- **Faster native runs.** A native run no longer lists Claude's plugins before it
+  starts, and the managed policy is read once per session.
+
+- **A long first-run consent screen no longer ends the session.** The launcher used to
+  stop with "Claude Code 2.1.272 or newer with loaded function hooks is required"
+  when the Bypass consent screen stayed open for more than 30 seconds.
+
+- **The Antigravity hook repairs itself.** Updating the plugin or switching between
+  copies no longer needs `--antigravity-setup` again; every launch and every native
+  run points the hook at the running copy.
+
+- **Each provider is one self-describing folder.** A provider's manifest
+  (`provider.json`) and adapter (`src/adapter.ts`) hold everything about it; the
+  launcher and gateway name no provider. The launcher and gateway server are split
+  into smaller modules. Nothing changes in use.
+
+- **Tests are the live checks.** The offline unit, hook and scripted end-to-end tests
+  are removed; `npm run check` covers lint, unused code, versions and types, and the
+  `test:live:*` checks run against real CLIs.
+
 - **Use OpenAI and Zen models with `advisorModel` set.** Claude Code's advisor is an
   Anthropic-only server tool; the OpenAI and Zen routes now leave it out instead of
   failing the whole request with HTTP 400 "Unsupported server tool".
@@ -22,9 +72,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   explains that the key expired and how to replace it, instead of a bare HTTP status.
   `multi connect zen --replace` saves a new key over an existing one.
 
-- **Fail fast when the Antigravity hook is missing.** A missing or outdated
-  permission hook, or custom provider settings, now fail at once with HTTP 400 and
-  how to fix it, instead of a 502 that Claude Code retried for about 2.5 minutes.
+- **Fail fast on unsupported Antigravity settings.** Custom provider settings now
+  fail at once with HTTP 400 and the reason, instead of a 502 that Claude Code
+  retried for about 2.5 minutes.
 
 - **Remove Zen `deepseek-v4-flash`.** OpenCode deprecated it on 2026-10-26;
   `deepseek-v4.1-flash` remains.

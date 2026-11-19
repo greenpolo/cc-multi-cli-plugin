@@ -2,13 +2,11 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "plugins/multi-core/src/launcher.ts",
-    "test/unit/**/*.test.ts",
-    "test/e2e/**/*.test.ts",
+    "plugins/*/src/adapter.ts",
     "test/live/*.ts",
     "plugins/multi-core/src/setup.ts",
     "plugins/multi-core/src/account.ts",
     "plugins/multi-core/src/install/bootstrap.ts"
   ],
-  "project": ["plugins/*/src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
-  "ignore": ["plugins/multi-core/hooks/**/*.ts"]
+  "project": ["plugins/*/src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

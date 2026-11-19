@@ -10,6 +10,7 @@ import type { ResponsesRequest } from '../../plugins/multi-core/src/gateway/resp
 import { readSse } from '../../plugins/multi-core/src/gateway/responses.ts';
 import { createNativeGateway } from '../../plugins/multi-core/src/gateway/server.ts';
 import { isolatedEnvironment } from './environment.ts';
+import { liveProviders } from './providers.ts';
 
 interface Sample {
   turn: number;
@@ -64,10 +65,6 @@ const token = randomUUID();
 const samples: Sample[] = [];
 const observations: Promise<void>[] = [];
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const authFile = path.join(
-  process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
-  'auth.json',
-);
 await writeFile(
   path.join(cwd, 'fixture.txt'),
   Array.from(
@@ -233,7 +230,7 @@ async function runClaude(port: number, turn: number) {
 for (let turn = 0; turn < 3; turn++) {
   const server = createNativeGateway({
     token,
-    authFile,
+    providers: await liveProviders(['openai']),
     blockAnthropic: true,
     fetchImpl: async (url, init) => {
       assert.equal(url, 'https://chatgpt.com/backend-api/codex/responses');

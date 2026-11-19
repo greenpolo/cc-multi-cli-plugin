@@ -48,7 +48,7 @@ export async function discoverOpenAIReviewer(
 }
 
 /** No shell, network, symlink escapes, or writes in the reviewer's investigation. */
-export async function inspectApprovalPath(
+async function inspectApprovalPath(
   cwd: string,
   input: unknown,
   { platform = process.platform }: { platform?: NodeJS.Platform } = {},

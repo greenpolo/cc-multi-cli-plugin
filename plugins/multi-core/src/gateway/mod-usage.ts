@@ -28,7 +28,7 @@ export async function usageRoute(
   url: URL,
   parsed: unknown,
   ledger: ReceiptLedger,
-  billedUsage?: (session: string) => Promise<unknown>,
+  billed?: { scope: string; read(session: string): Promise<unknown> },
   dashboard?: ProviderUsageDashboard,
 ) {
   if (url.pathname === '/multi/mod/usage/complete') {
@@ -64,17 +64,17 @@ export async function usageRoute(
     );
   }
   if (url.searchParams.get('billed') === 'true') {
-    if (!billedUsage) {
+    if (!billed) {
       return {
         status: 'unavailable',
-        message: 'Cursor billed usage is unavailable in this session.',
+        message: 'Billed usage is unavailable in this session.',
       };
     }
     return {
-      scope: 'Cursor native agent lifetime; local billing entries are per turn',
+      scope: billed.scope,
       currency: 'USD',
       costUnit: 'cents',
-      agents: await billedUsage(session),
+      agents: await billed.read(session),
     };
   }
   return ledger.snapshot(session);

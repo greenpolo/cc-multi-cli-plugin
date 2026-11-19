@@ -5,24 +5,37 @@ Claude Code's permission mode reaches every provider. Select it before the promp
 ## One permission control
 
 Claude Code's permission mode is the single control at prompt boundaries. Direct
-models retain Claude's permission checks; native harnesses translate supported
-modes and reject unsupported ones. Auto does not imply a reviewer exists. Zen, Antigravity and Grok have none:
+models retain Claude's permission checks. Native harnesses run under every mode:
+
+| Claude mode | Native run |
+| --- | --- |
+| Plan | Read-only: shell and edit capabilities are removed. |
+| Bypass | The provider's own review is off; explicit tool restrictions still apply. |
+| Auto, acceptEdits | The provider's Auto. |
+| Default, dontAsk, anything else | Runs as Auto, and the run opens with a one-line notice saying so. |
+
+Auto does not imply a reviewer exists. Zen, Antigravity and Grok have none:
 actions run unreviewed, and the status line says "no auto mode: actions run
 unreviewed". Cursor reviews its own native actions and fails open when its
 classifier is unavailable.
-Plan restricts work to provider-supported plan capabilities. Bypass disables
-automatic review where supported while retaining explicit capability restrictions.
 Claude ask rules remain part of Claude's own tool permission checks.
 
-The mode snapshot applies at the next prompt. Direct Claude, OpenAI, and Zen
-workers record prompt identity and resolve tool permissions in Claude's loop.
-Cursor, Antigravity and Grok load the full settings-policy snapshot at their prompts,
-or lazily when a direct-model conversation requests a harness worker. Worker modes inherit or resolve from the parent
-context according to the worker definition, except that a parent in Plan keeps
-every worker in Plan, including one spawned earlier and resumed later. OpenAI
-automatic review reads `classifier_context.permission_mode` in each model request,
-so the request itself determines Plan restrictions. A
-missing or unsupported mode fails explicitly.
+The gateway keeps one record per session: the mode, workspace and model of the
+latest prompt. A worker adds its agent type's own tool rules and inherits the rest,
+except that a session in Plan keeps every worker in Plan, including one spawned
+earlier and resumed later. OpenAI automatic review reads
+`classifier_context.permission_mode` in each model request, so the request itself
+determines Plan restrictions.
+
+## Settings a native harness cannot enforce
+
+A native harness runs its own tools, so Claude Code cannot apply its rules to each
+action. What has a native form carries over on every run: bare tool denials
+(`"deny": ["Bash"]`), `--tools` and `--disallowedTools`, and an agent type's `tools`
+and `disallowedTools`. What has none is skipped, never refused: ask rules, sandbox
+settings, and argument-specific deny rules such as `Bash(rm:*)`. The run opens with
+one line naming what was skipped. A rule for a tool the harness does not have
+restricts nothing there and is ignored.
 
 ## Provider enforcement
 
@@ -41,16 +54,14 @@ action observations, which the gateway writes as display rows under the native t
 names (see [claude-mods.md](claude-mods.md)). A display row grants nothing: the
 `mcp__multi-core` entry in a harness worker's tools only admits those rows, the
 permission mappers drop it, and the mod refuses any call the gateway did not issue.
-Native harness admission and provider policy enforce the actions without replaying
+Provider policy enforces the actions without replaying
 them as executable Claude tools. The launcher currently disables whole-session agent-view
 handoff because its gateway and generated worker settings belong to the launcher;
 ordinary background subagent tasks remain supported.
 
-Start Cursor, Antigravity and Grok workers with the Agent tool. Workflow-started
-native workers are unsupported because that engine path does not emit
-`agent.spawn`, and `SubagentStart` alone lacks the parent and model needed to
-admit inherited permissions safely. OpenAI and Zen workers use Claude's tool
-loop and do not require this native harness admission. See [issue #32](https://github.com/greenpolo/cc-multi-cli-plugin/issues/32).
+Several workers of one provider can start together, and a native worker started by
+a Workflow runs too: a worker the Agent tool did not announce inherits the session's
+record and its agent type's tool rules.
 
 The launcher enables Claude's on-demand tool discovery through the local
 gateway. Direct adapters omit deferred schemas until their names appear in a
@@ -87,7 +98,7 @@ actions. These verdicts do not bypass Claude's explicit deny rules.
 
 ## Explicit failures
 
-Cursor, Antigravity and Grok admission fails explicitly for unsupported modes, unknown workers, untranslatable policies, and unavailable permission context. Multi does not apply these harness checks to Claude, OpenAI, or Zen workers. If the OpenAI reviewer is unavailable at launch, Auto remains available and actions run unreviewed. Plan refuses actions without a reviewer. Once a reviewer is enabled, a failed or timed-out review, malformed evidence, or unavailable evidence produces a `flagged` verdict with a plain explanation. The gateway never substitutes Claude or the working model for the account reviewer.
+An unknown model, an unknown provider, or a provider that is not connected fails with a plain message. A permission mode or a Claude setting never does. If the OpenAI reviewer is unavailable at launch, Auto remains available and actions run unreviewed. Plan refuses actions without a reviewer. Once a reviewer is enabled, a failed or timed-out review, malformed evidence, or unavailable evidence produces a `flagged` verdict with a plain explanation. The gateway never substitutes Claude or the working model for the account reviewer.
 
 ## Without Anthropic credentials
 
@@ -109,7 +120,7 @@ features. This describes the supplied binary evidence, not a new live probe.
 
 ## Managed policy sources
 
-Native dispatch re-reads the selected settings and managed policy sources. Managed settings use the following locations.
+Each native run reads the selected settings files, so an edit applies to the next run. The managed policy is read once per session. Managed settings use the following locations.
 
 | Platform | Managed sources |
 | --- | --- |
@@ -118,4 +129,4 @@ Native dispatch re-reads the selected settings and managed policy sources. Manag
 | macOS | `/Library/Application Support/ClaudeCode/managed-settings.json`, JSON files in `managed-settings.d`, and `defaults read com.anthropic.claudecode` |
 | Windows | `C:\Program Files\ClaudeCode\managed-settings.json`, JSON files in `managed-settings.d`, and `HKLM` plus `HKCU` under `SOFTWARE\Policies\ClaudeCode`, value `Settings` |
 
-Managed policies accept supported permissions, hooks, and sandbox settings. Unsupported controls, argument or path rules, ask rules, sandbox policy, and ignored policy files fail admission when the native provider cannot enforce them. The provider that will run the request supplies that judgement, so a Claude tool rule one harness maps natively is enforced rather than refused because another harness could not map it.
+Managed policy is read the same way as any other settings source: bare tool denials apply, and what has no native form is skipped and named in the run's notice. A managed source that cannot be read is named there too.

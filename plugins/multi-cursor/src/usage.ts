@@ -1,4 +1,4 @@
-export interface CursorUsageRecord {
+interface CursorUsageRecord {
   agentId: string;
   scope: string;
   usage: {
@@ -47,7 +47,7 @@ export async function readCursorAccountUsage(
   };
 }
 
-export async function readCursorUsage(
+async function readCursorUsage(
   sessionId: string,
   reader: CursorUsageReader,
 ): Promise<CursorUsageView> {
@@ -64,7 +64,7 @@ export async function readCursorUsage(
   return formatCursorUsage([...unique.values()]);
 }
 
-export function formatCursorUsage(records: readonly CursorUsageRecord[]): CursorUsageView {
+function formatCursorUsage(records: readonly CursorUsageRecord[]): CursorUsageView {
   if (!records.length) {
     return { summary: 'Cursor billed usage unavailable (no active agents).', details: [] };
   }

@@ -27,7 +27,7 @@ function configRoot(options: AntigravityPathOptions = {}): string {
   return join(home, '.gemini');
 }
 
-export function antigravityHookFile(options: AntigravityPathOptions = {}): string {
+function antigravityHookFile(options: AntigravityPathOptions = {}): string {
   const join =
     (options.platform ?? process.platform) === 'win32' ? path.win32.join : path.posix.join;
   return join(configRoot(options), 'config', 'hooks.json');
@@ -46,7 +46,7 @@ export function antigravitySettingsFile(options: AntigravityPathOptions = {}): s
  * assumed, so the hook invokes Node directly and the hook itself stays neutral
  * without a policy.
  */
-export function antigravityHookDefinition(platform: NodeJS.Platform = process.platform) {
+function antigravityHookDefinition(platform: NodeJS.Platform = process.platform) {
   const command = hookCommand(new URL('./permission-hook.ts', import.meta.url), platform);
   return {
     PreToolUse: [
@@ -100,7 +100,12 @@ export async function installAntigravityHook(
   }
 }
 
-export async function checkAntigravityHooks(
+/**
+ * The hook is one global entry that points at this copy of the plugin. A launch from another
+ * copy (an update, a checkout, a second install) leaves it pointing elsewhere, so every
+ * native run repairs it first rather than refusing until someone reruns the setup.
+ */
+export async function ensureAntigravityHooks(
   files: {
     globalFile?: string;
     settingsFile?: string;
@@ -110,23 +115,16 @@ export async function checkAntigravityHooks(
   } = {},
 ): Promise<void> {
   const options = files;
-  assertAntigravityHooks(
-    await readHooks(files.globalFile ?? antigravityHookFile(options)),
-    options.platform ?? process.platform,
-  );
+  const platform = options.platform ?? process.platform;
+  const globalFile = files.globalFile ?? antigravityHookFile(options);
+  const hooks = await readHooks(globalFile);
+  if (JSON.stringify(hooks[namespace]) !== JSON.stringify(antigravityHookDefinition(platform))) {
+    await installAntigravityHook(globalFile, options);
+  }
   const settings = await readHooks(files.settingsFile ?? antigravitySettingsFile(options));
   if (settings.modelProvider !== undefined || settings.customModels !== undefined) {
     throw new HarnessSetupError(
       'Antigravity requires native account authentication and models; custom provider settings are unsupported.',
-    );
-  }
-}
-
-function assertAntigravityHooks(hooks: Record<string, unknown>, platform: NodeJS.Platform): void {
-  if (JSON.stringify(hooks[namespace]) !== JSON.stringify(antigravityHookDefinition(platform))) {
-    throw new HarnessSetupError(
-      'Antigravity requires its native permission hook, which is missing or out of date. ' +
-        'Relaunch Claude with Multi, or run `multi login antigravity`, to reinstall it.',
     );
   }
 }

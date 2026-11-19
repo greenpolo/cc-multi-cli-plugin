@@ -61,7 +61,7 @@ function comparePrerelease(left: string[], right: string[]): number {
 }
 
 /** Semver precedence: negative, zero or positive. Build metadata is ignored. */
-export function compareVersions(left: string, right: string): number {
+function compareVersions(left: string, right: string): number {
   const a = parseVersion(left);
   const b = parseVersion(right);
   if (!a || !b) {
@@ -407,7 +407,7 @@ function releaseSectionBody(body: string[], summary: string | undefined): string
  * it. No new Unreleased section is left, matching the 0.2.0 and 0.3.0 releases;
  * the next user-facing change adds one.
  */
-export function releaseChangelog(changelog: string, options: ReleaseOptions): string {
+function releaseChangelog(changelog: string, options: ReleaseOptions): string {
   const lines = changelog.replace(/\r\n/g, '\n').split('\n');
   const heading = lines.findIndex((line) => line.trimEnd() === '## Unreleased');
   if (heading === -1) {
@@ -438,7 +438,7 @@ function serialize(json: Record<string, unknown>): string {
 }
 
 /** Check a requested version against the current one, throwing with the reason. */
-export function assertNextVersion(current: string, next: string): void {
+function assertNextVersion(current: string, next: string): void {
   if (!isVersion(next)) {
     throw new Error(`${next} is not a semantic version (expected x.y.z, without a leading v)`);
   }

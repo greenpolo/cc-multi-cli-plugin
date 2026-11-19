@@ -135,7 +135,7 @@ export function prepareNativePrompt(
   return { prompt, inputTokens: estimateTextTokens(prompt) };
 }
 
-export function validateNativeMessages(body: MessagesRequest, provider: string): void {
+function validateNativeMessages(body: MessagesRequest, provider: string): void {
   if (!Array.isArray(body.messages) || !body.messages.length) {
     throw new Error(`${provider} requires a conversation`);
   }

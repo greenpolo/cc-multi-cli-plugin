@@ -40,7 +40,7 @@ function label(id: string): string {
   return `Grok ${rest.replaceAll('-', ' ')}`;
 }
 
-export function parseGrokModels(output: string): GrokModel[] {
+function parseGrokModels(output: string): GrokModel[] {
   const models = new Map<string, GrokModel>();
   for (const line of output.split('\n')) {
     const match = CATALOG_LINE.exec(line.replace(/\r$/, ''));
@@ -99,7 +99,7 @@ export async function discoverGrokModels(
 }
 
 /** Restrict Grok rows without hiding the other providers. */
-/** The model a `multi-grok` worker runs when the Agent call names none: the CLI's default. */
+/** The model a `Grok` worker runs when the Agent call names none: the CLI's default. */
 export function grokDefaultWorkerModel(models: readonly GrokModel[]): string | undefined {
   return models.find((model) => model.default)?.id;
 }

@@ -14,7 +14,7 @@ export interface AntigravityModel {
   effort?: 'low' | 'medium' | 'high';
 }
 
-export function parseAntigravityModels(output: string): AntigravityModel[] {
+function parseAntigravityModels(output: string): AntigravityModel[] {
   const models = new Map<string, AntigravityModel>();
   for (const line of output.split('\n')) {
     const match = /^([a-z0-9][a-z0-9.-]*)\t([^\t\r\n]+)\r?$/.exec(line);
@@ -91,7 +91,7 @@ export function antigravityPickerOptions(models: readonly AntigravityModel[]): A
 }
 
 /**
- * The model a `multi-antigravity` worker runs when the Agent call names none: the newest
+ * The model a `Antigravity` worker runs when the Agent call names none: the newest
  * Gemini generation, a Pro model before a Flash of the same version. `agy models` marks no
  * default and lists in its own order, so the version decides.
  */
@@ -169,4 +169,37 @@ export function selectAntigravityModel(
     throw new Error(`Antigravity model ${selected.id} does not advertise ${effort} effort.`);
   }
   return variant;
+}
+
+/**
+ * Families whose native input window is about a million tokens. Gemini 3.x Flash and Pro
+ * take 1,048,576. Every other advertised model keeps the conservative default, because its
+ * window is smaller or unestablished: GPT-OSS 120B takes 131,072, and the Claude models
+ * served here carry no 1M entitlement. The native catalog reports no capacity metadata, so
+ * this list is the only place that claim is made.
+ */
+const ONE_MILLION_FAMILIES = /^gemini(?:-|$)/;
+
+/** An opt-out set to an explicit negative reads as off, not as "the variable is present". */
+function optedOut(value: string | undefined): boolean {
+  return value !== undefined && !['', '0', 'false', 'no', 'off'].includes(value.toLowerCase());
+}
+
+/**
+ * Claude reads a row's context window from a `[1m]` tag on the model ID before it consults
+ * the `behavesAs` profile, and it matches `behavesAs` on the untagged spelling. Tagging a
+ * row therefore states the provider's real window without adopting a Claude profile that
+ * also advertises effort levels the provider does not have. The harness strips the tag
+ * before it resolves the native model. `MULTI_DISABLE_1M_CONTEXT` opts out.
+ */
+export function oneMillionContext(
+  model: string,
+  id: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const family = id.replace(/-(low|medium|high)$/, '');
+  if (optedOut(env.MULTI_DISABLE_1M_CONTEXT) || !ONE_MILLION_FAMILIES.test(family)) {
+    return model;
+  }
+  return `${model}[1m]`;
 }

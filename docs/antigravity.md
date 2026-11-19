@@ -19,7 +19,9 @@ node plugins/multi-core/src/launcher.ts --antigravity-setup
 MULTI_ANTIGRAVITY=1 node plugins/multi-core/src/launcher.ts
 ```
 
-`--antigravity-models` lists the catalog. The gateway uses `agy` authentication
+Every launch points the hook at the copy of the plugin that is running, and each native
+run repairs it if another copy changed it, so updating or switching copies needs no
+second setup. `--antigravity-models` lists the catalog. The gateway uses `agy` authentication
 and does not read provider tokens or call Antigravity model endpoints.
 
 ## Models
@@ -37,7 +39,7 @@ The default variant order is medium, high, then low. `/effort` accepts only an
 advertised low, medium, or high variant. Unknown models and unavailable effort
 variants fail explicitly.
 
-Workers: the Agent tool's `multi-antigravity` type runs any row above, except
+Workers: the Agent tool's `Antigravity` type runs any row above, except
 an id that only adds an effort suffix to another listed row (`<base>-high`
 beside `<base>`) — that stays selectable through `/effort`, not through
 `model`. Pass `model: <id>` (for example `model: gemini-4-argon`) to pick a
@@ -49,7 +51,7 @@ Antigravity picks its advertised low/medium/high variant from it.
 ### Context window
 
 Gemini picker rows carry a `[1m]` tag on the model ID, so Claude sizes the
-session to the million input tokens Gemini 3.x accepts; a `multi-antigravity`
+session to the million input tokens Gemini 3.x accepts; an `Antigravity`
 worker resolved to one of these rows keeps the tag on its spawned model. The
 tag is Claude-side display metadata: `agy` never sees it, both spellings select
 the same native model, and `/effort` still offers only the advertised low,
@@ -58,7 +60,7 @@ medium, and high variants.
 Other advertised models keep Claude's 200K default, because their window is smaller
 or unestablished: GPT-OSS 120B accepts 131,072 tokens, and the Claude models served
 here carry no 1M entitlement. `agy models` reports no capacity metadata, so the
-eligible families are listed in `launcher.ts` rather than discovered. Set
+eligible families are listed in `multi-antigravity/src/models.ts` rather than discovered. Set
 `MULTI_DISABLE_1M_CONTEXT=1` to leave every row untagged.
 
 Claude's window governs when the session compacts. It is separate from the native
@@ -86,7 +88,7 @@ billing are shown by receipts, not written into the text. Claude and OpenAI pare
 workers.
 
 Every run selects its native workspace explicitly with `--add-dir`; subprocess
-cwd alone does not select it. Auto, acceptEdits, and Bypass use the native CLI
+cwd alone does not select it. Every Claude mode except Plan uses the native CLI
 without a reviewer, while the hook enforces explicit Claude restrictions. Plan
 also passes `--mode plan`, which only steers agy's model: with permissions
 skipped it still runs shell and write tools. The hook therefore allows only
