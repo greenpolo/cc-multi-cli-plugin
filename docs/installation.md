@@ -71,8 +71,8 @@ saved selection, this extends the curated defaults. Re-running setup without
 `--models` preserves your selection;
 existing installations with no saved selection keep the curated defaults.
 
-Each connected provider gets exactly one Agent-tool worker type (`multi-openai`,
-`multi-zen`, `multi-cursor`, `multi-antigravity`, `multi-grok`), and a type's
+Each connected provider gets exactly one Agent-tool worker type (`OpenAI`,
+`Zen`, `Cursor`, `Antigravity`, `Grok`), and a type's
 models are exactly its provider's rows in this selection: the Agent tool's
 `model` parameter names one of them, as a short id (`kimi-k3`) or the full
 `multi/zen/kimi-k3` id. A model absent from the selection is refused when a

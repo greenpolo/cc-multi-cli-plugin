@@ -1,5 +1,5 @@
 import { setBounded } from './bounded.ts';
-import { isProviderWorker } from './provider-workers.ts';
+import { isProviderWorker } from './provider.ts';
 import { isRecord } from './record.ts';
 
 export type RememberWorkerModel = (id: string, type: string, model: string) => void;

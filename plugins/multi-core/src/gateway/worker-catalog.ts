@@ -6,7 +6,7 @@
  * request's effort (the session's /effort) applies, validated by the provider.
  */
 
-import { providerManifest, providerManifests, providerOf } from './provider.ts';
+import { providerManifest, providerManifests, providerOf, workerType } from './provider.ts';
 
 /** Claude's model aliases: the Agent tool's own values, never a provider model. */
 const CLAUDE_ALIASES = new Set(['sonnet', 'opus', 'haiku', 'fable', 'inherit']);
@@ -44,10 +44,6 @@ export interface WorkerDefaults {
   defaultId?: (ids: readonly string[]) => string | undefined;
   /** A default every model of the provider accepts, or none. */
   effort?: string;
-}
-
-function workerType(provider: string): string {
-  return `multi-${provider}`;
 }
 
 function providerLabel(provider: string): string {

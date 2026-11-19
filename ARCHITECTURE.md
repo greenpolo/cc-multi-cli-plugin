@@ -72,8 +72,8 @@ elapsed time, streamed progress, completion, failure, and cancellation.
 ## Worker types
 
 The Agent tool offers exactly one type per signed-in or enabled provider:
-`multi-openai`, `multi-zen`, `multi-cursor`, `multi-antigravity`, and
-`multi-grok`. A type's models are exactly that provider's rows in the session's
+`OpenAI`, `Zen`, `Cursor`, `Antigravity`, and
+`Grok`. A type's models are exactly that provider's rows in the session's
 `/model` picker, so `--models`, `MULTI_MODELS`, and the provider-specific
 `_EXTRA_MODELS`/`_MODELS` environment variables bound them. The Agent tool's
 `model` parameter names a model as a short id (`composer-2.5`, `gpt-6-luna`) or

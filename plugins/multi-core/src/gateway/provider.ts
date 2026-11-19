@@ -12,9 +12,12 @@ export type AutoReviewPolicy = { review: 'reviewer' | 'harness' | 'none'; statem
 
 /** What a provider states about itself, without running any of its code. */
 export interface ProviderManifest {
-  /** The `<name>` of `multi/<name>/<model>` and of the `multi-<name>` plugin and worker type. */
+  /** The `<name>` of `multi/<name>/<model>` and of the `multi-<name>` plugin. */
   name: string;
-  /** How rows, workers and refusals name the provider. */
+  /**
+   * How rows, workers and refusals name the provider. It is also the provider's Agent-tool
+   * type, which Claude Code shows wherever it names an agent by type, as it shows `Explore`.
+   */
   label: string;
   /** `direct`: Claude Code runs the tools. `harness`: the provider's SDK or CLI does. */
   kind: 'direct' | 'harness';
@@ -94,6 +97,24 @@ export function providerManifests(): readonly ProviderManifest[] {
 
 export function providerManifest(name: string | undefined): ProviderManifest | undefined {
   return name === undefined ? undefined : BY_NAME.get(name);
+}
+
+/** The Agent-tool type of a provider's worker: the provider's own label. */
+export function workerType(provider: string): string {
+  return BY_NAME.get(provider)?.label ?? provider;
+}
+
+/** Before 0.5 the types were `multi-<provider>`; a resumed transcript still names them. */
+const BY_WORKER_TYPE = new Map(
+  MANIFESTS.flatMap(({ name, label }) => [
+    [label, name],
+    [`multi-${name}`, name],
+  ]),
+);
+
+/** Whether an Agent type is a provider's worker (`Cursor`, or a legacy `multi-cursor`). */
+export function isProviderWorker(type: unknown): boolean {
+  return typeof type === 'string' && BY_WORKER_TYPE.has(type);
 }
 
 /** The folder a provider's code lives in, for loading its adapter. */

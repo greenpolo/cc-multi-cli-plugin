@@ -29,19 +29,19 @@ interface TraceEvent {
   effort?: string;
 }
 
-// `<worker type> <model>`: multi-openai with an OpenAI model, or multi-cursor with a Cursor id.
-const worker = process.argv[2] ?? 'multi-openai';
-const workerModel = process.argv[3] ?? (worker === 'multi-cursor' ? 'composer-2.5' : 'gpt-6-astra');
+// `<worker type> <model>`: OpenAI with an OpenAI model, or Cursor with a Cursor id.
+const worker = process.argv[2] ?? 'OpenAI';
+const workerModel = process.argv[3] ?? (worker === 'Cursor' ? 'composer-2.5' : 'gpt-6-astra');
 const parent = process.argv[4] ?? 'sonnet';
 const cursor =
-  worker === 'multi-cursor'
+  worker === 'Cursor'
     ? cursorModelOptions(await (await import('@cursor/sdk')).Cursor.models.list()).find(
         (option) => option.model === `multi/cursor/${encodeURIComponent(workerModel)}`,
       )
     : undefined;
 assert(
-  cursor || (worker === 'multi-openai' && Object.values(MODELS).includes(workerModel)),
-  'Pass multi-openai or multi-cursor and one of its models (--cursor-models lists Cursor ids)',
+  cursor || (worker === 'OpenAI' && Object.values(MODELS).includes(workerModel)),
+  'Pass OpenAI or Cursor and one of its models (--cursor-models lists Cursor ids)',
 );
 if (cursor) {
   assert.equal(

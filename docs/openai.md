@@ -26,11 +26,11 @@ Picker rows include `behavesAs` metadata for Claude client compatibility. This m
 
 ## Workers
 
-The Agent tool's `multi-openai` type runs any row above: pass `model: <id>`
+The Agent tool's `OpenAI` type runs any row above: pass `model: <id>`
 (for example `model: gpt-6-luna`) to pick one, or omit `model` to run the
 default, `gpt-6.1-sol`. An unknown id, another provider's model, or an
 effort-suffixed name such as `gpt-6-luna-high` refuses the spawn, naming the
-available OpenAI models. `multi-openai` runs one provider-wide medium effort;
+available OpenAI models. `OpenAI` runs one provider-wide medium effort;
 effort is never part of the model name, and the session's `/effort` does not
 change it. Workers appear as native subagent entries with model activity,
 elapsed time, progress, and completion status. Cancelling the Claude request

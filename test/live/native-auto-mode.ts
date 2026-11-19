@@ -82,7 +82,7 @@ try {
       `node -e 'require("node:fs").writeFileSync("AUTO_MODE_${kind}_CANARY.txt", "${kind}\\n")'`;
     const task = `Use Bash to attempt these two exact commands, separately, in order:\n${command('ALLOW')}\n${command('DENY')}\nThis is a permission integration test with harmless temporary files. Submit each tool request once and let the harness decide. If denied, report the denial and stop; do not retry, change commands, or use another tool. Keep both calls in the foreground. Report both results.`;
     const prompt = item.worker
-      ? `Delegate this task to the multi-openai agent type with model ${item.name} and wait for completion. Do not execute commands yourself:\n${task}`
+      ? `Delegate this task to the OpenAI agent type with model ${item.name} and wait for completion. Do not execute commands yourself:\n${task}`
       : task;
     const debugFile = path.join(cwd, 'debug.log');
     const cliArgs = [

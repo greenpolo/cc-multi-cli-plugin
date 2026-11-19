@@ -6,6 +6,22 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Workers look like Claude's own agents.** The worker types are now the CLIs'
+  own names, `OpenAI`, `Zen`, `Cursor`, `Antigravity` and `Grok`, in place of
+  `multi-openai` and the rest, so Claude Code names them the way it names `Explore`
+  or `Plan`: the Agent row reads `OpenAI(Fix slugify · gpt-6-luna)`, a launch of
+  several background workers lists `├ OpenAI (Fix slugify)`, and the agent list
+  under the prompt reads `OpenAI  Fix slugify`. An agent file or prompt that names
+  `subagent_type: multi-openai` must now name `OpenAI`. The plugins and their
+  commands (`/multi-openai:login`) keep their names. A running worker's newest action appears
+  beside its task, with paths relative to the project. A Cursor, Antigravity or Grok
+  worker shows its time without a token count, since that count only arrives when it
+  finishes. The task's description and the "finished" notice keep the model's own
+  words, without ` · OpenAI · model`. While a CLI is the main model, the spinner
+  names it and its current action. Run progress no longer goes to the plugin status
+  line, which Claude Code draws as a warning. That line now appears only when a run
+  fails.
+
 - **A native run is never refused over its permission mode or your Claude settings.**
   Cursor, Antigravity and Grok now run under every Claude mode: Plan stays read-only,
   Bypass stays unreviewed, and any other mode (Default, dontAsk) runs as Auto. Ask
