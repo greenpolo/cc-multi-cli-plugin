@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyHarnessFailure } from '../../plugins/multi-core/src/gateway/harness-failure.ts';
+import {
+  classifyHarnessFailure,
+  HarnessSetupError,
+} from '../../plugins/multi-core/src/gateway/harness-failure.ts';
 import { NativeCliError } from '../../plugins/multi-core/src/gateway/harness-process.ts';
 import { HarnessBusyError } from '../../plugins/multi-core/src/gateway/harness-session.ts';
 
@@ -8,6 +11,8 @@ const status = (error: unknown) => classifyHarnessFailure(error).status;
 
 test('configuration and deterministic failures are request errors', () => {
   assert.equal(status(new HarnessBusyError('busy')), 400);
+  // A missing agy hook was a 502 that Claude Code retried ten times before failing.
+  assert.equal(status(new HarnessSetupError('hook missing')), 400);
   assert.equal(status(new NativeCliError('policy', 'policy')), 400);
   assert.equal(status(new NativeCliError('gone', 'spawn', { systemCode: 'ENOENT' })), 400);
   assert.equal(status(new NativeCliError('denied', 'spawn', { systemCode: 'EACCES' })), 400);

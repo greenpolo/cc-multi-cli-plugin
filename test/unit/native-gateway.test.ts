@@ -1130,6 +1130,26 @@ test('HTTP failures retain status and retry-after without returning private upst
   }
 });
 
+test('an expired Zen key is named instead of a bare HTTP status, without the upstream body', async (t) => {
+  const call = await gateway(
+    t,
+    async () =>
+      new Response(
+        JSON.stringify({
+          error: { type: 'api_key_expired', message: 'secret provider diagnostic' },
+        }),
+        { status: 401 },
+      ),
+    { zen: { apiKey: 'zen-expired-fixture' } },
+  );
+  const response = await call({ ...body, model: 'multi/zen/kimi-k3' });
+  assert.equal(response.status, 401);
+  const text = await response.text();
+  assert.match(text, /Zen API key has expired/);
+  assert.match(text, /connect zen --replace/);
+  assert(!text.includes('secret provider diagnostic'));
+});
+
 test('invalid request shapes fail locally and legacy thinking budgets respect explicit effort', async (t) => {
   const call = await gateway(t, () => assert.fail('Invalid requests must not reach a provider'));
   for (const invalid of [

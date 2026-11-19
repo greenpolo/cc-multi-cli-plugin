@@ -50,9 +50,11 @@ async function secretInput(): Promise<string> {
   });
 }
 
-async function connectZen() {
-  if (await readZenKey()) {
-    console.log('Zen credentials found. Relaunch Claude to load Zen models.');
+async function connectZen(replace: boolean) {
+  if (!replace && (await readZenKey())) {
+    console.log(
+      'Zen credentials found. Relaunch Claude to load Zen models, or run `multi connect zen --replace` to save a new key.',
+    );
     return 0;
   }
   console.log('Create a Zen API key at https://opencode.ai/auth');
@@ -67,12 +69,12 @@ async function main() {
   if (!enabled.some((name) => name === provider)) {
     throw new Error('Install and enable the requested Multi provider plugin first.');
   }
-  if (command === 'connect' && provider === 'zen' && args.length === 0) {
-    return connectZen();
+  if (command === 'connect' && provider === 'zen' && args.every((arg) => arg === '--replace')) {
+    return connectZen(args.length > 0);
   }
   if (command !== 'login') {
     throw new Error(
-      'Usage: multi status | login openai [--device-auth] | login cursor | connect zen | login antigravity | login grok | uninstall',
+      'Usage: multi status | login openai [--device-auth] | login cursor | connect zen [--replace] | login antigravity | login grok | uninstall',
     );
   }
   if (provider === 'openai' && args.every((arg) => arg === '--device-auth')) {

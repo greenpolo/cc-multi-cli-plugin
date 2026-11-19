@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteFile } from '../../multi-core/src/gateway/atomic-write.ts';
+import { HarnessSetupError } from '../../multi-core/src/gateway/harness-failure.ts';
 import { lockStateFile } from '../../multi-core/src/gateway/state-lock.ts';
 
 const namespace = 'multi-cli-antigravity';
@@ -115,7 +116,7 @@ export async function checkAntigravityHooks(
   );
   const settings = await readHooks(files.settingsFile ?? antigravitySettingsFile(options));
   if (settings.modelProvider !== undefined || settings.customModels !== undefined) {
-    throw new Error(
+    throw new HarnessSetupError(
       'Antigravity requires native account authentication and models; custom provider settings are unsupported.',
     );
   }
@@ -123,8 +124,9 @@ export async function checkAntigravityHooks(
 
 function assertAntigravityHooks(hooks: Record<string, unknown>, platform: NodeJS.Platform): void {
   if (JSON.stringify(hooks[namespace]) !== JSON.stringify(antigravityHookDefinition(platform))) {
-    throw new Error(
-      'Antigravity requires its native permission hook. Run the launcher with --antigravity-setup.',
+    throw new HarnessSetupError(
+      'Antigravity requires its native permission hook, which is missing or out of date. ' +
+        'Relaunch Claude with Multi, or run `multi login antigravity`, to reinstall it.',
     );
   }
 }

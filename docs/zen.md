@@ -16,7 +16,7 @@ Zen uses an API key stored in OpenCode's auth store. The writer requests mode
 | Platform | Default auth file |
 | --- | --- |
 | Linux and macOS | `$XDG_DATA_HOME/opencode/auth.json`, or `~/.local/share/opencode/auth.json` |
-| Windows | `%LOCALAPPDATA%\opencode\auth.json` |
+| Windows | `%XDG_DATA_HOME%\opencode\auth.json`, or `%USERPROFILE%\.local\share\opencode\auth.json` (OpenCode 1.1 and newer); the older `%LOCALAPPDATA%\opencode\auth.json` is read when only it exists |
 | Any platform with an override | The path in `OPENCODE_AUTH_FILE` |
 
 `OPENCODE_API_KEY` can provide the key for a process. The connection helper preserves other provider entries in the OpenCode auth store.

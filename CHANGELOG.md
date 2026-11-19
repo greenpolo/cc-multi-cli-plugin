@@ -14,6 +14,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   rows belong to can no longer be found, the gateway now answers 410 instead of 404,
   so Claude Code shows the real explanation rather than "model not found".
 
+- **Find the Zen key where current OpenCode saves it on Windows.** OpenCode 1.1 and
+  newer write `~\.local\share\opencode\auth.json` on Windows; Multi now reads that
+  first and still falls back to `%LOCALAPPDATA%\opencode\auth.json`.
+
+- **Say when the Zen key has expired.** An `api_key_expired` reply from Zen now
+  explains that the key expired and how to replace it, instead of a bare HTTP status.
+  `multi connect zen --replace` saves a new key over an existing one.
+
+- **Fail fast when the Antigravity hook is missing.** A missing or outdated
+  permission hook, or custom provider settings, now fail at once with HTTP 400 and
+  how to fix it, instead of a 502 that Claude Code retried for about 2.5 minutes.
+
 - **Remove Zen `deepseek-v4-flash`.** OpenCode deprecated it on 2026-10-26;
   `deepseek-v4.1-flash` remains.
 
