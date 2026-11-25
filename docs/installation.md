@@ -68,14 +68,10 @@ that name; re-run with `--command claude-multi` to restore the default. Setting
 `MULTI_MODELS` in the environment overrides the saved model selection for one
 launch. Model IDs are listed in each provider's documentation.
 
-The default picker shows four OpenAI, three Cursor, and five Zen models when those
-providers are connected. A model absent from these defaults can be selected with
-its full ID using `--models`; the full connected catalog remains available for
-explicit selection. Use `--cursor-models` or `--zen-models` to inspect IDs. To add
-one model, run `/multi-core:setup --models +multi/zen/glm-5.2`. With no
-saved selection, this extends the curated defaults. Re-running setup without
-`--models` preserves your selection;
-existing installations with no saved selection keep the curated defaults.
+By default the picker shows all six OpenAI models, three Cursor rows, five Zen
+models, and the models `agy` and `grok` advertise. To add one model to that, run
+`/multi-core:setup --models +multi/zen/glm-5.2`; `--cursor-models`, `--zen-models`,
+`--antigravity-models` and `--grok-models` print the IDs.
 
 Each connected provider gets exactly one Agent-tool worker type (`OpenAI`,
 `Zen`, `Cursor`, `Antigravity`, `Grok`), and a type's
@@ -100,26 +96,21 @@ and enabled providers; it does not authenticate accounts or run inference.
 
 ## Claude desktop app
 
-Setup also prepares sessions the Claude desktop app starts in its Code tab, which run
-no launcher. In such a session Multi's mod starts the gateway itself, and the session
-gets the `/model` rows and workers a `claude-multi` session gets. Setup writes two
-things to Claude's user settings (`~/.claude/settings.json`), and `multi uninstall`
-takes both back out:
+Setup also prepares the Claude desktop app's Code tab, which runs no launcher: there
+Multi's mod starts the gateway with each new session, so `/model` rows and workers work
+as in `claude-multi`. Workers show as `multi-core:OpenAI` and so on, because Claude Code
+names agents a plugin registers after the plugin. Start a new desktop session after setup.
 
-- `modelPicker`: the connected providers' `/model` rows, kept beside any rows of your
-  own. The gateway refreshes them when they change. Plain `claude` in a terminal lists
-  them too; they answer only in a `claude-multi` or desktop session.
-- `env.NODE_EXTRA_CA_CERTS`: a file holding the extra certificates you had named (if
-  any) and one certificate Multi makes for this installation, valid 397 days (setup
-  renews it). Claude Code trusts it for `api.anthropic.com`, so a desktop session can
-  reach the gateway as its proxy and keep Remote Control. Its key stays in Multi's data
-  directory, readable only by you. If you change your own `NODE_EXTRA_CA_CERTS` later,
-  re-run setup.
+Setup writes two entries to `~/.claude/settings.json`, and `multi uninstall` restores both:
 
-Start a new desktop session after setup. A session where the certificate is not trusted
-still works through `ANTHROPIC_BASE_URL`, with Remote Control off and a one-line notice.
-Worker types appear as `multi-core:OpenAI` and so on in desktop sessions, because Claude
-Code names agents a plugin registers after the plugin.
+- `modelPicker`: the connected providers' `/model` rows. Plain `claude` in a terminal
+  lists them too; they answer only in a `claude-multi` or desktop session.
+- `env.NODE_EXTRA_CA_CERTS`: your own extra certificates (if any) plus one Multi makes
+  for this installation (valid 397 days, renewed by setup; its key stays in Multi's data
+  directory, readable only by you). It lets a desktop session reach the gateway as its
+  proxy and keep Remote Control. Without it the session uses `ANTHROPIC_BASE_URL`, with
+  Remote Control off and a one-line notice. Re-run setup if you change your own
+  `NODE_EXTRA_CA_CERTS`.
 
 ## Update
 

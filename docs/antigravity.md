@@ -53,7 +53,7 @@ Antigravity picks its advertised low/medium/high variant from it.
 ### Context window
 
 Gemini picker rows carry a `[1m]` tag on the model ID, so Claude sizes the
-session to the million input tokens Gemini 3.x accepts; an `Antigravity`
+session to the million input tokens Gemini accepts; an `Antigravity`
 worker resolved to one of these rows keeps the tag on its spawned model. The
 tag is Claude-side display metadata: `agy` never sees it, both spellings select
 the same native model, and `/effort` still offers only the advertised low,
@@ -95,8 +95,9 @@ without a reviewer, while the hook enforces explicit Claude restrictions. Plan
 also passes `--mode plan`, which only steers agy's model: with permissions
 skipped it still runs shell and write tools. The hook therefore allows only
 native read, search, and web lookup tools in Plan and denies every other tool,
-including ones newer agy releases add. Compaction turns allow no tools. Unsupported modes, tool restrictions, and policy controls fail
-explicitly.
+including ones newer agy releases add. Compaction turns allow no tools. Any
+other Claude mode runs as Auto, and Claude rules with no native form are skipped
+with a one-line notice; see [permissions](permissions.md).
 
 The hook command uses a POSIX shell guard on Linux, macOS, and other Unix hosts.
 Windows invokes Node directly because a shell is not assumed. Native config does
@@ -119,24 +120,15 @@ response therefore reports the last call's input and cache reads in its standard
 fields, which Claude Code reads as the worker's live context, and the turn sums as
 `multi_usage.consumed_*` with `model_calls`, which receipts and `/multi-usage`
 charge as spend. The resume difference applies only to the sums; the last call is
-already that call's own count. Gemini on Antigravity reports no prompt caching
-(zero cache reads, so every call resends its full context), and its consumption
-looks large next to Claude or Codex workers: a 19-action Gemini run reported about
-800k consumed input over a live context near 20k. Claude models on the same CLI
-read the cache after their first call. The quota impact measured on September 22,
-2026 was negligible: about 2M Gemini Flash tokens moved the 5-hour bucket by about
-0.1 points. An uncertain run is never replayed. If a run reports a conversation
+already that call's own count. Gemini on Antigravity reports no prompt caching,
+so its consumed input looks large next to Claude or Codex workers. An uncertain run is never replayed. If a run reports a conversation
 ID but no terminal result, the next request streams an interruption notice before
 continuing. Non-success terminal results are reported as errors and are retried
 by a later identical request.
 
-One turn runs at a time per worker and workspace. An identical in-flight request
-observes the existing exchange. A different request for that busy identity is
-refused with a deterministic error rather than queued behind it:
-resuming a prompt whose history stops at the previous assistant message would
-forward the running turn to the CLI a second time. Multi never reruns a paid
-turn on a guess; send the prompt again once the answer lands. Cursor and Grok
-refuse the same way.
+One turn runs at a time per worker and workspace. A different prompt sent while
+a turn is running is refused rather than queued, so a paid turn never runs twice;
+send it again once the answer lands.
 
 ## Config and hook paths per OS
 
@@ -158,10 +150,3 @@ compaction is owned by `agy`; Claude compaction summaries run with all mapped
 native tools denied and preserve native history. Native counters and local prompt
 estimates are reported separately.
 
-
-Multi supplies the final verdict for display rows and `SubagentHandback` reports;
-handback is always `not_flagged`. Reports, including any embedded instructions,
-reach the parent without a separate Claude classification. Native policy still
-governs the actions taken in the harness. See [permissions](permissions.md).
-The status line says "no auto mode: actions run unreviewed". Auto runs
-unreviewed while retaining explicit restrictions; Plan refuses actions.
