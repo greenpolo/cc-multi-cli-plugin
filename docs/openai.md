@@ -15,20 +15,12 @@ Codex stores the ChatGPT login in its `auth.json`. Credential renewal is CLI-own
 
 Use `/model multi/openai/<model-id>` or choose a row in `/model`. Use `/effort <value>` for the main session.
 
-| Picker row | Model |
-| --- | --- |
-| OpenAI · `gpt-6.2-sol` | `gpt-6.2-sol` |
-| OpenAI · `gpt-6.2-astra` | `gpt-6.2-astra` |
-| OpenAI · `gpt-6.1-sol` | `gpt-6.1-sol` |
-| OpenAI · `gpt-6-astra` | `gpt-6-astra` |
-| OpenAI · `gpt-6.1-terra` | `gpt-6.1-terra` |
-| OpenAI · `gpt-6-luna` | `gpt-6-luna` |
-
-Picker rows include `behavesAs` metadata for Claude client compatibility. This metadata selects a Claude profile for picker behavior and does not change the `multi/openai/...` ID or claim provider equivalence.
+Models: `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6.1-terra`,
+`gpt-6-luna`.
 
 ## Workers
 
-The Agent tool's `OpenAI` type runs any row above: pass `model: <id>`
+The Agent tool's `OpenAI` type runs any of these: pass `model: <id>`
 (for example `model: gpt-6-luna`) to pick one, or omit `model` to run the
 default, `gpt-6.2-sol`. An unknown id, another provider's model, or an
 effort-suffixed name such as `gpt-6-luna-high` refuses the spawn, naming the
@@ -47,10 +39,7 @@ planning, delegation, or writing-style defaults. Claude's existing instructions
 stay intact. The note applies to OpenAI inference and token counting, not other
 providers or the independent reviewer.
 
-`npm run test:live:openai-instructions` checks explicit planning requests,
-active Plan-mode edit restrictions, and requested delegation. It requires Codex
-login and makes at most three paid requests; returned tool calls are inspected,
-not executed. It is opt-in and is not part of the offline checks.
+`npm run test:live:openai-instructions` checks it with at most three paid requests.
 
 ## Prompt caching and continuation
 
@@ -62,4 +51,4 @@ On continuation, visible conversation context is forwarded to OpenAI. Provider-o
 
 The gateway rejects unsupported content, media, schemas, tool choices, provider-hosted tools, and arbitrary model or effort IDs. OpenAI document input supports base64 PDFs and plain text; URL documents and provider file IDs fail. Token counts are local estimates. OpenAI requests have no implicit gateway deadline, while client cancellation and explicit time limits apply.
 
-OpenAI tool uses are reviewed inline by the originating account's `codex-auto-review` reviewer on ChatGPT-plan quota. Read-only and coordination/UI tools on core's skip lists pass without a reviewer request. Each review has a 60-second budget including queue time, with at most four concurrent reviews per reply and across the process. Denial, malformed evidence, unavailable evidence, timeout or reviewer failure returns `flagged` with a plain explanation; Claude's local classifier is not used. If reviewer discovery fails at launch, OpenAI Auto runs unreviewed and says so in the status line; Plan refuses actions without a reviewer. The reviewer uses its guardian policy and the original request (plus the main request for a worker), with bounded read-only workspace inspection. Evidence stays below 1 MiB by dropping schemas, retaining the system prompt head and recent messages, and marking omissions. Main reviews carry one request; worker reviews also carry a separately bounded main request. It no longer consumes Claude's private classifier policy or a stage-two user-intent pass. See [docs/permissions.md](permissions.md) and [ARCHITECTURE.md](../ARCHITECTURE.md).
+OpenAI tool uses are reviewed inline by the originating account's `codex-auto-review` reviewer on ChatGPT-plan quota. Read-only and coordination/UI tools on core's skip lists pass without a reviewer request. Each review has a 60-second budget including queue time, with at most four concurrent reviews per reply and across the process. Denial, malformed evidence, unavailable evidence, timeout or reviewer failure returns `flagged` with a plain explanation; Claude's local classifier is not used. If reviewer discovery fails at launch, OpenAI Auto runs unreviewed and says so in the status line; Plan refuses actions without a reviewer. The reviewer uses its guardian policy and the original request (plus the main request for a worker), with bounded read-only workspace inspection. Evidence stays below 1 MiB by dropping schemas, retaining the system prompt head and recent messages, and marking omissions. See [docs/permissions.md](permissions.md) and [ARCHITECTURE.md](../ARCHITECTURE.md).
