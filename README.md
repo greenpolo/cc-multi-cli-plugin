@@ -23,9 +23,9 @@ Multi brings external models and coding harnesses into one Claude Code session t
 ## Why Multi?
 
 - **Choose your model in place.** Switch through `/model` and select supported reasoning effort with `/effort`.
-- **Delegate to provider workers.** Run a provider's own model from the Agent tool (`OpenAI`, `Cursor`, `Zen`, `Antigravity`, `Grok`); native actions appear as tool rows under the harness's own tool names, with elapsed time and cancellation.
+- **Delegate to provider workers.** Run a provider's own model from the Agent tool (`OpenAI`, `Cursor`, `Zen`, `Antigravity`, `Grok`); native actions appear as tool rows under the harness's own tool names.
 - **Keep native execution.** OpenAI and Zen use Claude Code's tools; Cursor, Antigravity and Grok run their own SDK or CLI tools.
-- **Carry your session forward.** Resume saved sessions while keeping provider credentials and native state separate.
+- **Carry your session forward.** Resume saved sessions, and keep Remote Control when signed in to claude.ai.
 - **Stay in control.** Claude's permission mode and explicit tool restrictions govern provider dispatch.
 
 ## Install
@@ -74,25 +74,12 @@ Use `/multi-usage` to open a provider usage menu with quotas, billed spend where
 available, session tokens, and worker receipts. Set `MULTI_RECEIPTS_FILE` before
 launching to append JSONL receipts. See [usage and receipts](docs/usage.md).
 
-## Platforms
-
-Linux, macOS, and Windows have platform-specific implementations and a CI matrix for offline checks on pushes and pull requests. WSL uses Linux paths and policy handling. See [platform support](docs/platform-support.md) for verification scope and remaining live checks.
-
 ## Documentation
 
-| Start here | Learn more |
-| --- | --- |
-| [Installation and account setup](docs/installation.md) | [Permissions and review](docs/permissions.md) |
-| [OpenAI](docs/openai.md) · [Cursor](docs/cursor.md) | [Architecture and execution flow](ARCHITECTURE.md) |
-| [Claude Mods reference](docs/claude-mods.md) | Required integration boundary for Claude Code UI and extensibility |
-| [OpenCode Zen](docs/zen.md) · [Antigravity](docs/antigravity.md) · [Grok](docs/grok.md) | [Platform support and verification](docs/platform-support.md) |
-
-<details>
-<summary>Does this change my normal Claude setup?</summary>
-
-With the default `claude-multi` command, plain `claude` stays unchanged. Choosing `--command claude` explicitly shadows it. Provider plugins are opt-in, and each provider uses its own authentication. `multi uninstall` removes the shell integration while preserving provider logins.
-
-</details>
+- [Installation](docs/installation.md), [usage and receipts](docs/usage.md), [permissions](docs/permissions.md)
+- Providers: [OpenAI](docs/openai.md) · [Cursor](docs/cursor.md) · [OpenCode Zen](docs/zen.md) · [Antigravity](docs/antigravity.md) · [Grok](docs/grok.md)
+- [Platform support](docs/platform-support.md) (Linux, macOS, Windows; WSL uses the Linux paths)
+- Contributors: [architecture](ARCHITECTURE.md), [Claude Mods reference](docs/claude-mods.md)
 
 <details>
 <summary>Where do tools run?</summary>
@@ -108,8 +95,7 @@ Bug reports, provider improvements, and documentation fixes are welcome. Read th
 [bug report](https://github.com/greenpolo/cc-multi-cli-plugin/issues/new?template=bug_report.yml) or
 [feature request](https://github.com/greenpolo/cc-multi-cli-plugin/issues/new?template=feature_request.yml).
 
-CI runs the repository checks on Linux, macOS, and Windows. See the
-[workflow results](https://github.com/greenpolo/cc-multi-cli-plugin/actions/workflows/ci.yml).
+CI runs `npm run check` on Linux, macOS, and Windows.
 
 ## License
 

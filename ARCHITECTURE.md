@@ -263,16 +263,9 @@ saves the migrated record under its existing locks. Archives are migrated before
 replay too; native IDs, pending runs and content are preserved. Provider usage and
 native recovery decisions stay in the adapters.
 
-Cursor upgrades preserve v2 native agents and pending run IDs. The store holds
-both the old filename's lock and the current v3 filename's lock while migrating
-and using a record. Existing v3 state takes precedence when both records identify
-the same agent; conflicting native identities fail explicitly. The original v2
-file is preserved. Cursor's 32-agent budget counts attached SDK handles and
-in-flight attachment reservations, not disk-only replay records. Eviction closes
-an idle SDK handle while retaining its native identity for later resume.
-Handles with an in-flight billed usage query are not evicted. A detached SDK
-record's `running` status is not a live ownership claim: the existing interrupted
-continuation notice remains the fallback when no terminal result can be recovered.
+Cursor migrates v2 records under both filenames' locks and refuses when v2 and v3
+name different agents. Its 32-agent budget counts attached SDK handles; eviction
+closes an idle handle and keeps its native identity for a later resume.
 
 Replay validation is provider-parameterized: new replies from every harness are
 text-only, and Cursor still accepts the display-only `tool_use` blocks that the

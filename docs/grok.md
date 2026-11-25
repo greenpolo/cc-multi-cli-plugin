@@ -58,9 +58,8 @@ installed.
 | Default, dontAsk | `--permission-mode auto`, with a one-line notice |
 
 Restrictions are expressed three times on purpose. The native toolset is bounded
-with `--tools`, every ungranted tool is *also* removed by name — the allowlist
-alone left nineteen tools for a twelve-tool request, the CLI adding its own
-planning, feedback and media tools — and execution is gated with `--deny` rules whose syntax matches Claude
+with `--tools`, every ungranted tool is *also* removed by name, because the CLI
+adds its own planning, feedback and media tools to an allowlist, and execution is gated with `--deny` rules whose syntax matches Claude
 Code's own (`Bash(git:*)`, `Write(path)`, `MCPTool(*)`). Deny rules outrank every
 mode, including Bypass. Their genres are coarser than the tool names — `Edit(*)`
 also refuses the `write` tool — so a rule is only sent when none of the tools it
@@ -69,8 +68,9 @@ tool discovery (`search_tool`, `use_tool`) and the interactive `ask_user_questio
 tool are always removed.
 
 Plan mode alone removes no native tool, so Multi reconstructs it with explicit
-denials rather than trusting the flag. Unsupported modes, untranslatable tool
-restrictions, and an unenforced policy fail explicitly.
+denials rather than trusting the flag. Claude rules with no native form are skipped
+with a one-line notice. A run whose announced toolset shows the policy did not take
+effect fails explicitly.
 
 Each finished tool call is a row under Grok's own tool name (`read_file`,
 `run_terminal_command`, ...) with its raw input and output, in the `/model` Grok
@@ -84,9 +84,7 @@ Multi never borrows another provider's.
 ### MCP is denied, not hidden
 
 Grok connects your configured MCP servers after a run starts, and no per-run flag
-prevents it: with a two-entry allowlist and the dynamic discovery tools removed,
-the announced toolset still grew from 2 entries to 65, all 63 additions being MCP
-tools. Multi denies their execution with `MCPTool(*)`, a rule the CLI validates
+prevents it, even with a tight allowlist. Multi denies their execution with `MCPTool(*)`, a rule the CLI validates
 and applies above every mode, but the model still sees those names. If you need
 them out of sight, remove the servers from your Grok configuration with
 `grok mcp`.
@@ -97,8 +95,7 @@ The conversation is flattened into one native prompt behind a fixed preamble.
 Claude's own `system` is never forwarded, and four of its system reminders are
 dropped: the deferred tool catalogue, the MCP server catalogue, the skill
 catalogue, and the subagent catalogue. They name capabilities this provider
-cannot call, and on a measured session they were 72,704 characters of a 95,852
-character prompt whose real message was 841.
+cannot call and made up most of a measured prompt.
 
 Every other reminder is forwarded, because it is an instruction addressed to
 whoever answers the turn and the CLI reaches it no other way: the project's
@@ -122,13 +119,9 @@ instead of starting a fresh one. Follow-ups send only the newest turn after the
 last assistant response, and outer history changes produce a notice and continue
 on the native record. Native state is never rewound.
 
-One turn runs at a time per worker and workspace. An identical in-flight request
-observes the existing exchange. A different request for that busy identity is
-refused with an explicit error rather than queued behind it. Such
-a prompt was written before the running turn answered, so its history stops at the
-previous assistant message and resuming with it would send the running turn to the
-CLI a second time. Multi never reruns a paid turn on a guess; send the prompt
-again once the answer lands. Cursor and Antigravity refuse the same way.
+One turn runs at a time per worker and workspace. A different prompt sent while
+a turn is running is refused rather than queued, so a paid turn never runs twice;
+send it again once the answer lands.
 
 A completed identical request replays its saved output. A run that ends without
 a terminal event is never assumed complete: the next request resumes with an
@@ -170,10 +163,3 @@ rely on Landlock and Seatbelt and are unavailable on Windows; Multi does not use
 them. Images, PDF attachments, strict output schemas, explicit tool choice and
 stop sequences are not supported through this bridge.
 
-
-Multi supplies the final verdict for display rows and `SubagentHandback` reports;
-handback is always `not_flagged`. Reports, including any embedded instructions,
-reach the parent without a separate Claude classification. Native policy still
-governs the actions taken in the harness. See [permissions](permissions.md).
-The status line says "no auto mode: actions run unreviewed". Auto runs
-unreviewed while retaining explicit restrictions; Plan refuses actions.

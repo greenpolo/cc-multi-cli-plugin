@@ -78,36 +78,15 @@ If outer history no longer contains the prior response, Claude receives a notice
 and Cursor continues on its native record. Native state is never rewound.
 Completed identical requests can replay their saved response.
 
-Upgrades migrate legacy v2 gateway records without replacing the native Cursor
-agent or losing a pending run ID, including older records using `pending` instead
-of `interrupted`. Both old and current record locks are held while the gateway
-owns the session; the original file is preserved. Idle capacity eviction releases
-the attachment, in-memory record, and both locks without deleting durable state.
-Disk-only replay releases its record locks when finished and uses no SDK slot.
-Pending creations, resumes, and temporary billed-usage handles share the 32-agent
-SDK budget. Session-wide billing queries cover currently attached worker scopes;
-an individual scope can query its saved native agent without dispatching work.
+Older (v2) gateway records are migrated without replacing the native Cursor agent;
+the original file is kept. If a v2 and a v3 record name different
+native agents, Multi refuses and names both files; keep the one whose conversation
+should continue and move the other out of the state directory. At most 32 SDK agents are attached at once; idle ones are
+released and resumed later from disk.
 
-One turn runs at a time per worker and workspace. An identical in-flight request
-observes the existing exchange. A different request for that busy identity is
-refused with a deterministic error rather than queued behind it:
-resuming a prompt whose history stops at the previous assistant message would
-send the running turn to the SDK a second time. Multi never reruns a paid turn
-on a guess; send the prompt again once the answer lands. Antigravity and Grok
-refuse the same way.
-
-### Legacy record recovery
-
-If v2 and v3 records name different native agents, Multi refuses the ambiguous
-state and reports both file paths. Neither record is automatically discarded.
-Stop every gateway using that workspace and scope, then back up both files.
-Inspect their `agentId`, response, and pending-run information against the native
-Cursor histories to determine which conversation should continue. Do not guess
-or rerun an uncertain action. If the v3 record is authoritative, move the v2 file
-to a backup location outside the state directory. If the v2 record is
-authoritative, move the v3 file instead; the next request will migrate v2.
-Keep both backups until continuation is verified. If ownership cannot be
-established, leave both records intact and resolve the native histories first.
+One turn runs at a time per worker and workspace. A different prompt sent while
+a turn is running is refused rather than queued, so a paid turn never runs twice;
+send it again once the answer lands.
 
 ## Compaction
 
@@ -130,10 +109,3 @@ marks its local token estimate explicitly. The SDK reports usage once per run
 standard usage fields carry the run's sums rather than its last call's context,
 and `model_calls` is not reported. Billed usage is queried separately,
 on demand, and may lag while Cursor settles billing.
-
-
-Multi supplies the final verdict for display rows and `SubagentHandback` reports;
-handback is always `not_flagged`. Reports, including any embedded instructions,
-reach the parent without a separate Claude classification. Native policy still
-governs the actions taken in the harness. See [permissions](permissions.md).
-The status line says that Cursor reviews native actions and fails open.
