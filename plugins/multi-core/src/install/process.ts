@@ -42,7 +42,17 @@ export async function run(
 }
 
 /** What the session started with, kept so a nested run can be given it back. */
-const RESTORABLE = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'] as const;
+const RESTORABLE = [
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  // Set when the gateway is Claude Code's proxy (launch/front-door.ts).
+  'HTTPS_PROXY',
+  'https_proxy',
+  'NO_PROXY',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'CLAUDE_ENV_FILE',
+] as const;
 const ORIGINAL_PREFIX = 'MULTI_ORIG_';
 
 /** Remember the caller's own values before the launcher replaces them. */

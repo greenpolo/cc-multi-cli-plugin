@@ -29,6 +29,7 @@ import {
   warnIfProxyUnused,
   withNestedClaudeShim,
 } from './launch/environment.ts';
+import { prepareFrontDoor } from './launch/front-door.ts';
 import {
   applyModelArgument,
   filterPicker,
@@ -132,7 +133,13 @@ async function main() {
   }
   await writeFile(settingsFile, JSON.stringify(settings), { mode: 0o600 });
   const definitions = JSON.stringify(agents);
-  const baseEnvironment = gatewayEnvironment(address.port, token, anthropic);
+  const frontDoor = await prepareFrontDoor(
+    server,
+    settingsDir,
+    withoutGateway(process.env),
+    anthropic,
+  );
+  const baseEnvironment = gatewayEnvironment(address.port, token, anthropic, frontDoor);
   const claudePath = resolveExecutable('claude', {
     configuredPath: claudeExecutable,
     env: baseEnvironment,

@@ -34,6 +34,7 @@ import {
   RequestTooLarge,
   reason,
   routeOf,
+  ThreadUnsupported,
 } from './request.ts';
 
 /**
@@ -206,6 +207,8 @@ export function failResponse(res: http.ServerResponse, emit: TerminalEmit, error
     error: {
       type: errorTypes[status] ?? 'api_error',
       message: `Native gateway: ${latchSafe(reason(error))}`,
+      // Anthropic's error shape, which Claude Code reads to drop the thread (see request.ts).
+      ...(error instanceof ThreadUnsupported ? { details: { error_code: error.errorCode } } : {}),
     },
   };
   if (error instanceof UpstreamFailure && error.retryAfter && !res.headersSent) {

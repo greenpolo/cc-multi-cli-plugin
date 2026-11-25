@@ -5,7 +5,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nestedClaudeShim, withPathPrefix } from '../gateway/nested-env.ts';
-import { needsEnvProxy, rememberOriginalEnvironment, withoutGateway } from '../install/process.ts';
+import {
+  needsEnvProxy,
+  rememberOriginalEnvironment,
+  withLoopbackNoProxy,
+  withoutGateway,
+} from '../install/process.ts';
+import type { FrontDoorFiles } from './front-door.ts';
 
 /**
  * CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC also blocks the plugin worker's loopback call
@@ -36,30 +42,64 @@ function translateTrafficPolicy(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
-export function gatewayEnvironment(port: number, token: string, anthropic: boolean) {
+export function gatewayEnvironment(
+  port: number,
+  token: string,
+  anthropic: boolean,
+  frontDoor?: FrontDoorFiles,
+) {
   // A launch inside another Multi session starts from the user's own environment.
   const origin = withoutGateway(process.env);
   const env = translateTrafficPolicy({ ...origin });
   delete env.OPENCODE_API_KEY;
+  const gatewayUrl = `http://127.0.0.1:${port}`;
   return {
     ...env,
     // What nested Claude runs get back in place of the gateway (see nested-env.ts).
     ...rememberOriginalEnvironment(origin),
-    ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
+    ...(frontDoor
+      ? frontDoorTransport(origin, gatewayUrl, frontDoor)
+      : baseUrlTransport(origin, gatewayUrl)),
+    MULTI_GATEWAY_TOKEN: token,
+    // Claude Code 2.1.287 and newer has Mods on by default; 2.1.272 to 2.1.286 need this.
+    CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1',
+    MULTI_MOD_GATEWAY_URL: gatewayUrl,
+    ...(!anthropic ? { ANTHROPIC_AUTH_TOKEN: token } : {}),
+    ANTHROPIC_CUSTOM_HEADERS: [origin.ANTHROPIC_CUSTOM_HEADERS, `x-multi-gateway-token: ${token}`]
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
+function baseUrlTransport(origin: NodeJS.ProcessEnv, gatewayUrl: string) {
+  return {
+    ANTHROPIC_BASE_URL: gatewayUrl,
     // A custom base URL makes Claude Code skip on-demand tool loading unless it is told
     // otherwise, and a gateway base URL is always custom. Claude's own default against
     // Anthropic is to defer tools always, which is what 'true' says; the user's own
     // setting is kept. 'auto' would instead load every tool once a 1M window makes them
     // under 10%.
     ENABLE_TOOL_SEARCH: origin.ENABLE_TOOL_SEARCH ?? 'true',
-    MULTI_GATEWAY_TOKEN: token,
-    // Claude Code 2.1.287 and newer has Mods on by default; 2.1.272 to 2.1.286 need this.
-    CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: '1',
-    MULTI_MOD_GATEWAY_URL: `http://127.0.0.1:${port}`,
-    ...(!anthropic ? { ANTHROPIC_AUTH_TOKEN: token } : {}),
-    ANTHROPIC_CUSTOM_HEADERS: [origin.ANTHROPIC_CUSTOM_HEADERS, `x-multi-gateway-token: ${token}`]
-      .filter(Boolean)
-      .join('\n'),
+  };
+}
+
+/**
+ * The gateway as Claude Code's HTTPS proxy (gateway/front-door.ts): the base URL stays
+ * Anthropic's, so Claude Code stays first-party and keeps Remote Control. Loopback stays
+ * direct, for the mod's control-plane calls.
+ */
+function frontDoorTransport(origin: NodeJS.ProcessEnv, gatewayUrl: string, files: FrontDoorFiles) {
+  const direct = withLoopbackNoProxy({
+    HTTPS_PROXY: gatewayUrl,
+    NO_PROXY: origin.NO_PROXY ?? origin.no_proxy,
+  });
+  return {
+    HTTPS_PROXY: gatewayUrl,
+    https_proxy: gatewayUrl,
+    NO_PROXY: direct.NO_PROXY,
+    no_proxy: direct.no_proxy,
+    NODE_EXTRA_CA_CERTS: files.trustFile,
+    CLAUDE_ENV_FILE: files.commandEnvFile,
   };
 }
 

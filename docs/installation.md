@@ -11,6 +11,12 @@
   honored for Claude's own traffic: the gateway forwards it through the proxy to that base URL.
   Node reads the proxy variables at startup only, so the installed command starts the launcher
   with `NODE_USE_ENV_PROXY=1`; a launcher started by hand needs it set.
+- Remote Control works in a session signed in to claude.ai. There the gateway is Claude Code's
+  local HTTPS proxy instead of its base URL, and Claude Code trusts a certificate made for that
+  session only. Your own `HTTPS_PROXY`, `NO_PROXY` and `NODE_EXTRA_CA_CERTS` still apply, and the
+  commands Claude runs see them unchanged. With an API key, another provider, your own
+  `ANTHROPIC_BASE_URL`, or `MULTI_GATEWAY_TRANSPORT=base-url`, the gateway is the base URL and
+  Claude Code turns Remote Control off.
 - OpenAI: the official Codex CLI (`codex`) and a ChatGPT login.
 - Cursor: the official Cursor SDK login. No separate Cursor CLI is required.
 - OpenCode Zen: a Zen API key in OpenCode's auth store or `OPENCODE_API_KEY`.

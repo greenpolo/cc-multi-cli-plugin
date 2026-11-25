@@ -21,6 +21,7 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-core/src/gateway/server.ts`, `request.ts`, `reply.ts`, `anthropic.ts` | Routes requests and manages sessions; request admission and identity; replies and failures; Anthropic passthrough headers and paths. |
 | `plugins/multi-core/src/gateway/messages.ts`, `fetch.ts`, `tools.ts`, `responses.ts`, `bounded.ts`, `record.ts` | Shared protocol, outbound fetch, tool aliases, Responses translation and SSE reader, bounded maps, and the `isRecord` guard. |
 | `plugins/multi-core/src/gateway/provider.ts`, `provider-adapter.ts`, `provider-request.ts` | The provider table read from the manifests, `providerOf`, `nativeSpelling`; the adapter contract and loader; the contract through which direct providers build their own requests. |
+| `plugins/multi-core/src/gateway/front-door.ts`, `self-signed.ts`, `launch/front-door.ts` | The gateway as Claude Code's HTTPS proxy, so Remote Control stays on: CONNECT handling, the per-session certificate, and when a launch uses it. |
 | `plugins/multi-core/src/gateway/executable.ts`, `process-tree.ts` | Resolves executables and manages child processes. |
 | `plugins/multi-core/src/gateway/atomic-write.ts`, `state-lock.ts` | Protects files and serializes native state. |
 | `plugins/multi-core/src/gateway/harness-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Reads what a native run takes from Claude's settings (`readHarnessSettings`, `mergePermissions`, `nativeMode`, `nativeRules`), keeps one permission record per session, and resolves the Agent tool's `model` against each provider's worker catalog. |
@@ -97,6 +98,7 @@ the provider is signed in. For Claude Mods hook or surface changes, also run
 | `npm run test:live:permissions` | Native permissions | Claude and provider login |
 | `npm run test:live:antigravity` | Antigravity CLI harness | `agy` login |
 | `npm run test:live:grok` | Grok Build CLI harness | Grok Build login |
+| `npm run test:live:front-door` | Gateway as Claude Code's proxy (Remote Control path) and an OpenAI worker | Claude and Codex login |
 | `npm run test:live:install` | Plugin installation | None |
 
 The definition of done is passing relevant checks, no `DEP0190` warnings, and an
