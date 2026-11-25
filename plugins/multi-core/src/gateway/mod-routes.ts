@@ -46,6 +46,8 @@ export interface ModRouteContext {
   rows?: DisplayRows;
   /** The per-session keys; a detached session's key is dropped with the session. */
   keys?: ModSessionKeys;
+  /** Ends a gateway its mod started (serve.ts); a launcher's gateway ends with its Claude. */
+  stop?: () => void;
 }
 
 export async function handleModRoute(
@@ -138,6 +140,12 @@ async function handlePostRoute(
     return compactRoute(res, route, parsed, context);
   }
   switch (route) {
+    case '/multi/mod/stop':
+      if (!context.stop) {
+        throw new Error('This gateway ends with the Claude its launcher started');
+      }
+      res.once('finish', context.stop);
+      return reply(res, { accepted: true });
     case '/multi/mod/detach':
       context.forgetReviewContext?.(sessionId);
       compactions?.cancel(sessionId);

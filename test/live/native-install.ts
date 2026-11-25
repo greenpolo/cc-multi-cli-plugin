@@ -150,6 +150,12 @@ await execute(
   { env, cwd: directory },
 );
 const bin = path.join(home, '.local', 'share', 'multi-cli', 'bin');
+// Desktop sessions: setup names the front door's trust file in Claude's user settings.
+const claudeSettings = path.join(home, '.claude', 'settings.json');
+const trustFile = path.join(home, '.local', 'share', 'multi-cli', 'front-door', 'trust.pem');
+const installedSettings = JSON.parse(await readFile(claudeSettings, 'utf8'));
+assert.equal(installedSettings.env?.NODE_EXTRA_CA_CERTS, trustFile);
+assert.match(await readFile(trustFile, 'utf8'), /BEGIN CERTIFICATE/);
 const multi = platform === 'win32' ? path.join(bin, 'multi.cmd') : path.join(bin, 'multi');
 if (platform === 'win32') {
   await access(path.join(bin, 'claude-multi.cmd'));
@@ -196,6 +202,10 @@ await execute(uninstallInvocation.command, uninstallInvocation.args, {
   windowsVerbatimArguments: uninstallInvocation.windowsVerbatimArguments,
 });
 assert.equal(await readFile(profile, 'utf8'), '');
+const restoredSettings = JSON.parse(await readFile(claudeSettings, 'utf8'));
+assert.equal(restoredSettings.env?.NODE_EXTRA_CA_CERTS, undefined);
+assert.equal(restoredSettings.modelPicker, undefined);
+await assert.rejects(access(trustFile));
 console.log(
-  'PASS: core dependency, isolated cache, gateway picker, native enablement, claude-multi without shadowing claude, setup and uninstall. No inference requests.',
+  'PASS: core dependency, isolated cache, gateway picker, native enablement, claude-multi without shadowing claude, setup and uninstall (desktop settings restored). No inference requests.',
 );

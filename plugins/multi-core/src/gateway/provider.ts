@@ -112,9 +112,20 @@ const BY_WORKER_TYPE = new Map(
   ]),
 );
 
+/**
+ * The prefix Claude Code gives an agent type a plugin registers: a desktop session's
+ * workers are registered by the mod (`multi-core:OpenAI`), a launched session's by `--agents`.
+ */
+const REGISTERED_PREFIX = 'multi-core:';
+
+/** An Agent type as the gateway keys it: a registered worker's type without its plugin prefix. */
+export function workerTypeName(type: string): string {
+  return type.startsWith(REGISTERED_PREFIX) ? type.slice(REGISTERED_PREFIX.length) : type;
+}
+
 /** Whether an Agent type is a provider's worker (`Cursor`, or a legacy `multi-cursor`). */
 export function isProviderWorker(type: unknown): boolean {
-  return typeof type === 'string' && BY_WORKER_TYPE.has(type);
+  return typeof type === 'string' && BY_WORKER_TYPE.has(workerTypeName(type));
 }
 
 /** The folder a provider's code lives in, for loading its adapter. */

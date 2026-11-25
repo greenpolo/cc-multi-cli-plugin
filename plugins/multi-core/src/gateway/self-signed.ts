@@ -84,8 +84,12 @@ export interface ServerCertificate {
   key: string;
 }
 
-/** A P-256 key and a self-signed certificate naming `host`, valid from an hour ago. */
-export function selfSignedCertificate(host: string, now = new Date()): ServerCertificate {
+/** A P-256 key and a self-signed certificate naming `host`, valid from an hour ago for `days`. */
+export function selfSignedCertificate(
+  host: string,
+  now = new Date(),
+  days = 30,
+): ServerCertificate {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const algorithm = sequence(oid(OID.ecdsaWithSha256));
   const hour = 60 * 60 * 1000;
@@ -96,7 +100,7 @@ export function selfSignedCertificate(host: string, now = new Date()): ServerCer
     name(host),
     sequence(
       utcTime(new Date(now.getTime() - hour)),
-      utcTime(new Date(now.getTime() + 30 * 24 * hour)),
+      utcTime(new Date(now.getTime() + days * 24 * hour)),
     ),
     name(host),
     publicKey.export({ type: 'spki', format: 'der' }),

@@ -1,5 +1,5 @@
 import { setBounded } from './bounded.ts';
-import { isProviderWorker } from './provider.ts';
+import { isProviderWorker, workerTypeName } from './provider.ts';
 import { isRecord } from './record.ts';
 
 export type RememberWorkerModel = (id: string, type: string, model: string) => void;
@@ -20,7 +20,7 @@ export function stripWorkerModel(block: unknown, remember: RememberWorkerModel):
   if (typeof block.id !== 'string') {
     return false;
   }
-  remember(block.id, String(input.subagent_type), input.model);
+  remember(block.id, workerTypeName(String(input.subagent_type)), input.model);
   const { model: _model, ...rest } = input;
   block.input = rest;
   return true;
@@ -48,7 +48,9 @@ export class WorkerModels {
     // Older clients may identify no session on Messages requests. Only those records
     // fall back to globally unique tool_use ids; identified sessions never share them.
     const held = scoped ?? this.models.get(JSON.stringify(['', value.toolUseId]));
-    return held && held.type === value.subagentType ? { ...value, model: held.model } : value;
+    return held && held.type === workerTypeName(String(value.subagentType))
+      ? { ...value, model: held.model }
+      : value;
   }
 
   forgetSession(session: string): void {

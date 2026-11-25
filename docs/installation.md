@@ -98,6 +98,29 @@ Run Zen key entry in a separate terminal. After connecting any provider, relaunc
 Claude so its models and workers are discovered. `multi status` reports installed
 and enabled providers; it does not authenticate accounts or run inference.
 
+## Claude desktop app
+
+Setup also prepares sessions the Claude desktop app starts in its Code tab, which run
+no launcher. In such a session Multi's mod starts the gateway itself, and the session
+gets the `/model` rows and workers a `claude-multi` session gets. Setup writes two
+things to Claude's user settings (`~/.claude/settings.json`), and `multi uninstall`
+takes both back out:
+
+- `modelPicker`: the connected providers' `/model` rows, kept beside any rows of your
+  own. The gateway refreshes them when they change. Plain `claude` in a terminal lists
+  them too; they answer only in a `claude-multi` or desktop session.
+- `env.NODE_EXTRA_CA_CERTS`: a file holding the extra certificates you had named (if
+  any) and one certificate Multi makes for this installation, valid 397 days (setup
+  renews it). Claude Code trusts it for `api.anthropic.com`, so a desktop session can
+  reach the gateway as its proxy and keep Remote Control. Its key stays in Multi's data
+  directory, readable only by you. If you change your own `NODE_EXTRA_CA_CERTS` later,
+  re-run setup.
+
+Start a new desktop session after setup. A session where the certificate is not trusted
+still works through `ANTHROPIC_BASE_URL`, with Remote Control off and a one-line notice.
+Worker types appear as `multi-core:OpenAI` and so on in desktop sessions, because Claude
+Code names agents a plugin registers after the plugin.
+
 ## Update
 
 Use Claude's normal marketplace and plugin update commands. Re-running
@@ -106,7 +129,8 @@ Use Claude's normal marketplace and plugin update commands. Re-running
 ## Uninstall
 
 Run `multi uninstall` before removing the plugins. It removes Multi's marked PATH
-block and known wrappers while retaining provider logins. Open a new terminal,
+block and known wrappers, and restores the `modelPicker` and `env.NODE_EXTRA_CA_CERTS`
+entries setup wrote in Claude's user settings, while retaining provider logins. Open a new terminal,
 then remove the provider and core plugins through `/plugin` if desired.
 
 ## For agents

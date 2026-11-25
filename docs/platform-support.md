@@ -42,6 +42,17 @@ tests (including injected Linux/macOS/Windows branches) and local Claude Mods
 tests. No paid provider probes or native macOS/Windows runs were performed for
 that refactor. Injected platform tests do not replace execution on those hosts.
 
+## Claude desktop app (November 25, 2026)
+
+Windows 11, Claude desktop app 6.28899.6 with its bundled Claude Code 2.1.330, Node
+25.2.1, branch `claude/project-thread-1mixfg`: `npm run test:live:desktop` passed with
+the front door (Claude's own requests and an OpenAI `gpt-6.2-sol` worker through the
+gateway, Bash without the gateway's proxy, no gateway left after the session). The
+`ANTHROPIC_BASE_URL` path (no installed certificate) answered a
+`multi/openai/gpt-6-luna` request in a session run the same way. macOS desktop sessions
+have no recorded run; the desktop app bundles Claude Code there under another path, so
+set `MULTI_DESKTOP_CLAUDE` to it.
+
 ## Live checklist
 
 Run from a fresh checkout after `npm ci`.

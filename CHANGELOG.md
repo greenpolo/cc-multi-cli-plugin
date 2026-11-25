@@ -6,6 +6,20 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Multi works in the Claude desktop app.** The desktop app starts Claude Code
+  itself, so `claude-multi` never ran there. Now the mod starts the gateway when a
+  desktop Code session starts, sets the session up as the launcher sets a terminal
+  one, and registers the provider workers (`multi-core:OpenAI`, ...), so `/model`
+  rows and workers work in desktop sessions too. The gateway ends with the session.
+  `/multi-core:setup` now also writes two things to Claude's user settings, which
+  `multi uninstall` takes back out: the connected providers' `/model` rows (plain
+  `claude` in a terminal lists them as well, and they answer only in a Multi or
+  desktop session), and `env.NODE_EXTRA_CA_CERTS`, naming a file with your own
+  extra certificates plus one Multi makes for this installation, so desktop sessions
+  keep Remote Control. Without it a desktop session uses `ANTHROPIC_BASE_URL`,
+  Remote Control is off, and a one-line notice says so. Terminal launches use the
+  same certificate once it exists.
+
 - **Remote Control works in Multi sessions.** Claude Code turns Remote Control off
   whenever its base URL is not Anthropic's, which is how Multi used to reach its
   gateway. A session signed in to claude.ai now reaches the gateway as its local HTTPS

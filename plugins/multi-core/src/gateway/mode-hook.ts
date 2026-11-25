@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { WorkerPermissions } from './agent-definitions.ts';
 import { setBounded } from './bounded.ts';
 import { mergePermissions } from './harness-settings.ts';
-import { harnessProvider } from './provider.ts';
+import { harnessProvider, workerTypeName } from './provider.ts';
 import { type ResolvedWorker, resolveWorker, type WorkerCatalog } from './worker-catalog.ts';
 
 const MODES = ['default', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions', 'plan'] as const;
@@ -103,7 +103,7 @@ export class PermissionModes {
 
   offered(cwd: string, type: string): boolean {
     const catalog = this.catalogs.get(cwd);
-    return Boolean(catalog && Object.hasOwn(catalog, type));
+    return Boolean(catalog && Object.hasOwn(catalog, workerTypeName(type)));
   }
 
   /** The prompt-boundary record: every provider reads the mode Claude Code is in from it. */
@@ -143,7 +143,7 @@ export class PermissionModes {
    * that called it. The worker itself is recorded when Claude Code reports its start.
    */
   prepareWorker(session: string, input: Record<string, unknown>): void {
-    const type = requiredString(input.subagentType, 'subagentType');
+    const type = workerTypeName(requiredString(input.subagentType, 'subagentType'));
     const cwd = requiredString(input.cwd, 'cwd');
     const selection = this.workerSelection(input);
     const definition = input.fork === true ? {} : (this.catalogs.get(cwd)?.[type] ?? {});
@@ -175,7 +175,7 @@ export class PermissionModes {
     known: boolean;
     worker?: ResolvedWorker;
   } {
-    const type = requiredString(input.subagentType, 'subagentType');
+    const type = workerTypeName(requiredString(input.subagentType, 'subagentType'));
     const cwd = requiredString(input.cwd, 'cwd');
     const explicit = input.model === undefined ? undefined : requiredString(input.model, 'model');
     const parent =
@@ -216,7 +216,8 @@ export class PermissionModes {
    * which matches its spawn. A start no Agent call announced (a Workflow's, say) runs
    * under its agent type's own rules and the session's record.
    */
-  startWorker(session: string, agent: string, type: string, cwd: string): void {
+  startWorker(session: string, agent: string, registered: string, cwd: string): void {
+    const type = workerTypeName(registered);
     this.pruneSpawns();
     const waiting = [...this.spawns].filter(
       ([key, value]) => JSON.parse(key)[0] === session && value.type === type,
