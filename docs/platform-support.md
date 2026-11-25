@@ -19,6 +19,13 @@ reports "not logged in" even when the desktop session is signed in. Run the
 Antigravity check from the desktop session, or through a scheduled task
 registered with the interactive logon type.
 
+## Claude desktop app
+
+`npm run test:live:desktop` passed on Windows 11 with the desktop app's bundled Claude
+Code 2.1.330, through the front door and through `ANTHROPIC_BASE_URL`. macOS desktop
+sessions have no recorded run; set `MULTI_DESKTOP_CLAUDE` to the app's bundled Claude
+Code there. See [installation](installation.md#claude-desktop-app).
+
 ## Platform notes
 
 A native CLI that resolves to a `.cmd` or `.bat` file that is not a standard npm

@@ -140,6 +140,8 @@ export interface GatewayOptions {
   modBridge?: ModBridge;
   /** Display rows for native harness actions. */
   displayRows?: DisplayRows;
+  /** A gateway its mod started (serve.ts) ends when the mod asks: `/multi/mod/stop`. */
+  onStop?: () => void;
 }
 
 /** What the gateway uses of a connected provider. */
@@ -164,6 +166,7 @@ export function createNativeGateway({
   displayRows = new DisplayRows(),
   receipts = new ReceiptLedger(),
   usageDashboard,
+  onStop,
 }: GatewayOptions): Server {
   const dashboard =
     usageDashboard ??
@@ -786,6 +789,7 @@ export function createNativeGateway({
       dashboard,
       rows: displayRows,
       keys: modKeys,
+      stop: onStop,
     });
   }
   async function serveFailure(

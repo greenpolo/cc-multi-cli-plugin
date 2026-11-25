@@ -94,6 +94,24 @@ Run Zen key entry in a separate terminal. After connecting any provider, relaunc
 Claude so its models and workers are discovered. `multi status` reports installed
 and enabled providers; it does not authenticate accounts or run inference.
 
+## Claude desktop app
+
+Setup also prepares the Claude desktop app's Code tab, which runs no launcher: there
+Multi's mod starts the gateway with each new session, so `/model` rows and workers work
+as in `claude-multi`. Workers show as `multi-core:OpenAI` and so on, because Claude Code
+names agents a plugin registers after the plugin. Start a new desktop session after setup.
+
+Setup writes two entries to `~/.claude/settings.json`, and `multi uninstall` restores both:
+
+- `modelPicker`: the connected providers' `/model` rows. Plain `claude` in a terminal
+  lists them too; they answer only in a `claude-multi` or desktop session.
+- `env.NODE_EXTRA_CA_CERTS`: your own extra certificates (if any) plus one Multi makes
+  for this installation (valid 397 days, renewed by setup; its key stays in Multi's data
+  directory, readable only by you). It lets a desktop session reach the gateway as its
+  proxy and keep Remote Control. Without it the session uses `ANTHROPIC_BASE_URL`, with
+  Remote Control off and a one-line notice. Re-run setup if you change your own
+  `NODE_EXTRA_CA_CERTS`.
+
 ## Update
 
 Use Claude's normal marketplace and plugin update commands. Re-running
@@ -102,7 +120,8 @@ Use Claude's normal marketplace and plugin update commands. Re-running
 ## Uninstall
 
 Run `multi uninstall` before removing the plugins. It removes Multi's marked PATH
-block and known wrappers while retaining provider logins. Open a new terminal,
+block and known wrappers, and restores the `modelPicker` and `env.NODE_EXTRA_CA_CERTS`
+entries setup wrote in Claude's user settings, while retaining provider logins. Open a new terminal,
 then remove the provider and core plugins through `/plugin` if desired.
 
 ## For agents

@@ -5,6 +5,7 @@
     "plugins/*/src/adapter.ts",
     "test/live/*.ts",
     "plugins/multi-core/src/setup.ts",
+    "plugins/multi-core/src/serve.ts",
     "plugins/multi-core/src/account.ts",
     "plugins/multi-core/src/install/bootstrap.ts"
   ],

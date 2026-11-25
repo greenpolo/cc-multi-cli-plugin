@@ -2,6 +2,14 @@ import type { EngineInterface, Register } from 'claude-code';
 import { atom, read, update } from 'claude-code';
 import type { MultiCoreDisplayTools, MultiCorePolicy } from '../types/multi-core.d.ts';
 import { register as registerCompaction } from './compact.ts';
+import {
+  HANDSHAKE_MS,
+  type Handshake,
+  nodeOf,
+  noticeText,
+  readHandshake,
+  stopServed,
+} from './desktop.ts';
 import { isActive, postJson, type Wire } from './gateway.ts';
 import { register as registerLifecycle } from './lifecycle.ts';
 import { type PromptSnapshot, recordPrompt, snapshotKey } from './policy.ts';
@@ -65,16 +73,20 @@ export const register: Register = (on, options) => {
     return next(event);
   });
   on('session.start', async ($, event, next) => {
-    if (!(await isActive(wire($)))) {
-      return next(event);
+    const workers = await serveDesktop($);
+    if (await isActive(wire($))) {
+      await $.command.register({
+        name: 'multi-usage',
+        description: 'Open provider quotas, spend, and session receipts.',
+        immediate: true,
+      });
+      await greet($, await $.session.id(), await $.session.cwd());
     }
-    await $.command.register({
-      name: 'multi-usage',
-      description: 'Open provider quotas, spend, and session receipts.',
-      immediate: true,
-    });
-    await greet($, await $.session.id(), await $.session.cwd());
-    return next(event);
+    const started = await next(event);
+    for (const worker of workers) {
+      await $.agent.register(worker);
+    }
+    return started;
   });
   on('classic.UserPromptSubmit', async ($, event, next) => {
     await recordSnapshot($, event);
@@ -87,6 +99,141 @@ export const register: Register = (on, options) => {
     return next(event);
   });
 };
+
+/**
+ * A Claude desktop app session has no launcher, so the mod starts the gateway (src/serve.ts)
+ * and sets the session's environment from its handshake, as the launcher sets a terminal
+ * session's. Only the desktop app's own sessions are served: a terminal keeps `claude-multi`,
+ * and a session a launcher started (its gateway is set and is not one this mod started) is
+ * left alone. A hot reload or a new start replaces the gateway this mod started. Returns the
+ * worker types to register once the session is bound; any failure leaves plain Claude with
+ * a one-line notice.
+ */
+async function serveDesktop($: EngineInterface): Promise<Handshake['workers']> {
+  if ((await $.env.get('CLAUDE_CODE_ENTRYPOINT')) !== 'claude-desktop') {
+    return [];
+  }
+  const ours = Boolean(await $.env.get('MULTI_DESKTOP_GATEWAY'));
+  if ((await $.env.get('MULTI_MOD_GATEWAY_URL')) && !ours) {
+    return [];
+  }
+  const stream = $.process.spawn({
+    argv: [await installedNode($), `${$.plugin.root}/plugins/multi-core/src/serve.ts`],
+    cwd: await $.session.cwd(),
+  });
+  const waiting = new AbortController();
+  const late = $.clock.sleep(HANDSHAKE_MS, { signal: waiting.signal }).then(() => {
+    throw new Error(`the gateway did not start within ${HANDSHAKE_MS / 1000} s`);
+  });
+  late.catch(() => undefined);
+  try {
+    const handshake = await Promise.race([
+      readHandshake(stream, (text) => $.ui.log(text, { to: 'debug' })),
+      late,
+    ]);
+    for (const [name, value] of Object.entries(handshake.env)) {
+      await setVariable($, name, value || undefined);
+    }
+    await $.env.set('MULTI_DESKTOP_GATEWAY', '1');
+    if (handshake.notice) {
+      $.ui.toast(noticeText(handshake.notice));
+    }
+    return handshake.workers;
+  } catch (error) {
+    stopServed();
+    if (ours) {
+      await restoreSession($);
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    $.ui.toast(noticeText(`Multi is off in this session: ${reason}`));
+    return [];
+  } finally {
+    waiting.abort();
+  }
+}
+
+/** The Node that setup recorded, which a desktop app's own PATH may not hold. */
+async function installedNode($: EngineInterface): Promise<string> {
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'));
+  try {
+    return nodeOf(home ? await $.fs.read(`${home}/.local/share/multi-cli/state.json`) : undefined);
+  } catch {
+    return nodeOf(undefined);
+  }
+}
+
+/**
+ * Sets one variable the handshake names (src/launch/desktop.ts `DESKTOP_VARIABLES`). The
+ * engine admits only names spelled in this module, so each is spelled here; any other
+ * name is ignored.
+ */
+async function setVariable($: EngineInterface, name: string, value: string | undefined) {
+  switch (name) {
+    case 'ANTHROPIC_BASE_URL':
+      return $.env.set('ANTHROPIC_BASE_URL', value);
+    case 'ANTHROPIC_CUSTOM_HEADERS':
+      return $.env.set('ANTHROPIC_CUSTOM_HEADERS', value);
+    case 'ENABLE_TOOL_SEARCH':
+      return $.env.set('ENABLE_TOOL_SEARCH', value);
+    case 'HTTPS_PROXY':
+      return $.env.set('HTTPS_PROXY', value);
+    case 'https_proxy':
+      return $.env.set('https_proxy', value);
+    case 'NO_PROXY':
+      return $.env.set('NO_PROXY', value);
+    case 'no_proxy':
+      return $.env.set('no_proxy', value);
+    case 'CLAUDE_ENV_FILE':
+      return $.env.set('CLAUDE_ENV_FILE', value);
+    case 'MULTI_GATEWAY_TOKEN':
+      return $.env.set('MULTI_GATEWAY_TOKEN', value);
+    case 'MULTI_MOD_GATEWAY_URL':
+      return $.env.set('MULTI_MOD_GATEWAY_URL', value);
+    default:
+      return setOriginal($, name, value);
+  }
+}
+
+/** The user's own values the gateway's variables replaced, for nested Claude runs. */
+async function setOriginal($: EngineInterface, name: string, value: string | undefined) {
+  switch (name) {
+    case 'MULTI_ORIG_ANTHROPIC_BASE_URL':
+      return $.env.set('MULTI_ORIG_ANTHROPIC_BASE_URL', value);
+    case 'MULTI_ORIG_ANTHROPIC_CUSTOM_HEADERS':
+      return $.env.set('MULTI_ORIG_ANTHROPIC_CUSTOM_HEADERS', value);
+    case 'MULTI_ORIG_HTTPS_PROXY':
+      return $.env.set('MULTI_ORIG_HTTPS_PROXY', value);
+    case 'MULTI_ORIG_https_proxy':
+      return $.env.set('MULTI_ORIG_https_proxy', value);
+    case 'MULTI_ORIG_NO_PROXY':
+      return $.env.set('MULTI_ORIG_NO_PROXY', value);
+    case 'MULTI_ORIG_no_proxy':
+      return $.env.set('MULTI_ORIG_no_proxy', value);
+    case 'MULTI_ORIG_NODE_EXTRA_CA_CERTS':
+      return $.env.set('MULTI_ORIG_NODE_EXTRA_CA_CERTS', value);
+    case 'MULTI_ORIG_CLAUDE_ENV_FILE':
+      return $.env.set('MULTI_ORIG_CLAUDE_ENV_FILE', value);
+    default:
+      return {};
+  }
+}
+
+/** A replacement gateway failed to start: the session goes back to the user's own values. */
+async function restoreSession($: EngineInterface) {
+  await $.env.set('ANTHROPIC_BASE_URL', await $.env.get('MULTI_ORIG_ANTHROPIC_BASE_URL'));
+  await $.env.set(
+    'ANTHROPIC_CUSTOM_HEADERS',
+    await $.env.get('MULTI_ORIG_ANTHROPIC_CUSTOM_HEADERS'),
+  );
+  await $.env.set('HTTPS_PROXY', await $.env.get('MULTI_ORIG_HTTPS_PROXY'));
+  await $.env.set('https_proxy', await $.env.get('MULTI_ORIG_https_proxy'));
+  await $.env.set('NO_PROXY', await $.env.get('MULTI_ORIG_NO_PROXY'));
+  await $.env.set('no_proxy', await $.env.get('MULTI_ORIG_no_proxy'));
+  await $.env.set('CLAUDE_ENV_FILE', await $.env.get('MULTI_ORIG_CLAUDE_ENV_FILE'));
+  await $.env.set('MULTI_GATEWAY_TOKEN', undefined);
+  await $.env.set('MULTI_MOD_GATEWAY_URL', undefined);
+  await $.env.set('MULTI_DESKTOP_GATEWAY', undefined);
+}
 
 /**
  * The gateway's first record of a session (which also tells the launcher the mod is

@@ -45,6 +45,37 @@ Claude Code session (/model, workers, prompts)
  Claude loop  Claude loop  provider loop
 ```
 
+## Desktop sessions
+
+The Claude desktop app starts Claude Code itself (with `CLAUDE_CODE_ENTRYPOINT`
+`claude-desktop` and Anthropic's own `ANTHROPIC_BASE_URL`), so no launcher sets the
+session up. The mod does it instead (`hooks/register.ts`, `hooks/desktop.ts`): at
+`session.start` in such a session, unless a launcher's gateway is already set, it starts
+`src/serve.ts` with `$.process.spawn` in the session's folder, waits on `$.clock` (8 s)
+for its one-line handshake (`launch/desktop.ts`: the variables to set, the worker types,
+whether the front door is in use, and a notice), sets each variable with `$.env.set`, and
+registers each worker with `$.agent.register`, which Claude Code names
+`multi-core:<label>` (`workerTypeName` in `gateway/provider.ts` reads it back). `serve.ts`
+and the launcher start the gateway through one function (`launch/gateway.ts`). The
+gateway ends on `/multi/mod/stop`, which the mod sends at a `session.end` that is not a
+`/clear` or a resume, when the Claude Code that started it is gone, or when the module
+unloads; a hot reload starts a new one. Any failure leaves plain Claude with a one-line
+notice.
+
+Claude Code reads `NODE_EXTRA_CA_CERTS` once, at its start, before any mod runs, and
+`$.env.set` of it changes nothing for Claude Code's own connections. So the front door in
+a desktop session uses the certificate setup installs (`launch/certificate.ts`, P-256,
+397 days, renewed by setup in its last 30, key 0600 under Multi's data directory), which
+Claude trusts because setup names its trust file (the user's own extra certificates plus
+this one) in `env.NODE_EXTRA_CA_CERTS` of Claude's user settings. `serve.ts` uses the
+front door only when the session's `NODE_EXTRA_CA_CERTS` file holds that certificate and it
+has a day left; otherwise it uses `ANTHROPIC_BASE_URL`. Desktop sessions take no launcher
+settings either, so `/model` rows come from `modelPicker` in Claude's user settings:
+setup writes the connected providers' rows, and `serve.ts` refreshes them when they
+change. A settings hook (`settings.read`) cannot carry them: its answer reached neither
+the model list nor the environment on Claude Code 2.1.330. Uninstall restores both
+settings.
+
 ## Request flow
 
 Claude Code sends Anthropic Messages traffic and provider requests to the gateway.

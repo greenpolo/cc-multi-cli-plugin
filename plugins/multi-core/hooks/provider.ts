@@ -25,8 +25,11 @@ export function providerLabel(name: string): string | undefined {
  * (`Cursor`); before 0.5 it was `multi-cursor`, which a resumed transcript still names.
  */
 export function workerProvider(type: unknown): string | undefined {
+  // A desktop session's worker types are registered by this mod, so Claude Code names
+  // them with its plugin prefix (`multi-core:OpenAI`).
+  const name = typeof type === 'string' ? type.replace(/^multi-core:/, '') : type;
   return Object.keys(PROVIDERS).find(
-    (name) => type === PROVIDERS[name]?.label || type === `multi-${name}`,
+    (provider) => name === PROVIDERS[provider]?.label || name === `multi-${provider}`,
   );
 }
 

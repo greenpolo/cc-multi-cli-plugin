@@ -32,6 +32,22 @@ export interface Installation {
   command?: string;
   /** Persisted `MULTI_MODELS` picker selection; undefined keeps launcher defaults. */
   models?: string;
+  /** What setup changed in Claude's own settings for desktop sessions; uninstall reverses it. */
+  desktop?: DesktopSettings;
+}
+
+/**
+ * The Claude desktop app starts Claude Code itself, so a desktop session reaches Multi only
+ * through what Claude's user settings hold: the front door's trust file, named by
+ * `env.NODE_EXTRA_CA_CERTS`, and the `/model` rows of `modelPicker`.
+ */
+export interface DesktopSettings {
+  /** Claude's user settings file setup changed. */
+  settingsFile: string;
+  /** The trust file `env.NODE_EXTRA_CA_CERTS` names while Multi is installed. */
+  trustFile: string;
+  /** What `env.NODE_EXTRA_CA_CERTS` held before; absent, nothing. */
+  previousExtraCerts?: string;
 }
 
 export interface InstallationOptions {
@@ -65,7 +81,7 @@ function optionsFor(options: InstallationOptions = {}) {
   };
 }
 
-function installationDirectory(homedir = os.homedir()) {
+export function installationDirectory(homedir = os.homedir()) {
   return path.join(homedir, '.local', 'share', 'multi-cli');
 }
 
@@ -341,6 +357,124 @@ async function writeRuntime(
   return shims;
 }
 
+/** Claude Code's user settings file. */
+export function claudeSettingsFile(env: NodeJS.ProcessEnv = process.env, homedir = os.homedir()) {
+  return path.join(env.CLAUDE_CONFIG_DIR ?? path.join(homedir, '.claude'), 'settings.json');
+}
+
+type ClaudeSettings = Record<string, unknown> & {
+  env?: Record<string, string>;
+  modelPicker?: { options?: Array<{ model?: unknown }> } & Record<string, unknown>;
+};
+
+async function readClaudeSettings(file: string): Promise<ClaudeSettings> {
+  const text = await optionalText(file);
+  if (!text.trim()) {
+    return {};
+  }
+  const value: unknown = JSON.parse(text);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${file} does not hold a settings object; refusing to change it.`);
+  }
+  return value as ClaudeSettings;
+}
+
+async function writeClaudeSettings(file: string, settings: ClaudeSettings) {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(`${file}.multi.tmp`, `${JSON.stringify(settings, null, 2)}\n`);
+  await rename(`${file}.multi.tmp`, file);
+}
+
+/** The extra certificates the user had named before Multi's trust file, if any. */
+export async function previousExtraCerts(
+  file: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  const state = await optionalState();
+  const named = (await readClaudeSettings(file)).env?.NODE_EXTRA_CA_CERTS;
+  if (state?.desktop && named === state.desktop.trustFile) {
+    return state.desktop.previousExtraCerts;
+  }
+  return named ?? env.NODE_EXTRA_CA_CERTS;
+}
+
+async function optionalState(directory = installationDirectory()) {
+  return (await optionalText(path.join(directory, 'state.json')))
+    ? readInstallation(directory)
+    : undefined;
+}
+
+/** Name the front door's trust file in Claude's user settings and record what it replaced. */
+export async function trustFrontDoor(
+  desktop: DesktopSettings,
+  directory = installationDirectory(),
+): Promise<void> {
+  const settings = await readClaudeSettings(desktop.settingsFile);
+  settings.env = { ...settings.env, NODE_EXTRA_CA_CERTS: desktop.trustFile };
+  await writeClaudeSettings(desktop.settingsFile, settings);
+  const state = await readInstallation(directory);
+  await writeState(directory, { ...state, desktop });
+}
+
+const isMultiRow = (option: { model?: unknown }) =>
+  typeof option.model === 'string' && option.model.startsWith('multi/');
+
+/**
+ * Put the connected providers' rows in Claude's own `/model` picker, keeping every row of
+ * the user's own, for desktop sessions, which take no launcher settings. A Multi row in
+ * a session without the gateway fails with the gateway's absence named, so only an
+ * installation that set up desktop sessions keeps them. Writes only on a change.
+ */
+export async function updatePickerRows(
+  rows: ReadonlyArray<{ model: string }>,
+  directory = installationDirectory(),
+): Promise<boolean> {
+  const state = await optionalState(directory);
+  if (!state?.desktop) {
+    return false;
+  }
+  const file = state.desktop.settingsFile;
+  const settings = await readClaudeSettings(file);
+  const own = (settings.modelPicker?.options ?? []).filter((option) => !isMultiRow(option));
+  const options = [...own, ...rows];
+  if (JSON.stringify(settings.modelPicker?.options ?? []) === JSON.stringify(options)) {
+    return false;
+  }
+  settings.modelPicker = { ...settings.modelPicker, options };
+  await writeClaudeSettings(file, settings);
+  return true;
+}
+
+/** Undo `trustFrontDoor` and `updatePickerRows`, leaving the user's own settings as they were. */
+async function restoreClaudeSettings(desktop: DesktopSettings) {
+  const settings = await readClaudeSettings(desktop.settingsFile);
+  if (settings.env?.NODE_EXTRA_CA_CERTS === desktop.trustFile) {
+    const { NODE_EXTRA_CA_CERTS: _ours, ...env } = settings.env;
+    settings.env =
+      desktop.previousExtraCerts === undefined
+        ? env
+        : { ...env, NODE_EXTRA_CA_CERTS: desktop.previousExtraCerts };
+    if (Object.keys(settings.env).length === 0) {
+      delete settings.env;
+    }
+  }
+  if (settings.modelPicker?.options) {
+    const options = settings.modelPicker.options.filter((option) => !isMultiRow(option));
+    if (options.length === 0 && Object.keys(settings.modelPicker).length === 1) {
+      delete settings.modelPicker;
+    } else {
+      settings.modelPicker = { ...settings.modelPicker, options };
+    }
+  }
+  await writeClaudeSettings(desktop.settingsFile, settings);
+}
+
+async function writeState(directory: string, state: Installation) {
+  const stateFile = path.join(directory, 'state.json');
+  await writeFile(`${stateFile}.tmp`, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  await rename(`${stateFile}.tmp`, stateFile);
+}
+
 export async function setup(
   shell: string,
   explicitClaude?: string,
@@ -350,7 +484,6 @@ export async function setup(
   const normalizedShell = shell.toLowerCase();
   validateRuntime(normalizedShell, resolved.platform);
   const directory = installationDirectory(resolved.homedir);
-  const stateFile = path.join(directory, 'state.json');
   const previous = await previousInstallation(directory);
   const startupFile = shellFile(resolved.homedir, normalizedShell, resolved.platform, resolved.env);
   if (previous && previous.shellFile !== startupFile) {
@@ -389,9 +522,9 @@ export async function setup(
     shims,
     command,
     ...(models === undefined ? {} : { models }),
+    ...(previous?.desktop ? { desktop: previous.desktop } : {}),
   };
-  await writeFile(`${stateFile}.tmp`, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  await rename(`${stateFile}.tmp`, stateFile);
+  await writeState(directory, state);
   await mkdir(path.dirname(startupFile), { recursive: true });
   await writeFile(startupFile, original + block);
   return state;
@@ -437,6 +570,21 @@ async function removeAntigravityHook(
   return true;
 }
 
+/** Claude's settings go back to what they held before setup, and the certificate goes. */
+async function forgetDesktop(directory: string, desktop: DesktopSettings | undefined) {
+  if (!desktop) {
+    return;
+  }
+  try {
+    await restoreClaudeSettings(desktop);
+  } catch (error) {
+    console.warn(
+      `Could not restore ${desktop.settingsFile}: ${String(error)}. Remove env.NODE_EXTRA_CA_CERTS (${desktop.trustFile}) and the multi/ rows of modelPicker by hand.`,
+    );
+  }
+  await rm(path.join(directory, 'front-door'), { recursive: true, force: true });
+}
+
 export async function uninstall(
   directory = installationDirectory(),
   options: UninstallOptions = {},
@@ -445,6 +593,7 @@ export async function uninstall(
   const state = await readInstallation(directory);
   const source = await readFile(state.shellFile, 'utf8');
   await writeFile(state.shellFile, removeBlock(source, state.block));
+  await forgetDesktop(directory, state.desktop);
   try {
     // The Antigravity permission hook is global to the machine and points into this plugin.
     await removeAntigravityHook({ platform, env: options.env, homedir: options.homedir });

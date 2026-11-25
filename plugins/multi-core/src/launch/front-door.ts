@@ -9,7 +9,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import type http from 'node:http';
 import path from 'node:path';
 import { bypassesProxy, FRONT_DOOR_HOST, openFrontDoor } from '../gateway/front-door.ts';
-import { selfSignedCertificate } from '../gateway/self-signed.ts';
+import { type ServerCertificate, selfSignedCertificate } from '../gateway/self-signed.ts';
 
 /** What the launched Claude Code needs to use the front door. */
 export interface FrontDoorFiles {
@@ -40,7 +40,7 @@ function baseUrlReason(env: NodeJS.ProcessEnv, anthropic: boolean): string | und
   if (!anthropic || env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) {
     return 'no claude.ai login';
   }
-  if (env.ANTHROPIC_BASE_URL || env.ANTHROPIC_UNIX_SOCKET) {
+  if (ownBaseUrl(env.ANTHROPIC_BASE_URL) || env.ANTHROPIC_UNIX_SOCKET) {
     return 'a base URL of your own';
   }
   if (Object.keys(env).some((name) => name.startsWith('CLAUDE_CODE_USE_') && enabled(env[name]))) {
@@ -50,6 +50,22 @@ function baseUrlReason(env: NodeJS.ProcessEnv, anthropic: boolean): string | und
     return `NO_PROXY exempts ${FRONT_DOOR_HOST}`;
   }
   return undefined;
+}
+
+/**
+ * A base URL the user chose. The Claude desktop app sets Anthropic's own address for every
+ * session it starts, which is the default, not a provider of the user's own.
+ */
+function ownBaseUrl(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return !(url.protocol === 'https:' && url.host === FRONT_DOOR_HOST && url.pathname === '/');
+  } catch {
+    return true;
+  }
 }
 
 const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
@@ -74,18 +90,23 @@ function commandEnvScript(origin: NodeJS.ProcessEnv): string {
  * Open the front door on the gateway's server and write its files, or explain on stderr why
  * the session keeps ANTHROPIC_BASE_URL. Only a failure is reported: the plain reasons
  * (no Claude login, a provider of the user's own) are expected and say nothing.
+ *
+ * `installed` is the certificate setup made (launch/certificate.ts). Claude's own settings
+ * name its trust file, and a terminal session's settings `env` outranks the launcher's, so a
+ * launch serves that certificate whenever it exists; otherwise it makes one of its own.
  */
 export async function prepareFrontDoor(
   server: http.Server,
   settingsDir: string,
   origin: NodeJS.ProcessEnv,
   anthropic: boolean,
+  installed?: ServerCertificate,
 ): Promise<FrontDoorFiles | undefined> {
   if (baseUrlReason(origin, anthropic) !== undefined) {
     return undefined;
   }
   try {
-    const certificate = selfSignedCertificate(FRONT_DOOR_HOST);
+    const certificate = installed ?? selfSignedCertificate(FRONT_DOOR_HOST);
     const extra = origin.NODE_EXTRA_CA_CERTS
       ? (await readFile(origin.NODE_EXTRA_CA_CERTS, 'utf8')).trimEnd()
       : '';

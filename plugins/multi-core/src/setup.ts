@@ -1,5 +1,14 @@
 import path from 'node:path';
-import { DEFAULT_COMMAND, type InstallationOptions, setup } from './install/installation.ts';
+import {
+  claudeSettingsFile,
+  DEFAULT_COMMAND,
+  type InstallationOptions,
+  previousExtraCerts,
+  setup,
+  trustFrontDoor,
+} from './install/installation.ts';
+import { installCertificate } from './launch/certificate.ts';
+import { refreshPickerRows } from './launch/desktop.ts';
 
 function detectedShell(env: NodeJS.ProcessEnv, platform: NodeJS.Platform) {
   if (platform === 'win32') {
@@ -58,6 +67,7 @@ function describeModels(models: string | undefined) {
 async function main() {
   const { shell, claude, options } = parseArguments(process.argv.slice(2));
   const state = await setup(shell, claude, options);
+  await setUpDesktop();
   const command = state.command ?? DEFAULT_COMMAND;
   if (command === 'claude') {
     console.warn(
@@ -65,8 +75,24 @@ async function main() {
     );
   }
   console.log(
-    `Multi startup installed in ${state.shellFile}. Open a new terminal, run multi status, then start ${command}. ${describeModels(state.models)}`,
+    `Multi startup installed in ${state.shellFile}. Open a new terminal, run multi status, then start ${command}. ${describeModels(state.models)} New Claude desktop app sessions start Multi themselves.`,
   );
+}
+
+/**
+ * Desktop sessions take Multi from Claude's own user settings: the front door's trust file
+ * and the connected providers' `/model` rows (launch/desktop.ts).
+ */
+async function setUpDesktop() {
+  const settingsFile = claudeSettingsFile();
+  const previous = await previousExtraCerts(settingsFile);
+  const trustFile = await installCertificate(previous);
+  await trustFrontDoor({
+    settingsFile,
+    trustFile,
+    ...(previous === undefined ? {} : { previousExtraCerts: previous }),
+  });
+  await refreshPickerRows();
 }
 
 void main().catch((error: unknown) => {

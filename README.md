@@ -26,6 +26,7 @@ Multi brings external models and coding harnesses into one Claude Code session t
 - **Delegate to provider workers.** Run a provider's own model from the Agent tool (`OpenAI`, `Cursor`, `Zen`, `Antigravity`, `Grok`); native actions appear as tool rows under the harness's own tool names.
 - **Keep native execution.** OpenAI and Zen use Claude Code's tools; Cursor, Antigravity and Grok run their own SDK or CLI tools.
 - **Carry your session forward.** Resume saved sessions, and keep Remote Control when signed in to claude.ai.
+- **Terminal or desktop.** Works in `claude-multi` and in the Claude desktop app's Code tab.
 - **Stay in control.** Claude's permission mode and explicit tool restrictions govern provider dispatch.
 
 ## Install
@@ -69,6 +70,8 @@ Paste this into any coding agent:
 ## Use
 
 Launch with `claude-multi`. `/model` lists the external models next to Claude's; `/effort` sets effort where the model supports it. Provider workers run as subagents with live progress, elapsed time and cancellation; the Agent tool's `model` parameter picks which model of that provider runs. Claude's permission mode governs every provider; see [permissions](docs/permissions.md). Resume a saved session with `claude-multi --resume <session-id>`.
+
+In the Claude desktop app, just start a new Code session after `/multi-core:setup`: Multi starts with it. Workers show there as `multi-core:OpenAI` and so on. See [installation](docs/installation.md#claude-desktop-app).
 
 Use `/multi-usage` to open a provider usage menu with quotas, billed spend where
 available, session tokens, and worker receipts. Set `MULTI_RECEIPTS_FILE` before

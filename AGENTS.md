@@ -17,7 +17,7 @@ Claude Code function-hook UI and extensibility rules live in
 | --- | --- |
 | `plugins/multi-<name>/provider.json` | A provider's manifest: name, label, kind (`direct` or `harness`), order, review and usage text. Core reads these and names no provider. |
 | `plugins/multi-<name>/src/adapter.ts` | A provider's adapter: sign-in, models, runtime, launcher flags, and account verb, loaded by core through `gateway/provider-adapter.ts`. |
-| `plugins/multi-core/src/launcher.ts`, `launch/` | Launches the gateway and Claude Code. `launch/` holds the provider connection (`providers.ts`), the `/model` picker (`picker.ts`), worker types (`workers.ts`), the Claude executable probes (`claude.ts`), and the session environment (`environment.ts`). |
+| `plugins/multi-core/src/launcher.ts`, `serve.ts`, `launch/` | Launches the gateway and Claude Code (`launcher.ts`), or the gateway alone for a desktop app session the mod serves (`serve.ts`). `launch/` holds the shared gateway start (`gateway.ts`), the provider connection (`providers.ts`), the `/model` picker (`picker.ts`), worker types (`workers.ts`), the Claude executable probes (`claude.ts`), the session environment (`environment.ts`), the desktop handshake and picker rows (`desktop.ts`), and the installed front-door certificate (`certificate.ts`). |
 | `plugins/multi-core/src/gateway/server.ts`, `request.ts`, `reply.ts`, `anthropic.ts` | Routes requests and manages sessions; request admission and identity; replies and failures; Anthropic passthrough headers and paths. |
 | `plugins/multi-core/src/gateway/messages.ts`, `fetch.ts`, `tools.ts`, `responses.ts`, `bounded.ts`, `record.ts` | Shared protocol, outbound fetch, tool aliases, Responses translation and SSE reader, bounded maps, and the `isRecord` guard. |
 | `plugins/multi-core/src/gateway/provider.ts`, `provider-adapter.ts`, `provider-request.ts` | The provider table read from the manifests, `providerOf`, `nativeSpelling`; the adapter contract and loader; the contract through which direct providers build their own requests. |
@@ -27,7 +27,7 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-core/src/gateway/harness-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Reads what a native run takes from Claude's settings (`readHarnessSettings`, `mergePermissions`, `nativeMode`, `nativeRules`), keeps one permission record per session, and resolves the Agent tool's `model` against each provider's worker catalog. |
 | `plugins/multi-core/src/gateway/verdicts.ts`, `provider.ts` | Core verdict contract, Reviewer interface, and provider auto-review policy. `server.ts` alone finalises served replies and terminal events. |
 | `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, and the nested-`claude` environment restore. |
-| `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. `provider.ts` is the hooks' own provider table, checked against the manifests by `npm run check:providers`. |
+| `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. `provider.ts` is the hooks' own provider table, checked against the manifests by `npm run check:providers`. `desktop.ts` reads the handshake of the gateway the mod starts in a desktop app session. |
 | `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, notices, and failure classifier (`harness-failure.ts`) shared by Cursor, Antigravity, and Grok; the CLI harness base (`harness-cli.ts`), process runner, and text prompt preparation shared by Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
 | `plugins/multi-openai/src/` | Codex authentication, models, request construction (`gateway-request.ts`), instructions, and reviewer. |
@@ -99,6 +99,7 @@ the provider is signed in. For Claude Mods hook or surface changes, also run
 | `npm run test:live:antigravity` | Antigravity CLI harness | `agy` login |
 | `npm run test:live:grok` | Grok Build CLI harness | Grok Build login |
 | `npm run test:live:front-door` | Gateway as Claude Code's proxy (Remote Control path) and an OpenAI worker | Claude and Codex login |
+| `npm run test:live:desktop` | A desktop app session (the app's bundled Claude Code and environment) served by the mod: an OpenAI worker, the front door once setup installed its certificate, and the gateway ending with the session | Claude and Codex login |
 | `npm run test:live:install` | Plugin installation | None |
 
 The definition of done is passing relevant checks, no `DEP0190` warnings, and an

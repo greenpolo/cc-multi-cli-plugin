@@ -10,7 +10,12 @@ Node installation: setup records its executable path, so a temporary npx downloa
 will break startup when removed. This user-invoked
 setup installs small wrappers and adds one marked PATH block to ~/.bashrc, ~/.zshrc,
 fish's config file, or the PowerShell profile. It preserves the real Claude
-executable and existing settings. Explain these changes, then offer two optional customizations before running
+executable and existing settings. For Claude desktop app sessions, which start no
+launcher, it also writes two entries to Claude's user settings: the connected
+providers' `/model` rows in `modelPicker` (plain `claude` lists them too), and
+`env.NODE_EXTRA_CA_CERTS` naming a file with the user's own extra certificates plus a
+certificate Multi makes for this installation, so desktop sessions keep Remote Control.
+Uninstall restores both. Explain these changes, then offer two optional customizations before running
 setup. Use the defaults unless the user chooses otherwise:
 
 - **Launch command name** (default `claude-multi`). The wrapper starts Claude Code

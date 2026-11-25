@@ -6,6 +6,7 @@ import type {
   MultiCoreUsagePane,
 } from '../types/multi-core.d.ts';
 import { shortStep, stepText, workerName } from './brand.ts';
+import { stopServed } from './desktop.ts';
 import { forgetKey, getJson, isActive, postJson, type Wire } from './gateway.ts';
 import { isHarnessModel, isMultiModel } from './provider.ts';
 import { type RowsClient, syncDisplayTools } from './rows.ts';
@@ -249,6 +250,17 @@ export const register = (on: Parameters<Register>[0], _options: Parameters<Regis
       stopPoll(key);
     }
     await forgetSession($, event.sessionId, next.signal);
+    // A desktop session's gateway (desktop.ts) ends with it; after a `/clear` or a resume
+    // the same process goes on under another session and keeps it.
+    if (!['clear', 'resume'].includes(event.reason) && (await $.env.get('MULTI_DESKTOP_GATEWAY'))) {
+      await postJson(
+        wire($),
+        '/multi/mod/stop',
+        { sessionId: event.sessionId },
+        { timeoutMs: 1000, signal: next.signal },
+      );
+      stopServed();
+    }
     return next(event);
   });
 };
