@@ -6,6 +6,16 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Remote Control works in Multi sessions.** Claude Code turns Remote Control off
+  whenever its base URL is not Anthropic's, which is how Multi used to reach its
+  gateway. A session signed in to claude.ai now reaches the gateway as its local HTTPS
+  proxy instead, so `/remote-control` and `--rc` work as they do in plain Claude Code,
+  with every Multi model and worker. Claude Code trusts a certificate made for that one
+  session; nothing is added to the system's certificates. Commands Claude runs see your
+  own proxy settings, not the gateway. Sessions with an API key, another provider or
+  your own `ANTHROPIC_BASE_URL` keep the base URL, as does
+  `MULTI_GATEWAY_TRANSPORT=base-url`.
+
 - **Run GPT-6.2 Sol and Astra.** The OpenAI picker now lists `gpt-6.2-sol` and
   `gpt-6.2-astra` above the earlier models, and an `OpenAI` worker that names no
   model now runs `gpt-6.2-sol` in place of `gpt-6.1-sol`. The 6.1 and 6.0 rows stay

@@ -48,6 +48,18 @@ Claude Code session (/model, workers, prompts)
 ## Request flow
 
 Claude Code sends Anthropic Messages traffic and provider requests to the gateway.
+
+How Claude Code reaches the gateway depends on its login. Signed in to claude.ai, with
+no API key and no provider or base URL of the user's own, the gateway is Claude Code's
+HTTPS proxy (the front door, `gateway/front-door.ts`) and `ANTHROPIC_BASE_URL` is left
+alone, so Claude Code stays first-party and keeps Remote Control. The front door ends
+the TLS connection to `api.anthropic.com` with a certificate made for the session
+(`gateway/self-signed.ts`) that only the launched Claude Code trusts, through
+`NODE_EXTRA_CA_CERTS`, and hands the requests to the ordinary handler; a decrypted
+request without the session token goes to Anthropic untouched. Every other host is a
+byte tunnel, through the user's own proxy when one applies. Commands Claude runs get the
+user's own proxy settings back from a `CLAUDE_ENV_FILE` script (`launch/front-door.ts`).
+Any other session, or `MULTI_GATEWAY_TRANSPORT=base-url`, uses `ANTHROPIC_BASE_URL`.
 The gateway passes Anthropic traffic through untouched except for a successful
 `/v1/messages` reply's Agent calls naming a Multi provider worker and a string
 `model`: it removes `input.model` before Claude Code sees the call, preserving

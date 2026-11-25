@@ -2,6 +2,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import type http from 'node:http';
+import { FRONT_DOOR_HOST, viaFrontDoor } from './front-door.ts';
 import type { MessagesRequest, TerminalEmit } from './messages.ts';
 import { MOD_KEY_HEADER, type ModSessionKeys } from './mod-keys.ts';
 import type { PermissionContext } from './mode-hook.ts';
@@ -76,15 +77,23 @@ export function admitModRequest(
   return true;
 }
 
+/** Whether the request carries this session's gateway token. */
+export function carriesGatewayToken(req: http.IncomingMessage, token: string): boolean {
+  return authenticated(req.headers['x-multi-gateway-token'], token);
+}
+
 /**
  * Only the gateway's own loopback name and port are accepted as the `Host`. A web page
  * that rebinds its DNS name to 127.0.0.1 reaches the port with its own name in `Host`,
  * which is what keeps it from using the unauthenticated raw passthrough as a relay.
+ * A request that came through the front door's TLS names the API host it was sent to.
  */
 export function assertLoopbackHost(req: http.IncomingMessage) {
   const host = req.headers.host?.toLowerCase();
   const port = req.socket.localPort;
-  const allowed = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+  const allowed = viaFrontDoor(req)
+    ? [FRONT_DOOR_HOST, `${FRONT_DOOR_HOST}:443`]
+    : [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
   if (!host || !allowed.includes(host)) {
     throw new ForbiddenHost('Forbidden host');
   }

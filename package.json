@@ -18,6 +18,7 @@
     "test:live:permissions": "node test/live/native-permissions.ts",
     "test:live:antigravity": "node test/live/native-antigravity.ts",
     "test:live:grok": "node test/live/native-grok.ts",
+    "test:live:front-door": "node test/live/native-front-door.ts",
     "format": "biome format --write .",
     "lint": "biome check --error-on-warnings .",
     "lint:fix": "biome check --write .",

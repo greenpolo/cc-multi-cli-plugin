@@ -20,6 +20,7 @@ import {
   unavailableFollowUp,
 } from './display-rows.ts';
 import type { GatewayFetch } from './fetch.ts';
+import { viaFrontDoor } from './front-door.ts';
 import {
   emitHandback,
   handbackOffered,
@@ -69,6 +70,7 @@ import {
   assertProviderEnabled,
   authorizeRequest,
   BadRequest,
+  carriesGatewayToken,
   externalModel,
   header,
   type ProviderRequest,
@@ -824,7 +826,12 @@ export function createNativeGateway({
     try {
       assertLoopbackHost(req);
       const url = new URL(req.url ?? '', 'http://localhost');
-      if (isRawAnthropicPath(url.pathname)) {
+      // Through the front door, only Claude Code's own requests carry the token; anything
+      // else that inherited the proxy settings goes to Anthropic untouched.
+      if (
+        isRawAnthropicPath(url.pathname) ||
+        (viaFrontDoor(req) && !carriesGatewayToken(req, token))
+      ) {
         return await handleRawAnthropic(req, res, url, abort);
       }
       if (!authorizeRequest(req, res, token)) {
