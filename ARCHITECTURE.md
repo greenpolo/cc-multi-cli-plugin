@@ -59,7 +59,11 @@ the TLS connection to `api.anthropic.com` with a certificate made for the sessio
 request without the session token goes to Anthropic untouched. Every other host is a
 byte tunnel, through the user's own proxy when one applies. Commands Claude runs get the
 user's own proxy settings back from a `CLAUDE_ENV_FILE` script (`launch/front-door.ts`).
-Any other session, or `MULTI_GATEWAY_TRANSPORT=base-url`, uses `ANTHROPIC_BASE_URL`.
+A first-party Claude Code may send a turn as part of a message thread kept on Anthropic's
+servers (a `thread` field; a continue carries only the new messages and no tools). Claude
+models keep that; for an external model the gateway answers Anthropic's
+`thread_unsupported_request` error, and Claude Code resends the turn in full and keeps that
+model stateless for the session (`gateway/request.ts`). Any other session, or `MULTI_GATEWAY_TRANSPORT=base-url`, uses `ANTHROPIC_BASE_URL`.
 The gateway passes Anthropic traffic through untouched except for a successful
 `/v1/messages` reply's Agent calls naming a Multi provider worker and a string
 `model`: it removes `input.model` before Claude Code sees the call, preserving

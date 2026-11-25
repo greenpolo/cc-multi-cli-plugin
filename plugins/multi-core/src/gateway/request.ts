@@ -17,6 +17,26 @@ const MAX_BODY = 32 * 1024 * 1024;
 /** Rejected before any provider call; answered as HTTP 400 rather than 502. */
 export class BadRequest extends Error {}
 
+/**
+ * A first-party Claude Code (the front door) may send a request as part of a message thread
+ * that Anthropic keeps server-side: a `continue` carries only the new messages and no tools.
+ * The gateway keeps no such thread for an external model, so it answers with Anthropic's own
+ * error code for that, and Claude Code resends the turn in full and keeps that model
+ * stateless for the rest of the session.
+ */
+export class ThreadUnsupported extends BadRequest {
+  readonly errorCode = 'thread_unsupported_request';
+}
+
+/** Refuse a message-thread request for an external model; see ThreadUnsupported. */
+export function assertStatelessRequest(parsed: unknown, external: string | null) {
+  if (external !== null && typeof parsed === 'object' && parsed !== null && 'thread' in parsed) {
+    throw new ThreadUnsupported(
+      'message threads are not supported for this model; resend the full conversation',
+    );
+  }
+}
+
 export class ForbiddenHost extends Error {}
 
 export class RequestTooLarge extends Error {}

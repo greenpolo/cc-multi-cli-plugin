@@ -68,6 +68,7 @@ import {
   admitModRequest,
   assertLoopbackHost,
   assertProviderEnabled,
+  assertStatelessRequest,
   authorizeRequest,
   BadRequest,
   carriesGatewayToken,
@@ -848,6 +849,7 @@ export function createNativeGateway({
       );
       const external = externalModel(body.model);
       assertProviderEnabled(external, enabledProviders);
+      assertStatelessRequest(parsed, external);
       const signal = providerSignal(abort.signal, external, timeoutMs);
       const agentId = header(req.headers['x-claude-code-agent-id']);
       const metadata = requestIdentity(

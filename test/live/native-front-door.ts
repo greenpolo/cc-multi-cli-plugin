@@ -93,7 +93,13 @@ const routes = diagnostics
 
 assert.equal(code, 0, `launcher exited ${code}; see ${cwd}`);
 assert.doesNotMatch(debug, /ANTHROPIC_BASE_URL is set/, 'Claude Code still saw a base URL');
-assert.doesNotMatch(debug, /certificate|self[- ]signed|UNABLE_TO_VERIFY/i, 'TLS trouble');
+// Claude Code logs its CA list at startup, including roots it drops from the OS store, so
+// match the errors a refused front-door certificate produces, not the word "certificate".
+assert.doesNotMatch(
+  debug,
+  /UNABLE_TO_VERIFY|SELF_SIGNED_CERT|DEPTH_ZERO_SELF_SIGNED|ERR_TLS_CERT|self[- ]signed certificate|unable to verify the first certificate/i,
+  'TLS trouble',
+);
 assert.ok(
   routes.some((event) => event.route === 'anthropic' && event.model !== undefined),
   'no Claude request reached the gateway through the front door',
