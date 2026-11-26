@@ -4,7 +4,9 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
-## Unreleased
+## 0.4.1 — 2026-11-26
+
+External CLIs keep their own MCP servers and agents, and Claude's rules reach Gemini on Windows.
 
 - **External CLIs keep their own MCP servers and agents.** Antigravity always denied
   its own MCP calls, subagents, scheduling and messaging, even in Bypass, and Grok
