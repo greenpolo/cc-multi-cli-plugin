@@ -13,6 +13,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   (`mcp__server`, `mcp__server__*`, `mcp__server__tool`) apply to them. Antigravity
   matches each MCP call by server and tool; Grok's rule is coarse.
 
+- **Claude's rules reach Antigravity on Windows.** Multi wrote its permission hook
+  and read agy's settings under `%LOCALAPPDATA%\gemini`, but agy reads
+  `~\.gemini` on Windows too, so the hook never ran there: Plan was not read-only
+  and Claude deny rules did not apply. It now uses `~\.gemini` on every platform.
+
 - **Provider workers survive Claude Code's built-in plugins.** Recent Claude Code
   releases list built-in plugins (`<name>@builtin`) as enabled with no install path.
   Multi rejected the whole plugin list over them, printed "could not list Claude

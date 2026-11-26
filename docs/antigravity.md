@@ -137,8 +137,11 @@ send it again once the answer lands.
 
 | OS | Global hook file | Settings file |
 | --- | --- | --- |
-| Linux and macOS | `~/.gemini/config/hooks.json` | `~/.gemini/antigravity-cli/settings.json` |
-| Windows | `%LOCALAPPDATA%\gemini\config\hooks.json` (or `%APPDATA%`) | `%LOCALAPPDATA%\gemini\antigravity-cli\settings.json` (or `%APPDATA%`) |
+| Linux, macOS and Windows | `~/.gemini/config/hooks.json` | `~/.gemini/antigravity-cli/settings.json` |
+
+On Windows `~` is `%USERPROFILE%`. Earlier releases wrote the hook under
+`%LOCALAPPDATA%\gemini`, which `agy` does not read, so on Windows no Claude rule
+reached `agy`; `multi uninstall` removes that stale entry too.
 
 The installed hook is named `multi-cli-antigravity`. Setup preserves other hook
 entries. Every launch with Antigravity enabled rewrites the entry, so it follows a plugin

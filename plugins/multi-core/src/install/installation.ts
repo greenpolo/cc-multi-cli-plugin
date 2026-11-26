@@ -533,7 +533,8 @@ export async function setup(
 /**
  * Remove the `multi-cli-antigravity` entry from agy's global hooks file. This file is copied
  * beside the installed shims and must run after the plugin is gone, so it cannot import the
- * plugin's own path helpers; the location logic mirrors `antigravityHookFile`.
+ * plugin's own path helpers; the location logic mirrors `antigravityHookFile`. On Windows,
+ * releases before agy's `~/.gemini` move wrote under `%LOCALAPPDATA%`, so that entry goes too.
  */
 async function removeAntigravityHook(
   options: { platform?: Platform; env?: NodeJS.ProcessEnv; homedir?: string } = {},
@@ -542,11 +543,20 @@ async function removeAntigravityHook(
   const env = options.env ?? process.env;
   const home = options.homedir ?? os.homedir();
   const lib = platform === 'win32' ? path.win32 : path.posix;
-  const root =
-    platform === 'win32'
-      ? lib.join(env.LOCALAPPDATA ?? env.APPDATA ?? lib.join(home, 'AppData', 'Local'), 'gemini')
-      : lib.join(home, '.gemini');
-  const file = lib.join(root, 'config', 'hooks.json');
+  const roots = [lib.join(home, '.gemini')];
+  if (platform === 'win32') {
+    roots.push(
+      lib.join(env.LOCALAPPDATA ?? env.APPDATA ?? lib.join(home, 'AppData', 'Local'), 'gemini'),
+    );
+  }
+  let removed = false;
+  for (const root of roots) {
+    removed = (await removeHookEntry(lib.join(root, 'config', 'hooks.json'))) || removed;
+  }
+  return removed;
+}
+
+async function removeHookEntry(file: string): Promise<boolean> {
   let hooks: unknown;
   try {
     hooks = JSON.parse(await readFile(file, 'utf8'));

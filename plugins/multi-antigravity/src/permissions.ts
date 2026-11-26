@@ -4,19 +4,14 @@ import { nativeMode, nativeRules } from '../../multi-core/src/gateway/harness-se
 import type { PermissionContext } from '../../multi-core/src/gateway/mode-hook.ts';
 
 /** Native names reachable from each mapped Claude tool. */
-/** The agy config roots that hold hooks and settings; see antigravityProtectedRoots. */
+/** agy's config root, which holds hooks and settings on every platform; see configRoot in hooks.ts. */
 function antigravityProtectedRoots(
-  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; homedir?: string } = {},
+  options: { platform?: NodeJS.Platform; homedir?: string } = {},
 ): string[] {
   const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
   const home = options.homedir ?? os.homedir();
   const join = platform === 'win32' ? path.win32.join : path.posix.join;
-  const roots = [join(home, '.gemini')];
-  if (platform === 'win32') {
-    roots.push(join(env.LOCALAPPDATA ?? env.APPDATA ?? join(home, 'AppData', 'Local'), 'gemini'));
-  }
-  return roots;
+  return [join(home, '.gemini')];
 }
 
 const TOOL_MAP = {
@@ -102,6 +97,13 @@ const UNMAPPED_TOOLS = [
   'read_resource',
   'generate_image',
   'delete_knowledge',
+  'run_workflow',
+  'search_marketplace',
+  'list_plugin_accounts',
+  'list_permissions',
+  'ask_permission',
+  'ask_custom_permission',
+  'ask_question',
 ];
 
 const MCP_TOOL = 'call_mcp_tool';
