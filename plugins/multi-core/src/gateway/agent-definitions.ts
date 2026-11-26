@@ -225,7 +225,7 @@ export async function pluginPermissions(
   const permissions: Record<string, WorkerPermissions> = Object.create(null);
   let multiCoreEnabled = false;
   for (const plugin of plugins) {
-    if (!plugin.enabled || (plugin.projectPath && !withinProject(cwd, plugin.projectPath))) {
+    if (!activePlugin(plugin, cwd)) {
       continue;
     }
     if (typeof plugin.id !== 'string' || typeof plugin.installPath !== 'string') {
@@ -235,6 +235,28 @@ export async function pluginPermissions(
     Object.assign(permissions, await pluginAgents(plugin.installPath, plugin.id.split('@')[0]));
   }
   return { permissions, multiCoreEnabled };
+}
+
+interface ListedPlugin {
+  enabled?: unknown;
+  projectPath?: unknown;
+  id?: unknown;
+  installPath?: unknown;
+}
+
+function activePlugin(plugin: ListedPlugin, cwd: string): boolean {
+  if (!plugin.enabled) {
+    return false;
+  }
+  if (
+    typeof plugin.projectPath === 'string' &&
+    plugin.projectPath &&
+    !withinProject(cwd, plugin.projectPath)
+  ) {
+    return false;
+  }
+  // Claude Code's built-in plugins (`<name>@builtin`) list no installPath and ship no agents.
+  return !(typeof plugin.id === 'string' && plugin.id.endsWith('@builtin') && !plugin.installPath);
 }
 
 function pluginArguments(args: readonly string[]): string[] {

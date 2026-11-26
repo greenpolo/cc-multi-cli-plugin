@@ -6,6 +6,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **Provider workers survive Claude Code's built-in plugins.** Recent Claude Code
+  releases list built-in plugins (`<name>@builtin`) as enabled with no install path.
+  Multi rejected the whole plugin list over them, printed "could not list Claude
+  plugins (Invalid enabled Claude plugin)", and left every plugin-provided worker
+  unavailable. It now skips them.
+
 - **Multi works in the Claude desktop app.** The desktop app starts Claude Code
   itself, so `claude-multi` never ran there. Now the mod starts the gateway when a
   desktop Code session starts, sets the session up as the launcher sets a terminal
