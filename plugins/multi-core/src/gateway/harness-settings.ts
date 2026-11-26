@@ -22,6 +22,16 @@ type SettingsDiscovery = Required<HarnessSettingsOptions>;
 /** A bare tool name: the only kind of denial a native harness can enforce. */
 const BARE_TOOL = /^[A-Za-z][\w-]*$/;
 
+/**
+ * A Claude MCP rule (`mcp__server`, `mcp__server__*`, `mcp__server__tool`). A harness with its
+ * own MCP servers matches it against each MCP call; one without ignores it.
+ */
+const MCP_RULE = /^mcp__[\w-]+(__\*)?$/;
+
+function nativeDenial(rule: string): boolean {
+  return BARE_TOOL.test(rule) || MCP_RULE.test(rule);
+}
+
 const policyCommandTimeoutMs = 10_000;
 
 /**
@@ -103,7 +113,7 @@ export function nativeRules(context: Pick<PermissionContext, 'tools' | 'disallow
   denied: Set<string>;
 } {
   const allowed = nativeToolRules(context.tools)?.map((tool) => tool.replace(/\(.*$/, ''));
-  const denied = nativeToolRules(context.disallowedTools)?.filter((tool) => BARE_TOOL.test(tool));
+  const denied = nativeToolRules(context.disallowedTools)?.filter(nativeDenial);
   return { allowed: allowed && new Set(allowed), denied: new Set(denied) };
 }
 
@@ -411,14 +421,14 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** Bare denials carry over; MCP rules concern tools no harness runs; the rest is named. */
+/** Bare and MCP denials carry over; the rest is named. */
 function bareRules(rules: unknown, skipped: string[] | Set<string>): string[] {
   const kept: string[] = [];
   for (const rule of Array.isArray(rules) ? rules : []) {
-    if (typeof rule !== 'string' || rule.startsWith('mcp__')) {
+    if (typeof rule !== 'string') {
       continue;
     }
-    if (BARE_TOOL.test(rule)) {
+    if (nativeDenial(rule)) {
       kept.push(rule);
     } else if (Array.isArray(skipped)) {
       skipped.push('argument-specific deny rules');

@@ -6,6 +6,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## Unreleased
 
+- **External CLIs keep their own MCP servers and agents.** Antigravity always denied
+  its own MCP calls, subagents, scheduling and messaging, even in Bypass, and Grok
+  always denied MCP and its subagents. Now they follow Claude's mode: they run in
+  Auto and Bypass, Plan still leaves them out, and Claude's MCP deny rules
+  (`mcp__server`, `mcp__server__*`, `mcp__server__tool`) apply to them. Antigravity
+  matches each MCP call by server and tool; Grok's rule is coarse.
+
 - **Provider workers survive Claude Code's built-in plugins.** Recent Claude Code
   releases list built-in plugins (`<name>@builtin`) as enabled with no install path.
   Multi rejected the whole plugin list over them, printed "could not list Claude

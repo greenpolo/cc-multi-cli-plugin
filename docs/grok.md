@@ -63,9 +63,11 @@ adds its own planning, feedback and media tools to an allowlist, and execution i
 Code's own (`Bash(git:*)`, `Write(path)`, `MCPTool(*)`). Deny rules outrank every
 mode, including Bypass. Their genres are coarser than the tool names — `Edit(*)`
 also refuses the `write` tool — so a rule is only sent when none of the tools it
-reaches was granted, and finer restrictions rely on the bounded toolset. Native subagents (`--disallowed-tools Agent`), dynamic
-tool discovery (`search_tool`, `use_tool`) and the interactive `ask_user_question`
-tool are always removed.
+reaches was granted, and finer restrictions rely on the bounded toolset. Outside Plan,
+Grok's own tools that no Claude tool maps to (subagents, scheduler, workflows, the
+`search_tool`/`use_tool` MCP broker, media) stay available unless an explicit tool list
+leaves them out. The interactive `ask_user_question` tool is always removed, since a
+headless run has nobody to answer it.
 
 Plan mode alone removes no native tool, so Multi reconstructs it with explicit
 denials rather than trusting the flag. Claude rules with no native form are skipped
@@ -81,13 +83,13 @@ The transcript keeps streamed text and one closing summary of action counts,
 changed files, and failed or refused actions. There is no Grok reviewer, and
 Multi never borrows another provider's.
 
-### MCP is denied, not hidden
+### Your MCP servers
 
-Grok connects your configured MCP servers after a run starts, and no per-run flag
-prevents it, even with a tight allowlist. Multi denies their execution with `MCPTool(*)`, a rule the CLI validates
-and applies above every mode, but the model still sees those names. If you need
-them out of sight, remove the servers from your Grok configuration with
-`grok mcp`.
+Grok connects your configured MCP servers after a run starts, and they run in Auto
+and Bypass. Multi denies their execution with `MCPTool(*)` only in Plan, under an
+explicit tool list with no `mcp__` entry, or when a Claude rule denies any MCP tool
+(Grok's rule has no measured per-server form, so the denial is coarse). The model still
+sees the names; to hide them, remove the servers with `grok mcp`.
 
 ## What the provider is sent
 

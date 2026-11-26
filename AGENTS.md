@@ -63,7 +63,7 @@ changes to those boundaries need corresponding implementation and verification.
 - A provider without a reviewer runs auto mode unreviewed and says so; plan mode still refuses actions.
 - Never replay external tool events as executable Claude tools.
 - Native state is never rewound, and uncertain actions are never rerun blindly.
-- Antigravity native children and MCP are denied. Grok denies native subagents and MCP execution, and verifies the toolset the CLI announces.
+- A native CLI keeps its own MCP servers, subagents and tools; none is hard-blocked. Outside Plan they follow Claude's deny rules and explicit tool lists. Claude's plugins are never copied into a CLI. Grok verifies the toolset the CLI announces.
 - New bridges isolate session, worker, provider, and workspace state.
 - Do not use Cursor Fast in development or live tests; set `fast:false` explicitly.
 - Keep paid probes bounded and reuse existing usage records when possible.

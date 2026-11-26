@@ -211,11 +211,10 @@ Native harness actions do not enter Claude's PreToolUse or PermissionRequest
 admission path. Their worker admission loads the selected settings and managed
 policy sources. Provider SDK/CLI events supply progress and action observations
 for display through Claude Mods; Claude's classic tool hooks do not observe each
-native action. Antigravity native
-children and MCP stay denied. Grok denies native subagents and MCP execution by
-rule, and its announced toolset is verified because that CLI accepts an unknown
-removal silently; its MCP tools stay visible to the model and are documented as
-such. Explicit native workspace selection is required.
+native action. Antigravity and Grok keep their own MCP servers, subagents and other
+unmapped tools outside Plan, subject to Claude's deny rules and explicit tool lists;
+Claude's plugins are never copied into them. Grok's announced toolset is verified
+because that CLI accepts an unknown removal silently. Explicit native workspace selection is required.
 
 The gateway is the verdict arbiter for every reply it serves. `provider.ts` holds
 one policy table: OpenAI uses its injected account reviewer, Cursor reviews native

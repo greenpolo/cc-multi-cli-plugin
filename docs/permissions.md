@@ -27,11 +27,27 @@ earlier and resumed later. OpenAI automatic review reads
 `classifier_context.permission_mode` in each model request, so the request itself
 determines Plan restrictions.
 
+## The CLI's own tools
+
+A native CLI keeps its own setup: its MCP servers, subagents, scheduling and other
+tools that no Claude tool maps to. Multi never copies Claude's plugins or MCP servers
+into it, and never hard-blocks the CLI's own. Those tools follow Claude's mode:
+
+| Claude mode | The CLI's own tools |
+| --- | --- |
+| Bypass, Auto | Run, unless a Claude rule denies them. MCP calls are matched against Claude's MCP deny rules (`mcp__server`, `mcp__server__*`, `mcp__server__tool`) where the CLI names the server and tool. |
+| Plan | Left out: only read, search and web lookup run. |
+
+An explicit tool list (an agent type's `tools`, or `--tools`) admits only the tools it
+names, `mcp__` entries included. Antigravity matches each MCP call by server and tool;
+Grok's rule is coarse, so any MCP deny rule there turns off all of its MCP. Cursor
+runs still load no Cursor MCP servers or settings.
+
 ## Settings a native harness cannot enforce
 
 A native harness runs its own tools, so Claude Code cannot apply its rules to each
 action. What has a native form carries over on every run: bare tool denials
-(`"deny": ["Bash"]`), `--tools` and `--disallowedTools`, and an agent type's `tools`
+(`"deny": ["Bash"]`), MCP denials (`"deny": ["mcp__minecraft"]`), `--tools` and `--disallowedTools`, and an agent type's `tools`
 and `disallowedTools`. What has none is skipped, never refused: ask rules, sandbox
 settings, and argument-specific deny rules such as `Bash(rm:*)`. The run opens with
 one line naming what was skipped. A rule for a tool the harness does not have
