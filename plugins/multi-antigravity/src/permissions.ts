@@ -189,14 +189,16 @@ function toolList(serialized: string): string[] {
   return tools;
 }
 
-function stringValues(value: unknown, depth = 0): string[] {
-  if (typeof value === 'string') {
-    return [value];
-  }
+/** A key naming a file the tool writes (`Path`, `TargetFile`, `file_path`, ...), never its content. */
+const PATH_KEY = /(path|file)$/i;
+
+function pathValues(value: unknown, depth = 0): string[] {
   if (depth > 4 || !value || typeof value !== 'object') {
     return [];
   }
-  return Object.values(value).flatMap((item) => stringValues(item, depth + 1));
+  return Object.entries(value).flatMap(([key, item]) =>
+    typeof item === 'string' ? (PATH_KEY.test(key) ? [item] : []) : pathValues(item, depth + 1),
+  );
 }
 
 function inside(parent: string, child: string, platform: NodeJS.Platform): boolean {
@@ -221,7 +223,7 @@ function targetsProtectedPath(
   const platform = options.platform ?? process.platform;
   const lib = platform === 'win32' ? path.win32 : path.posix;
   const cwd = options.cwd ?? process.cwd();
-  return stringValues(call.parameters).some((value) => {
+  return pathValues(call.parameters).some((value) => {
     const expanded = value.startsWith('~') ? `${os.homedir()}${value.slice(1)}` : value;
     const resolved = lib.resolve(cwd, expanded);
     return options.protectedRoots.some((root) => inside(lib.resolve(root), resolved, platform));
@@ -335,7 +337,11 @@ export function antigravityToolDecision(
       excluded ||
       targetsProtectedPath(
         { name: call.name, parameters },
-        { protectedRoots: options.protectedRoots ?? antigravityProtectedRoots() },
+        {
+          protectedRoots: options.protectedRoots ?? antigravityProtectedRoots(),
+          // agy runs the hook from its config folder; relative paths belong to the workspace.
+          cwd: 'cwd' in input && typeof input.cwd === 'string' ? input.cwd : undefined,
+        },
       )
     ) {
       return {

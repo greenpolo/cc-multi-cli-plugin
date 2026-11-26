@@ -22,6 +22,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   with `read_file`, `write_file` and `edit_file`. Plan refused every read, and denying
   `Read`, `Edit` or `Write` did not stop them. They now map to `Read`, `Write` and
   `Edit`, and a server-wide MCP deny rule also covers that server's resources.
+  The guard that keeps writes out of `~/.gemini` now checks only path arguments,
+  resolved against the workspace, so ordinary writes are no longer refused.
 
 - **Provider workers survive Claude Code's built-in plugins.** Recent Claude Code
   releases list built-in plugins (`<name>@builtin`) as enabled with no install path.
