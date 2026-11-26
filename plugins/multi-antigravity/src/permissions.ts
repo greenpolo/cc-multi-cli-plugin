@@ -267,6 +267,13 @@ function mcpCallExcluded(parameters: unknown, denied: string[], allowed?: string
   return grants !== undefined && !grants.some((rule) => matchesMcpRule(rule, call));
 }
 
+function toolArguments(call: object): unknown {
+  if ('args' in call && call.args !== undefined) {
+    return call.args;
+  }
+  return 'parameters' in call ? call.parameters : undefined;
+}
+
 /** No policy means an ordinary native CLI session, outside this gateway. */
 export function antigravityToolDecision(
   input: unknown,
@@ -287,7 +294,8 @@ export function antigravityToolDecision(
     if (!call || typeof call !== 'object' || !('name' in call) || typeof call.name !== 'string') {
       throw new Error('Invalid native tool call');
     }
-    const parameters = 'parameters' in call ? call.parameters : undefined;
+    // agy sends a call's arguments as `args` (agy 1.5.18); older builds used `parameters`.
+    const parameters = toolArguments(call);
     const excluded =
       call.name === MCP_TOOL
         ? denied.includes(MCP_TOOL) || mcpCallExcluded(parameters, denied, allowed)
