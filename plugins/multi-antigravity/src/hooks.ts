@@ -16,14 +16,11 @@ export interface AntigravityPathOptions {
   homedir?: string;
 }
 
+/** agy keeps its config under `~/.gemini` on every platform, Windows included (agy 1.5.18). */
 function configRoot(options: AntigravityPathOptions = {}): string {
   const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
   const home = options.homedir ?? os.homedir();
   const join = platform === 'win32' ? path.win32.join : path.posix.join;
-  if (platform === 'win32') {
-    return join(env.LOCALAPPDATA ?? env.APPDATA ?? join(home, 'AppData', 'Local'), 'gemini');
-  }
   return join(home, '.gemini');
 }
 

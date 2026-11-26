@@ -4,7 +4,28 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
-## Unreleased
+## 0.4.1 — 2026-11-26
+
+External CLIs keep their own MCP servers and agents, and Claude's rules reach Gemini on Windows.
+
+- **External CLIs keep their own MCP servers and agents.** Antigravity always denied
+  its own MCP calls, subagents, scheduling and messaging, even in Bypass, and Grok
+  always denied MCP and its subagents. Now they follow Claude's mode: they run in
+  Auto and Bypass, Plan still leaves them out, and Claude's MCP deny rules
+  (`mcp__server`, `mcp__server__*`, `mcp__server__tool`) apply to them. Antigravity
+  matches each MCP call by server and tool; Grok's rule is coarse.
+
+- **Claude's rules reach Antigravity on Windows.** Multi wrote its permission hook
+  and read agy's settings under `%LOCALAPPDATA%\gemini`, but agy reads
+  `~\.gemini` on Windows too, so the hook never ran there: Plan was not read-only
+  and Claude deny rules did not apply. It now uses `~\.gemini` on every platform.
+
+- **Claude's rules cover agy's newer file tools.** agy 1.5.18 reads, writes and edits
+  with `read_file`, `write_file` and `edit_file`. Plan refused every read, and denying
+  `Read`, `Edit` or `Write` did not stop them. They now map to `Read`, `Write` and
+  `Edit`, and a server-wide MCP deny rule also covers that server's resources.
+  The guard that keeps writes out of `~/.gemini` now checks only path arguments,
+  resolved against the workspace, so ordinary writes are no longer refused.
 
 - **Provider workers survive Claude Code's built-in plugins.** Recent Claude Code
   releases list built-in plugins (`<name>@builtin`) as enabled with no install path.

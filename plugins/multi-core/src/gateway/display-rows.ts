@@ -141,7 +141,15 @@ function inputRecord(input: unknown): Record<string, unknown> {
 type MirroredKind = 'Read' | 'Bash' | 'Grep' | 'Glob' | 'LS' | 'Edit' | 'Write';
 type Mirror = { kind: MirroredKind; fields: Record<string, readonly string[]> };
 
-const pathKeys = ['file_path', 'filePath', 'path', 'AbsolutePath', 'TargetFile', 'target_file'];
+const pathKeys = [
+  'file_path',
+  'filePath',
+  'path',
+  'Path',
+  'AbsolutePath',
+  'TargetFile',
+  'target_file',
+];
 const directoryKeys = [
   'path',
   'targetDirectory',
@@ -176,13 +184,16 @@ const edit: Mirror = {
   kind: 'Edit',
   fields: {
     file_path: pathKeys,
-    old_string: ['old_string', 'TargetContent', 'old_str', 'oldText'],
-    new_string: ['new_string', 'ReplacementContent', 'new_str', 'newText'],
+    old_string: ['old_string', 'TargetContent', 'Target', 'old_str', 'oldText'],
+    new_string: ['new_string', 'ReplacementContent', 'Replacement', 'new_str', 'newText'],
   },
 };
 const write: Mirror = {
   kind: 'Write',
-  fields: { file_path: pathKeys, content: ['content', 'CodeContent', 'fileText', 'file_text'] },
+  fields: {
+    file_path: pathKeys,
+    content: ['content', 'Content', 'CodeContent', 'fileText', 'file_text'],
+  },
 };
 
 /**
@@ -208,6 +219,8 @@ const mirrors: Readonly<Record<string, Mirror>> = {
   edit: edit,
   search_replace: edit,
   write_to_file: write,
+  write_file: write,
+  edit_file: edit,
   write: write,
 };
 const kindMirrors: Readonly<Record<MirroredKind, Mirror>> = {

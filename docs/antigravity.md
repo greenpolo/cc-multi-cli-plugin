@@ -72,12 +72,15 @@ Claude's window governs when the session compacts. It is separate from the nativ
 
 Claude's permission mode and tool rules take precedence. `agy` runs with native
 permissions skipped. The namespaced global hook reads `MULTI_ANTIGRAVITY_DENY`
-and `MULTI_ANTIGRAVITY_ALLOW`. Every mode is an allowlist: only the native tools Claude's
-rules grant, plus the `finish` and `wait` control tools, run, so a tool `agy` announces
-that no Claude tool maps to (for example `schedule`, `send_message`, `generate_image`)
-stays denied. Browser tools follow the `WebFetch` grant. Native children, MCP-like
-resource tools, scheduling and messaging are always denied, and write tools can never
-target `agy`'s own config tree (`~/.gemini`), where the hook lives. Each finished tool step is a row under agy's own tool name (`view_file`,
+and `MULTI_ANTIGRAVITY_ALLOW`. Mapped tools follow Claude's rules: a denied `Bash`
+denies `run_command`, and browser tools follow the `WebFetch` grant. Your `agy` setup
+stays yours: its MCP servers, subagents, scheduling, messaging and other tools no
+Claude tool maps to run in Auto and Bypass. An MCP call (`call_mcp_tool`) is matched
+against Claude's MCP deny rules (`mcp__minecraft`, `mcp__minecraft__*`,
+`mcp__minecraft__search`). Plan is an allowlist of read, search and web lookup tools,
+so MCP, agents and anything `agy` adds later stay out of it; an explicit tool list (an
+agent type's `tools`) admits only the mapped tools and `mcp__` entries it names. Write
+tools can never target `agy`'s own config tree (`~/.gemini`), where the hook lives. Each finished tool step is a row under agy's own tool name (`view_file`,
 `run_command`, ...) with its native parameters and `tool_info.output`, in the
 `/model` Antigravity session or inside the Antigravity worker's transcript; the
 names come from agy's `init` toolset. Rows are never replayed as executable Claude
@@ -134,8 +137,11 @@ send it again once the answer lands.
 
 | OS | Global hook file | Settings file |
 | --- | --- | --- |
-| Linux and macOS | `~/.gemini/config/hooks.json` | `~/.gemini/antigravity-cli/settings.json` |
-| Windows | `%LOCALAPPDATA%\gemini\config\hooks.json` (or `%APPDATA%`) | `%LOCALAPPDATA%\gemini\antigravity-cli\settings.json` (or `%APPDATA%`) |
+| Linux, macOS and Windows | `~/.gemini/config/hooks.json` | `~/.gemini/antigravity-cli/settings.json` |
+
+On Windows `~` is `%USERPROFILE%`. Earlier releases wrote the hook under
+`%LOCALAPPDATA%\gemini`, which `agy` does not read, so on Windows no Claude rule
+reached `agy`; `multi uninstall` removes that stale entry too.
 
 The installed hook is named `multi-cli-antigravity`. Setup preserves other hook
 entries. Every launch with Antigravity enabled rewrites the entry, so it follows a plugin
