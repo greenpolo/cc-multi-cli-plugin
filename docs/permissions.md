@@ -40,8 +40,9 @@ into it, and never hard-blocks the CLI's own. Those tools follow Claude's mode:
 
 An explicit tool list (an agent type's `tools`, or `--tools`) admits only the tools it
 names, `mcp__` entries included. Antigravity matches each MCP call by server and tool;
-Grok's rule is coarse, so any MCP deny rule there turns off all of its MCP. Cursor
-runs still load no Cursor MCP servers or settings.
+Grok's and Cursor's rules are coarse, so any MCP deny rule there turns off all of their
+MCP. Provider workers list no tools of their own, so they inherit the session's whole
+toolset, as a Claude subagent does.
 
 ## Settings a native harness cannot enforce
 
@@ -57,7 +58,7 @@ restricts nothing there and is ignored.
 
 | Provider or action | What enforces the permission |
 | --- | --- |
-| OpenAI direct models | Claude Code's Read, Grep, Glob, Bash, Edit, and Write tools run the tool loop. The originating OpenAI account reviews tool uses inline before the reply completes. Read-only tools on the core skip list need no review. Reviewer failure or timeout refuses the action; discovery failure at launch leaves Auto unreviewed, with that statement in the status line. |
+| OpenAI direct models | Claude Code's own tools run the tool loop, the same set a Claude subagent gets: built-ins, MCP servers, web search and fetch, skills. The originating OpenAI account reviews tool uses inline before the reply completes. Read-only tools on the core skip list need no review. Reviewer failure or timeout refuses the action; discovery failure at launch leaves Auto unreviewed, with that statement in the status line. |
 | Zen direct models | Claude Code runs and authorizes the tools. Zen auto mode is unreviewed like bypass; plan mode refuses actions that need review. Zen has no independent reviewer and never uses the OpenAI reviewer. |
 | Cursor native harness | Native review belongs to the originating Cursor account and run. Cursor receives the prompt-boundary mode and capability restrictions. See [docs/cursor.md](cursor.md). |
 | Antigravity native harness | A namespaced global pre-tool hook enforces Claude's denials while the native CLI runs. See [docs/antigravity.md](antigravity.md). |

@@ -57,7 +57,9 @@ installed.
 | Bypass | `--permission-mode bypassPermissions`, explicit restrictions retained |
 | Default, dontAsk | `--permission-mode auto`, with a one-line notice |
 
-Restrictions are expressed three times on purpose. The native toolset is bounded
+With no Claude rule and outside Plan, the run passes no `--tools`, so Grok keeps every
+tool it has, including ones a newer build adds. When a rule applies, restrictions are
+expressed three times on purpose. The native toolset is bounded
 with `--tools`, every ungranted tool is *also* removed by name, because the CLI
 adds its own planning, feedback and media tools to an allowlist, and execution is gated with `--deny` rules whose syntax matches Claude
 Code's own (`Bash(git:*)`, `Write(path)`, `MCPTool(*)`). Deny rules outrank every

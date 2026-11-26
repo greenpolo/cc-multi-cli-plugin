@@ -91,8 +91,8 @@ export class ModBridge {
       generation: ++this.generation,
       effective: {
         permissionMode: value.effective.permissionMode,
-        tools: value.effective.tools?.slice(0, 256),
-        disallowedTools: value.effective.disallowedTools?.slice(0, 256),
+        tools: value.effective.tools?.slice(),
+        disallowedTools: value.effective.disallowedTools?.slice(),
       },
       cwd: value.cwd,
     };

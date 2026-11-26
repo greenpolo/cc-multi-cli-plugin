@@ -41,8 +41,9 @@ exit code, file content, diff), in the `/model` Cursor session or inside the Cur
 worker's transcript. The transcript also keeps streamed text, context-compaction
 notices, and one closing summary of action counts, changed files, and failed or
 denied actions. External actions are displayed and never replayed as executable
-Claude tools. Cursor task, child-agent, and MCP
-capabilities are disabled.
+Claude tools. Cursor loads your own Cursor setup (its MCP servers, rules, hooks and
+plugins) and keeps its subagents; Claude's deny rules remove the matching Cursor
+tools, and Plan removes shell, edits, subagents, MCP and image generation.
 
 Claude and OpenAI parents can spawn Cursor workers. Each worker has its own
 SDK state. Worktree workers use their canonical workspace for SDK execution and
