@@ -1,6 +1,5 @@
 // The Agent types the launched session registers: one worker per connected provider.
 
-import { DISPLAY_TOOL_SERVER } from '../gateway/display-rows.ts';
 import { providerManifest } from '../gateway/provider.ts';
 import type { Effort } from '../gateway/responses.ts';
 import {
@@ -17,22 +16,15 @@ import type { ConnectedProviders } from './providers.ts';
 const WORKER_PROMPT = 'Complete the delegated task.';
 
 /**
- * A native harness worker's tools. The Claude tools bound what the harness may
- * do natively; `mcp__multi-core` admits the display rows the gateway writes into
- * the worker's own transcript (Claude Code runs a subagent's tool_use only for a
- * tool its definition lists). The permission mappers drop that entry: it grants
- * no native capability, and the mod refuses any row the gateway did not issue.
+ * A worker lists no tools, so it inherits the session's whole toolset as a Claude subagent
+ * does: MCP servers, web search and fetch, skills and every built-in. Only Claude's
+ * permission mode and rules restrict it. The inherited set includes `mcp__multi-core`, which
+ * admits the display rows the gateway writes into a harness worker's own transcript.
  */
-const CLAUDE_WORKER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash', 'Edit', 'Write'];
-
-const HARNESS_WORKER_TOOLS = [...CLAUDE_WORKER_TOOLS, DISPLAY_TOOL_SERVER];
-
-/** One `--agents` entry: an external worker using Claude Code's native tools. */
 export interface AgentDefinition {
   description: string;
   prompt: string;
   model: string;
-  tools: string[];
   effort?: Effort;
 }
 
@@ -63,7 +55,6 @@ export function workerDefinitions(catalog: WorkerCatalog): Record<string, AgentD
       description: workerDescription(worker, manifest.runs),
       prompt: WORKER_PROMPT,
       model,
-      tools: manifest.kind === 'direct' ? CLAUDE_WORKER_TOOLS : HARNESS_WORKER_TOOLS,
       ...(worker.effort ? { effort: worker.effort as Effort } : {}),
     };
   }

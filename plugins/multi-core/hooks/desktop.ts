@@ -14,7 +14,6 @@ export type Handshake = {
     description: string;
     prompt: string;
     model: string;
-    tools: string[];
     effort?: string;
   }>;
   frontDoor: boolean;

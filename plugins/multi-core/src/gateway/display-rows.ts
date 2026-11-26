@@ -28,7 +28,7 @@ import { isRecord } from './record.ts';
  */
 const DISPLAY_TOOL_PREFIX = 'mcp__multi-core__';
 /** A worker definition's grant for every display tool; it grants no native capability. */
-export const DISPLAY_TOOL_SERVER = 'mcp__multi-core';
+const DISPLAY_TOOL_SERVER = 'mcp__multi-core';
 /** The input key carrying the gateway-issued token. */
 const ROW_TOKEN = 'multi_row';
 
