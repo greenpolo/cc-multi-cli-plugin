@@ -130,8 +130,9 @@ continuing. Non-success terminal results are reported as errors and are retried
 by a later identical request.
 
 One turn runs at a time per worker and workspace. A different prompt sent while
-a turn is running is refused rather than queued, so a paid turn never runs twice;
-send it again once the answer lands.
+a turn is running waits for it and then runs. A resent copy of the running request
+(Claude Code retrying after a dropped connection) reattaches to the running turn
+instead of starting the same native actions again.
 
 ## Config and hook paths per OS
 

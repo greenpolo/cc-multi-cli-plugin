@@ -124,8 +124,9 @@ last assistant response, and outer history changes produce a notice and continue
 on the native record. Native state is never rewound.
 
 One turn runs at a time per worker and workspace. A different prompt sent while
-a turn is running is refused rather than queued, so a paid turn never runs twice;
-send it again once the answer lands.
+a turn is running waits for it and then runs. A resent copy of the running request
+(Claude Code retrying after a dropped connection) reattaches to the running turn
+instead of starting the same native actions again.
 
 A completed identical request replays its saved output. A run that ends without
 a terminal event is never assumed complete: the next request resumes with an

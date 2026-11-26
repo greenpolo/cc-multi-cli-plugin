@@ -24,6 +24,9 @@ Workers get Claude's whole toolset, and arbitrary limits on agents are removed.
   the slow-gateway worker denial and two limiting lines in the OpenAI instructions are
   gone. agy's config-folder write guard applies only while a Claude rule is in force. agy
   no longer runs with `--disable-slash-commands`, which also switched off its own `--mode plan`.
+- **A busy CLI worker queues instead of refusing.** A new prompt sent to a Cursor, Antigravity
+  or Grok worker mid-turn used to fail with "already running"; it now waits for the turn
+  and then runs.
 
 ## 0.4.1 — 2026-11-26
 

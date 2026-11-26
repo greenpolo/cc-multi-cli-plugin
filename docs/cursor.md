@@ -86,8 +86,9 @@ should continue and move the other out of the state directory. At most 32 SDK ag
 released and resumed later from disk.
 
 One turn runs at a time per worker and workspace. A different prompt sent while
-a turn is running is refused rather than queued, so a paid turn never runs twice;
-send it again once the answer lands.
+a turn is running waits for it and then runs. A resent copy of the running request
+(Claude Code retrying after a dropped connection) reattaches to the running turn
+instead of starting the same native actions again.
 
 ## Compaction
 

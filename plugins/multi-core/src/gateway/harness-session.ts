@@ -137,23 +137,17 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
   }
 
   /**
-   * One turn at a time per agent: take the record and mark it busy, or refuse. A turn
-   * whose `signal` was aborted is already ending, so the next one waits for it to
-   * record its interruption (bounded) instead of being refused; that is not a queue.
+   * One turn at a time per agent, because one native session cannot run two turns at once.
+   * A request that arrives while a turn runs waits for it and then runs, as a message to a
+   * busy Claude agent waits; it is never refused. A turn whose `signal` was aborted is
+   * already ending, so the wait for it is bounded.
    */
   async acquireLease(identity: string, signal?: AbortSignal): Promise<HarnessTurnLease<S, R>> {
     this.assertOpen();
     await this.cancelledTurnEnded(identity);
-    this.assertOpen();
-    const current = this.records.get(identity);
-    if (current?.busy || this.loading.has(identity)) {
-      throw new HarnessBusyError(
-        `A different request is already running for this ${this.tag} agent`,
-      );
-    }
-    this.loading.add(identity);
+    await this.claim(identity, signal);
     try {
-      const session = current ?? (await this.load(identity));
+      const session = this.records.get(identity) ?? (await this.load(identity));
       this.assertOpen();
       const owned = this.mustOwn(session);
       owned.busy = true;
@@ -178,6 +172,25 @@ export class HarnessSessionStore<S extends HarnessSessionBase, R extends object 
       };
     } finally {
       this.loading.delete(identity);
+    }
+  }
+
+  /**
+   * Wait until no turn holds this agent, then claim it in the same step so two waiters
+   * cannot both proceed; give up only if this request is itself cancelled.
+   */
+  private async claim(identity: string, signal?: AbortSignal): Promise<void> {
+    for (;;) {
+      this.assertOpen();
+      signal?.throwIfAborted();
+      const current = this.records.get(identity);
+      if (!(current?.busy || this.loading.has(identity))) {
+        this.loading.add(identity);
+        return;
+      }
+      const holder = current ? this.owned.get(current)?.holder : undefined;
+      // A record still loading has no release promise yet, so poll briefly for it.
+      await (holder?.released ?? new Promise((resolve) => setTimeout(resolve, 50)));
     }
   }
 
