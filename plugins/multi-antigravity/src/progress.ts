@@ -40,6 +40,11 @@ export const ANTIGRAVITY_TOOLS: readonly string[] = [
   'command_status',
   'define_subagent',
   'delete_knowledge',
+  // agy 1.5.18 calls these, though its init event does not announce them.
+  'edit_file',
+  'read_file',
+  'update_steps',
+  'write_file',
   'execute_browser_javascript',
   'find_by_name',
   'finish',

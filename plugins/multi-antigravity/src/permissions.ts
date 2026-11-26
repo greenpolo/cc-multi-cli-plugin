@@ -15,12 +15,14 @@ function antigravityProtectedRoots(
 }
 
 const TOOL_MAP = {
-  Read: ['view_file', 'list_dir'],
+  // agy 1.5.18 reads, writes and edits with read_file, write_file and edit_file; older
+  // builds used the other names, which it still announces.
+  Read: ['view_file', 'list_dir', 'read_file'],
   Grep: ['grep_search'],
   Glob: ['find_by_name'],
   Bash: ['run_command', 'command_status', 'send_command_input'],
-  Write: ['write_to_file'],
-  Edit: ['replace_file_content', 'multi_replace_file_content', 'sed_file'],
+  Write: ['write_to_file', 'write_file'],
+  Edit: ['replace_file_content', 'multi_replace_file_content', 'sed_file', 'edit_file'],
   WebFetch: [
     'read_url_content',
     'open_browser_url',
@@ -67,7 +69,7 @@ const PLAN_READ_ONLY = [
 ];
 
 /** Control tools agy needs to finish a turn; they act on nothing outside the conversation. */
-const CONTROL_TOOLS = ['finish', 'wait', 'wait_5_seconds'];
+const CONTROL_TOOLS = ['finish', 'wait', 'wait_5_seconds', 'update_steps'];
 
 /** Native tools whose parameters name files they write. */
 const WRITING_TOOLS = new Set<string>([
@@ -107,6 +109,9 @@ const UNMAPPED_TOOLS = [
 ];
 
 const MCP_TOOL = 'call_mcp_tool';
+
+/** agy's MCP resource tools name a server but no tool, so only server-wide rules match them. */
+const MCP_RESOURCE_TOOLS = new Set(['list_resources', 'read_resource']);
 
 export interface AntigravityPolicy {
   /** Native names to deny, plus Claude `mcp__` deny rules checked against each MCP call. */
@@ -231,16 +236,38 @@ function firstString(record: Record<string, unknown>, keys: readonly string[]) {
   return key === undefined ? undefined : (record[key] as string);
 }
 
-/** Claude spells an MCP tool `mcp__<server>__<tool>`, with other characters as underscores. */
-function claudeMcpName(parameters: unknown): { server: string; tool: string } | undefined {
+const spell = (value: string) => value.replace(/[^\w-]/g, '_');
+
+function mcpServer(parameters: unknown): string | undefined {
   if (!parameters || typeof parameters !== 'object') {
     return undefined;
   }
-  const record = parameters as Record<string, unknown>;
-  const server = firstString(record, SERVER_KEYS);
-  const tool = firstString(record, TOOL_KEYS);
-  const spell = (value: string) => value.replace(/[^\w-]/g, '_');
-  return server && tool ? { server: spell(server), tool: spell(tool) } : undefined;
+  const server = firstString(parameters as Record<string, unknown>, SERVER_KEYS);
+  return server && spell(server);
+}
+
+/** Claude spells an MCP tool `mcp__<server>__<tool>`, with other characters as underscores. */
+function claudeMcpName(parameters: unknown): { server: string; tool: string } | undefined {
+  const server = mcpServer(parameters);
+  const tool =
+    parameters && typeof parameters === 'object'
+      ? firstString(parameters as Record<string, unknown>, TOOL_KEYS)
+      : undefined;
+  return server && tool ? { server, tool: spell(tool) } : undefined;
+}
+
+/** A resource call is denied by a server-wide `mcp__` rule for its server, or any when unnamed. */
+function mcpResourceExcluded(parameters: unknown, denied: string[]): boolean {
+  const serverRules = denied.filter(
+    (rule) => isMcpRule(rule) && !/^mcp__[\w-]+__(?!\*$)/.test(rule),
+  );
+  if (!serverRules.length) {
+    return false;
+  }
+  const server = mcpServer(parameters);
+  return (
+    !server || serverRules.some((rule) => rule === `mcp__${server}` || rule === `mcp__${server}__*`)
+  );
 }
 
 function matchesMcpRule(rule: string, call: { server: string; tool: string }): boolean {
@@ -301,7 +328,9 @@ export function antigravityToolDecision(
     const excluded =
       call.name === MCP_TOOL
         ? denied.includes(MCP_TOOL) || mcpCallExcluded(parameters, denied, allowed)
-        : denied.includes(call.name) || (allowed !== undefined && !allowed.includes(call.name));
+        : denied.includes(call.name) ||
+          (allowed !== undefined && !allowed.includes(call.name)) ||
+          (MCP_RESOURCE_TOOLS.has(call.name) && mcpResourceExcluded(parameters, denied));
     if (
       excluded ||
       targetsProtectedPath(

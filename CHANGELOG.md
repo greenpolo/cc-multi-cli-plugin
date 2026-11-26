@@ -18,6 +18,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
   `~\.gemini` on Windows too, so the hook never ran there: Plan was not read-only
   and Claude deny rules did not apply. It now uses `~\.gemini` on every platform.
 
+- **Claude's rules cover agy's newer file tools.** agy 1.5.18 reads, writes and edits
+  with `read_file`, `write_file` and `edit_file`. Plan refused every read, and denying
+  `Read`, `Edit` or `Write` did not stop them. They now map to `Read`, `Write` and
+  `Edit`, and a server-wide MCP deny rule also covers that server's resources.
+
 - **Provider workers survive Claude Code's built-in plugins.** Recent Claude Code
   releases list built-in plugins (`<name>@builtin`) as enabled with no install path.
   Multi rejected the whole plugin list over them, printed "could not list Claude
