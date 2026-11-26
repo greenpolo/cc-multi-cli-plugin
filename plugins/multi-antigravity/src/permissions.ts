@@ -356,6 +356,11 @@ export function antigravityToolDecision(
         reason: 'Claude session policy excludes this native Antigravity tool.',
       };
     }
+    // The guard keeps a run from rewriting the hook that enforces the user's own rules, so
+    // it applies only while such a rule is in force; with none, agy may write anywhere.
+    if (!denied.length && allowed === undefined) {
+      return undefined;
+    }
     const protectedRoots = options.protectedRoots ?? antigravityProtectedRoots();
     // agy runs the hook from its config folder; relative paths belong to the workspace.
     const target = { protectedRoots, cwd: hookCwd(input) };

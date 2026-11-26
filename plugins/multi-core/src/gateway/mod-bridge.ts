@@ -126,8 +126,9 @@ export class ModBridge {
       current.attached++;
       return current.run;
     }
-    if (!current && !this.makeRoom()) {
-      throw new Error('Native lifecycle capacity reached; restart the gateway');
+    // Status tracking never refuses a run: past capacity it simply grows.
+    if (!current) {
+      this.makeRoom();
     }
     this.lifecycle.set(key, {
       model,

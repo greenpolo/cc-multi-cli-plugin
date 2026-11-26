@@ -39,7 +39,6 @@ function dangerousToolMode(value: unknown): string {
     : '';
 }
 
-const unreviewedModes = new Set(['default', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions']);
 const readOnly = new Set([
   'Read',
   'Glob',
@@ -68,6 +67,8 @@ const controls = new Set([
 ]);
 const writes = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const allowed: ToolVerdict = { type: 'evaluated', outcome: 'not_flagged' };
+const planLookups = new Set(['WebSearch', 'WebFetch']);
+
 const blocked = (explanation: string): ToolVerdict => ({
   type: 'evaluated',
   outcome: 'flagged',
@@ -139,14 +140,13 @@ async function toolVerdict(
   if (harnessProvider(request.model) || readOnly.has(tool.name) || controls.has(tool.name)) {
     return allowed;
   }
-  if (!unreviewedModes.has(mode) && mode !== 'plan') {
-    return blocked('The permission mode is unavailable or unknown.');
-  }
+  // An unknown or missing mode runs as Auto, as it does everywhere else in the gateway.
   if (mode === 'plan' && writes.has(tool.name)) {
     return blocked('Plan mode does not permit file changes.');
   }
   if (policy.review !== 'reviewer' || !reviewer) {
-    return mode === 'plan'
+    // Claude's own Plan lets web lookups run, so they do here too.
+    return mode === 'plan' && !planLookups.has(tool.name)
       ? blocked('Plan mode: actions without a reviewer are refused.')
       : allowed;
   }

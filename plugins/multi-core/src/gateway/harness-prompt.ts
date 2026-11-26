@@ -39,12 +39,7 @@ function withoutClaudeCatalogues(text: string): string {
   );
 }
 
-function blockText(
-  block: ContentBlock,
-  allowReasoning: boolean,
-  role: string,
-  options: PromptOptions,
-): string {
+function blockText(block: ContentBlock, role: string, options: PromptOptions): string {
   if (block.type === 'text' && typeof block.text === 'string') {
     return options.stripCatalogues ? withoutClaudeCatalogues(block.text) : block.text;
   }
@@ -55,12 +50,11 @@ function blockText(
     return toolResultText(block, role, options);
   }
   if (block.type === 'thinking' || block.type === 'redacted_thinking') {
-    if (allowReasoning) {
-      return '';
-    }
-    throw new Error(`${options.provider} CLI does not accept provider-owned reasoning content`);
+    // Another provider's reasoning cannot be replayed into a CLI; the visible text carries on.
+    return '';
   }
-  throw new Error(`${options.provider} CLI does not support content block ${block.type}`);
+  // A CLI prompt is text, so an image or document is named rather than refusing the run.
+  return `[${block.type} omitted: ${options.provider} receives the conversation as text]`;
 }
 
 function toolUseText(block: ContentBlock, role: string, options: PromptOptions): string {
@@ -74,16 +68,11 @@ function toolResultText(block: ContentBlock, role: string, options: PromptOption
   if (role !== 'user' || typeof block.tool_use_id !== 'string' || block.content === undefined) {
     throw new Error(`${options.provider} CLI requires tool_result content`);
   }
-  const text = contentText(block.content, options, false, 'tool_result');
+  const text = contentText(block.content, options, 'tool_result');
   return `[tool result ${block.tool_use_id}] ${text}`;
 }
 
-function contentText(
-  content: unknown,
-  options: PromptOptions,
-  allowReasoning = false,
-  role = 'user',
-): string {
+function contentText(content: unknown, options: PromptOptions, role = 'user'): string {
   if (typeof content === 'string') {
     return content;
   }
@@ -93,7 +82,7 @@ function contentText(
         if (!block || typeof block !== 'object' || Array.isArray(block)) {
           throw new Error(`${options.provider} CLI requires valid content blocks`);
         }
-        return blockText(block as ContentBlock, allowReasoning, role, options);
+        return blockText(block as ContentBlock, role, options);
       })
       .join('');
   }
@@ -107,7 +96,7 @@ function messageText(message: RequestMessage, options: PromptOptions): string {
   if (!['user', 'assistant', 'system'].includes(message.role)) {
     throw new Error(`${options.provider} CLI does not support ${message.role} messages`);
   }
-  const content = contentText(message.content, options, message.role === 'assistant', message.role);
+  const content = contentText(message.content, options, message.role);
   if (options.dropEmptyTurns && !content.trim()) {
     // A turn that carried nothing but catalogues has no content left to forward.
     return '';
@@ -150,14 +139,8 @@ function validateNativeMessages(body: MessagesRequest, provider: string): void {
   ) {
     throw new Error(`${provider} requires valid conversation messages`);
   }
-  if (body.output_config?.format || body.output_format) {
-    // A native CLI's own schema flag covers a whole single-turn run; it cannot
-    // carry a Messages schema through a native tool loop.
-    throw new Error(`${provider} CLI does not support strict Messages output schemas`);
-  }
-  if (body.tool_choice && body.tool_choice.type !== 'auto') {
-    throw new Error(`${provider} CLI only supports its native automatic tools`);
-  }
+  // Output schemas, forced tool choice and stop sequences have no CLI form; the run goes
+  // ahead with the CLI's own automatic tools rather than being refused.
   if (
     body.thinking !== undefined &&
     (!body.thinking ||
@@ -167,8 +150,5 @@ function validateNativeMessages(body: MessagesRequest, provider: string): void {
         (!Number.isSafeInteger(body.thinking.budget_tokens) || body.thinking.budget_tokens < 0)))
   ) {
     throw new Error(`${provider} requires a valid thinking configuration`);
-  }
-  if (body.stop_sequences?.length) {
-    throw new Error(`${provider} CLI does not support Messages stop sequences`);
   }
 }
