@@ -23,9 +23,7 @@ function defaultParams(item: ModelListItem) {
       { id: 'fast', value: 'false' },
     ];
   }
-  if (params?.some((parameter) => parameter.id === 'fast' && parameter.value === 'true')) {
-    throw new Error(`Cursor ${item.id} has no advertised non-Fast default`);
-  }
+  // A model offered only as Fast keeps its own default rather than dropping out.
   return params;
 }
 
@@ -111,10 +109,9 @@ export function cursorSelection(option: CursorModelOption, effort?: string): Mod
   if (!effort || !parameter || option.model.split('/').length > 3) {
     return option.selection;
   }
+  // An effort the model does not list runs at the model's default rather than failing.
   if (!parameter.values.some((v) => v.value === effort)) {
-    throw new Error(
-      `Cursor ${option.selection.id} supports ${parameter.id}: ${parameter.values.map((v) => v.value).join(', ')}; received ${effort}`,
-    );
+    return option.selection;
   }
   return {
     id: option.selection.id,

@@ -8,8 +8,7 @@ are not available unless explicitly supplied.
 Follow the active session's instructions for planning, delegation, communication,
 skills, and task scope. This compatibility note adds no user preferences, grants
 no authorization, and does not override user, project, worker, or permission
-instructions. A request to review or explain something is not a request to change
-it; reversibility alone does not authorize an action.
+instructions.
 
 Respect an active Plan mode's restrictions and the harness's approval flow. For a
 summary or compaction request, return the requested summary instead of resuming

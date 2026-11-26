@@ -10,13 +10,6 @@ const TRANSIENT_SPAWN = new Set(['EAGAIN', 'EMFILE', 'ENFILE', 'ENOMEM', 'ETXTBS
 /** Launch failures that arrive as plain errors, before a native run object exists. */
 const PERMANENT_LAUNCH = new Set(['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EUNSAFEARG']);
 
-/**
- * A provider's local setup is missing or unsupported (an uninstalled hook, custom
- * provider settings). It fails the same way until the user fixes it, so it is a
- * request error: a retryable status turned it into ten silent retries.
- */
-export class HarnessSetupError extends Error {}
-
 export type HarnessFailureClass = {
   /** The same request fails the same way again: retrying only repeats a paid attempt. */
   deterministic: boolean;
@@ -40,7 +33,7 @@ function systemCodeOf(error: unknown): string | undefined {
  * an uncertain state and stays 502 so the caller sees an interrupted turn.
  */
 export function classifyHarnessFailure(error: unknown): HarnessFailureClass {
-  if (error instanceof HarnessBusyError || error instanceof HarnessSetupError) {
+  if (error instanceof HarnessBusyError) {
     return { deterministic: true, status: 400 };
   }
   if (error instanceof NativeCliError && error.code === 'policy') {

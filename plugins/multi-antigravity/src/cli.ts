@@ -352,6 +352,7 @@ export function antigravityEnvironment(overrides?: NodeJS.ProcessEnv): NodeJS.Pr
       'OPENAI_',
       'CURSOR_',
       'OPENCODE_',
+      // An API key here would move agy from the account login to metered API billing.
       'GEMINI_API_KEY',
       'GOOGLE_GEMINI_BASE_URL',
       'MULTI_GATEWAY_TOKEN',
