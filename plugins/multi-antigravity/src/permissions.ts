@@ -196,9 +196,12 @@ function pathValues(value: unknown, depth = 0): string[] {
   if (depth > 4 || !value || typeof value !== 'object') {
     return [];
   }
-  return Object.entries(value).flatMap(([key, item]) =>
-    typeof item === 'string' ? (PATH_KEY.test(key) ? [item] : []) : pathValues(item, depth + 1),
-  );
+  return Object.entries(value).flatMap(([key, item]) => {
+    if (typeof item !== 'string') {
+      return pathValues(item, depth + 1);
+    }
+    return PATH_KEY.test(key) ? [item] : [];
+  });
 }
 
 function inside(parent: string, child: string, platform: NodeJS.Platform): boolean {
@@ -305,6 +308,26 @@ function toolArguments(call: object): unknown {
   return 'parameters' in call ? call.parameters : undefined;
 }
 
+function excludedByPolicy(
+  name: string,
+  parameters: unknown,
+  denied: string[],
+  allowed?: string[],
+): boolean {
+  if (name === MCP_TOOL) {
+    return denied.includes(MCP_TOOL) || mcpCallExcluded(parameters, denied, allowed);
+  }
+  return (
+    denied.includes(name) ||
+    (allowed !== undefined && !allowed.includes(name)) ||
+    (MCP_RESOURCE_TOOLS.has(name) && mcpResourceExcluded(parameters, denied))
+  );
+}
+
+function hookCwd(input: object): string | undefined {
+  return 'cwd' in input && typeof input.cwd === 'string' ? input.cwd : undefined;
+}
+
 /** No policy means an ordinary native CLI session, outside this gateway. */
 export function antigravityToolDecision(
   input: unknown,
@@ -327,12 +350,7 @@ export function antigravityToolDecision(
     }
     // agy sends a call's arguments as `args` (agy 1.5.18); older builds used `parameters`.
     const parameters = toolArguments(call);
-    const excluded =
-      call.name === MCP_TOOL
-        ? denied.includes(MCP_TOOL) || mcpCallExcluded(parameters, denied, allowed)
-        : denied.includes(call.name) ||
-          (allowed !== undefined && !allowed.includes(call.name)) ||
-          (MCP_RESOURCE_TOOLS.has(call.name) && mcpResourceExcluded(parameters, denied));
+    const excluded = excludedByPolicy(call.name, parameters, denied, allowed);
     if (
       excluded ||
       targetsProtectedPath(
@@ -340,7 +358,7 @@ export function antigravityToolDecision(
         {
           protectedRoots: options.protectedRoots ?? antigravityProtectedRoots(),
           // agy runs the hook from its config folder; relative paths belong to the workspace.
-          cwd: 'cwd' in input && typeof input.cwd === 'string' ? input.cwd : undefined,
+          cwd: hookCwd(input),
         },
       )
     ) {
