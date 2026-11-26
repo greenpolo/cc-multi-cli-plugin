@@ -45,13 +45,20 @@ function contentBlocks(value: unknown): ContentBlock[] {
   return value;
 }
 
+/**
+ * A block OpenAI has no form for (a Claude server tool's call or result, say) carries on
+ * as its JSON in text, so the model still sees it and the request is never refused.
+ */
+function blockAsText(block: ContentBlock): string {
+  return `[${block.type}] ${JSON.stringify(block)}`;
+}
+
 export function textContent(value: unknown): string {
   return contentBlocks(value)
     .map((block) => {
-      if (block.type !== 'text' || typeof block.text !== 'string') {
-        throw new Error(`Unsupported text content: ${block.type}`);
-      }
-      return block.text;
+      return block.type === 'text' && typeof block.text === 'string'
+        ? block.text
+        : blockAsText(block);
     })
     .join('\n');
 }
@@ -106,7 +113,7 @@ function documentInput(block: ContentBlock): NormalizedContent[] {
     !source.data ||
     Buffer.from(source.data, 'base64').toString('base64') !== source.data
   ) {
-    throw new Error('Unsupported document: use base64 PDF or text/plain');
+    return [{ type: 'input_text', text: blockAsText(block) }];
   }
   return [
     {
@@ -161,7 +168,7 @@ function assistantInput<R>(
     const reasoning = decodeReasoning(block);
     return reasoning === undefined ? [] : [reasoning];
   }
-  throw new Error(`Unsupported native worker content: ${block.type}`);
+  return [{ role: 'assistant', content: [{ type: 'output_text', text: blockAsText(block) }] }];
 }
 
 function userInput<R>(block: ContentBlock): NormalizedConversationItem<R>[] {
@@ -183,7 +190,7 @@ function userInput<R>(block: ContentBlock): NormalizedConversationItem<R>[] {
       },
     ];
   }
-  throw new Error(`Unsupported native worker content: ${block.type}`);
+  return [{ role: 'user', content: [{ type: 'input_text', text: blockAsText(block) }] }];
 }
 
 function normalizeMessage<R>(
