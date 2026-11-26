@@ -22,7 +22,8 @@ Workers get Claude's whole toolset, and arbitrary limits on agents are removed.
   lookups as Claude's Plan does. Hidden agent types, run, concurrency, compaction and
   usage-query caps, the 256-rule cut-off, the agent-definition size and count limits,
   the slow-gateway worker denial and two limiting lines in the OpenAI instructions are
-  gone. agy's config-folder write guard applies only while a Claude rule is in force.
+  gone. agy's config-folder write guard applies only while a Claude rule is in force. agy
+  no longer runs with `--disable-slash-commands`, which also switched off its own `--mode plan`.
 
 ## 0.4.1 — 2026-11-26
 

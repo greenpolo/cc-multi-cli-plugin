@@ -148,7 +148,6 @@ function antigravityArguments(options: AntigravityRunOptions, promptOnStdin: boo
   const args = promptOnStdin
     ? ['--input-format', 'stream-json', '--output-format', 'stream-json']
     : ['-p', options.prompt, '--output-format', 'stream-json'];
-  args.push('--disable-slash-commands');
   if (options.model) {
     args.push('--model', options.model);
   }
