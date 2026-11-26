@@ -36,9 +36,6 @@ export class ModCompactions {
     this.prune();
     const key = scope(input);
     this.remove(key);
-    if (this.jobs.size >= 64) {
-      throw new Error('Compaction capacity reached');
-    }
     const job: Job = {
       ...structuredClone(input),
       id: randomUUID(),

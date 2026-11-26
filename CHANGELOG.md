@@ -4,6 +4,30 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## 0.4.2 — 2026-11-26
+
+Workers get Claude's whole toolset, and arbitrary limits on agents are removed.
+
+- **Workers get Claude's whole toolset.** Every provider worker was registered with a
+  fixed list of six tools (Read, Grep, Glob, Bash, Edit, Write), so GPT and Gemini
+  workers had no MCP, web search, web fetch or skills. Workers now list no tools and
+  inherit the session's, as a Claude subagent does.
+- **Arbitrary limits removed across providers.** Cursor now loads your Cursor setup
+  (MCP servers, rules, hooks, plugins) and keeps its subagents and web tools. Grok runs
+  with its full toolset when no Claude rule applies. The Antigravity and Grok prompts
+  no longer forbid subagents, and Antigravity no longer refuses custom provider settings.
+  An effort or output size a model does not offer now runs at the nearest supported
+  value instead of failing, an image or document no longer fails a CLI worker, content
+  OpenAI cannot represent is passed as text, and Plan without a reviewer allows web
+  lookups as Claude's Plan does. Hidden agent types, run, concurrency, compaction and
+  usage-query caps, the 256-rule cut-off, the agent-definition size and count limits,
+  the slow-gateway worker denial and two limiting lines in the OpenAI instructions are
+  gone. agy's config-folder write guard applies only while a Claude rule is in force. agy
+  no longer runs with `--disable-slash-commands`, which also switched off its own `--mode plan`.
+- **A busy CLI worker queues instead of refusing.** A new prompt sent to a Cursor, Antigravity
+  or Grok worker mid-turn used to fail with "already running"; it now waits for the turn
+  and then runs.
+
 ## 0.4.1 — 2026-11-26
 
 External CLIs keep their own MCP servers and agents, and Claude's rules reach Gemini on Windows.

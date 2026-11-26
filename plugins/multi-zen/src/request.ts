@@ -32,28 +32,21 @@ function validateMedia(request: ResponsesRequest, model: ZenModel) {
 }
 
 /** Pure translation keeps repeated prefixes byte-stable; the caller owns credentials. */
-export function zenRequest(body: MessagesRequest, cacheKey: string) {
-  const model = zenModel(body.model?.replace(/^multi\/zen\//, '') ?? '');
-  if (!model || body.model !== `multi/zen/${model.id}`) {
+export function zenRequest(request: MessagesRequest, cacheKey: string) {
+  const model = zenModel(request.model?.replace(/^multi\/zen\//, '') ?? '');
+  if (!model || request.model !== `multi/zen/${model.id}`) {
     throw new Error('Unknown Zen model. Run the launcher with --zen-models for supported choices.');
   }
   if (
-    body.max_tokens !== undefined &&
-    (!Number.isSafeInteger(body.max_tokens) ||
-      body.max_tokens < 1 ||
-      body.max_tokens > model.maxOutputTokens)
+    request.max_tokens !== undefined &&
+    (!Number.isSafeInteger(request.max_tokens) || request.max_tokens < 1)
   ) {
-    throw new Error(`Zen max_tokens must be between 1 and ${model.maxOutputTokens}`);
+    throw new Error('Zen max_tokens must be a positive integer');
   }
+  const body = fitToModel(request, model);
   const signaturePrefix = `${ZEN_RESPONSES_SIGNATURE_PREFIX}${model.id}:`;
   const normalized = toResponses(body, model.id, signaturePrefix);
   validateMedia(normalized, model);
-  const effort = body.output_config?.effort;
-  if (effort !== undefined && model.efforts && !model.efforts.some((value) => value === effort)) {
-    throw new Error(
-      `${model.id} does not support effort ${effort}. Reset /effort to auto to use its native default.`,
-    );
-  }
   const common = { signaturePrefix, inputTokens: estimateInputTokens(normalized) };
   if (model.protocol === 'chat') {
     // Claude supplies an effort even for models with no adjustable effort. These
@@ -80,5 +73,25 @@ export function zenRequest(body: MessagesRequest, cacheKey: string) {
       max_output_tokens: body.max_tokens ?? Math.min(32000, model.maxOutputTokens),
       prompt_cache_key: cacheKey,
     },
+  };
+}
+
+/**
+ * A request asking for more output than the model allows runs at the model's limit, and an
+ * effort the model does not list runs at its native default, rather than either failing.
+ */
+function fitToModel(
+  body: MessagesRequest,
+  model: { maxOutputTokens: number; efforts?: readonly string[] },
+): MessagesRequest {
+  const effort = body.output_config?.effort;
+  const unsupported =
+    effort !== undefined && model.efforts !== undefined && !model.efforts.includes(effort);
+  return {
+    ...body,
+    ...(body.max_tokens === undefined
+      ? {}
+      : { max_tokens: Math.min(body.max_tokens, model.maxOutputTokens) }),
+    ...(unsupported ? { output_config: { ...body.output_config, effort: undefined } } : {}),
   };
 }

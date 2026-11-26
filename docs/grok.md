@@ -57,7 +57,9 @@ installed.
 | Bypass | `--permission-mode bypassPermissions`, explicit restrictions retained |
 | Default, dontAsk | `--permission-mode auto`, with a one-line notice |
 
-Restrictions are expressed three times on purpose. The native toolset is bounded
+With no Claude rule and outside Plan, the run passes no `--tools`, so Grok keeps every
+tool it has, including ones a newer build adds. When a rule applies, restrictions are
+expressed three times on purpose. The native toolset is bounded
 with `--tools`, every ungranted tool is *also* removed by name, because the CLI
 adds its own planning, feedback and media tools to an allowlist, and execution is gated with `--deny` rules whose syntax matches Claude
 Code's own (`Bash(git:*)`, `Write(path)`, `MCPTool(*)`). Deny rules outrank every
@@ -122,8 +124,9 @@ last assistant response, and outer history changes produce a notice and continue
 on the native record. Native state is never rewound.
 
 One turn runs at a time per worker and workspace. A different prompt sent while
-a turn is running is refused rather than queued, so a paid turn never runs twice;
-send it again once the answer lands.
+a turn is running waits for it and then runs. A resent copy of the running request
+(Claude Code retrying after a dropped connection) reattaches to the running turn
+instead of starting the same native actions again.
 
 A completed identical request replays its saved output. A run that ends without
 a terminal event is never assumed complete: the next request resumes with an

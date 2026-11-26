@@ -165,18 +165,14 @@ export function selectAntigravityModel(
   if (effort === undefined || PINNED_EFFORT.test(selected.id)) {
     return selected;
   }
-  if (effort !== 'low' && effort !== 'medium' && effort !== 'high') {
-    throw new Error('Antigravity effort must be an advertised low, medium or high variant.');
-  }
+  // agy's levels top out at high, so Claude's xhigh and max run as high.
+  const level = effort === 'low' || effort === 'medium' ? effort : 'high';
   const base = selected.id.replace(/-(low|medium|high)$/, '');
   if (base === selected.id) {
-    return { ...selected, effort };
+    return { ...selected, effort: level };
   }
-  const variant = models.find((option) => option.id === `${base}-${effort}`);
-  if (!variant) {
-    throw new Error(`Antigravity model ${selected.id} does not advertise ${effort} effort.`);
-  }
-  return variant;
+  // A model without that variant runs at its default rather than failing.
+  return models.find((option) => option.id === `${base}-${level}`) ?? selected;
 }
 
 /**

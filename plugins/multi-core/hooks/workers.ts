@@ -98,10 +98,8 @@ export const register = (on: Parameters<Register>[0], _options: Parameters<Regis
       parentModel,
     });
     await classify($, event.agent, nativeClaude(response));
-    // Claude owns its own catalog. Only a positively identified harness worker
-    // is subject to Multi's settings-translation compatibility filter.
-    const hidden = response?.execution === 'harness' && response.isOffered === false;
-    const result = hidden ? { isOffered: false } : await next(event);
+    // Every agent type stays offered: an unknown one inherits the session's record.
+    const result = await next(event);
     await markOffered($, event.agent, result.isOffered);
     return result;
   });
@@ -218,12 +216,13 @@ async function providerSpawn(
     return { event, selection };
   }
   if (!selection) {
-    return {
-      deny: reportable(`The Multi gateway did not resolve the ${event.subagentType} model.`),
-    };
+    // A slow gateway never blocks a worker: it starts on its agent type's default model.
+    return { event, selection };
   }
   if (selection.refused || !selection.model) {
-    return { deny: selection.error ?? `The ${event.subagentType} model was not resolved.` };
+    return {
+      deny: reportable(selection.error ?? `The ${event.subagentType} model was not resolved.`),
+    };
   }
   // The task keeps the model's own description: the agent list names the CLI itself.
   return { event: { ...event, model: selection.model }, selection };

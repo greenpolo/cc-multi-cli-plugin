@@ -125,7 +125,8 @@ const MCP_DENY_RULE = 'MCPTool(*)';
 
 export interface GrokPolicy {
   mode: GrokPermissionMode;
-  tools: string[];
+  /** Absent when nothing bounds the toolset: Grok keeps every tool it has. */
+  tools?: string[];
   disallowedTools: string[];
   deny: string[];
   /** Native names that must never appear in an announced toolset. */
@@ -187,13 +188,15 @@ function policy(
   mode: GrokPermissionMode,
   granted: ReadonlySet<string>,
   notice: string,
-  mcp = false,
+  options: { mcp?: boolean; bounded?: boolean } = {},
 ): GrokPolicy {
+  const mcp = options.mcp ?? false;
   const forbidden = GROK_TOOLS.filter((tool) => !granted.has(tool));
   const removals = forbidden.map((tool) => REMOVAL_ALIASES[tool] ?? tool);
   return {
     mode,
-    tools: GROK_TOOLS.filter((tool) => granted.has(tool)),
+    // Unbounded runs pass no `--tools`, so a tool a newer Grok adds is available too.
+    ...(options.bounded === false ? {} : { tools: GROK_TOOLS.filter((tool) => granted.has(tool)) }),
     disallowedTools: granted.has('spawn_subagent') ? removals : [SUBAGENT_REMOVAL, ...removals],
     deny: denyRules(granted, mcp),
     forbidden,
@@ -213,7 +216,8 @@ export function grokPermissionPolicy(context: PermissionContext): GrokPolicy {
   ]
     .filter(Boolean)
     .join(' ');
-  return policy(mode, grantedTools(context, plan), notice, mcp);
+  const bounded = plan || nativeRules(context).allowed !== undefined;
+  return policy(mode, grantedTools(context, plan), notice, { mcp, bounded });
 }
 
 /** A summary turn runs with planning state only and no way to touch the workspace. */

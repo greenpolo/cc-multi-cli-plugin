@@ -13,8 +13,6 @@ import type { Emit, MessagesRequest, MessagesResponse } from './messages.ts';
 import type { PermissionContext } from './mode-hook.ts';
 import { abortGraceMs } from './settle.ts';
 
-const MAX_CONCURRENT_EXCHANGES = 256;
-
 export const digest = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -167,9 +165,6 @@ export abstract class CliHarness<Saved extends HarnessSessionBase, Selection> {
     const turn: CliTurn<Selection> = { body, context, selection, cwd, identity, key, observe };
     let exchange = this.exchanges.get(key);
     if (!exchange) {
-      if (this.exchanges.size >= MAX_CONCURRENT_EXCHANGES) {
-        throw new Error(`Too many concurrent ${this.tag} requests`);
-      }
       exchange = this.exchanges.start(key, (started, forward) =>
         this.serve(turn, started, forward),
       );

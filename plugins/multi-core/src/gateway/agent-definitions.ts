@@ -16,8 +16,6 @@ export interface WorkerPermissions {
   notice?: string;
 }
 
-const MAX_AGENT_FILES = 1000;
-const MAX_AGENT_BYTES = 1024 * 1024;
 const PERMISSION_MODES = new Set([
   'default',
   'acceptEdits',
@@ -116,18 +114,12 @@ async function agentFiles(directory: string): Promise<string[]> {
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
       files.push(file);
     }
-    if (files.length > MAX_AGENT_FILES) {
-      throw new Error(`Too many agent definitions under ${directory}`);
-    }
   }
   return files;
 }
 
 async function readDefinition(file: string): Promise<[string, WorkerPermissions]> {
   const source = await readFile(file, 'utf8');
-  if (Buffer.byteLength(source) > MAX_AGENT_BYTES) {
-    throw new Error(`Agent definition ${file} exceeds ${MAX_AGENT_BYTES} bytes`);
-  }
   const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!frontmatter) {
     throw new Error(`Agent definition ${file} has no YAML frontmatter`);
@@ -208,7 +200,7 @@ export async function pluginPermissions(
     childProcess.execFile(
       invocation.command,
       invocation.args,
-      { cwd, timeout: 10000, maxBuffer: MAX_AGENT_BYTES, env: environment, ...invocation.options },
+      { cwd, timeout: 10000, maxBuffer: 64 * 1024 * 1024, env: environment, ...invocation.options },
       (error, output) => {
         if (error) {
           reject(error);
@@ -322,9 +314,6 @@ const reportedMalformed = new Set<string>();
  */
 async function pluginDefinition(file: string): Promise<[string, WorkerPermissions]> {
   const source = await readFile(file, 'utf8');
-  if (Buffer.byteLength(source) > MAX_AGENT_BYTES) {
-    throw new Error(`Agent definition ${file} exceeds size limit`);
-  }
   const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   const value = lenientFrontmatter(frontmatter?.[1] ?? '');
   const name = typeof value?.name === 'string' ? value.name : path.basename(file, '.md');

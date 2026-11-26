@@ -76,9 +76,6 @@ export class ProviderUsageDashboard {
     if (!refresh && saved && saved.expires > this.now()) {
       return this.withSession(saved.view, snapshot);
     }
-    if (this.pending.size >= 32) {
-      throw new Error('Too many simultaneous usage queries');
-    }
     const request = this.collect(session);
     this.pending.set(session, request);
     try {

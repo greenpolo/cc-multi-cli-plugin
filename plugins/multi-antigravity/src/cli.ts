@@ -148,7 +148,6 @@ function antigravityArguments(options: AntigravityRunOptions, promptOnStdin: boo
   const args = promptOnStdin
     ? ['--input-format', 'stream-json', '--output-format', 'stream-json']
     : ['-p', options.prompt, '--output-format', 'stream-json'];
-  args.push('--disable-slash-commands');
   if (options.model) {
     args.push('--model', options.model);
   }
@@ -352,6 +351,7 @@ export function antigravityEnvironment(overrides?: NodeJS.ProcessEnv): NodeJS.Pr
       'OPENAI_',
       'CURSOR_',
       'OPENCODE_',
+      // An API key here would move agy from the account login to metered API billing.
       'GEMINI_API_KEY',
       'GOOGLE_GEMINI_BASE_URL',
       'MULTI_GATEWAY_TOKEN',

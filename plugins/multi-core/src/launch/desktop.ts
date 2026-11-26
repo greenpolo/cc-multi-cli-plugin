@@ -40,7 +40,6 @@ interface DesktopWorker {
   description: string;
   prompt: string;
   model: string;
-  tools: string[];
   effort?: string;
 }
 
@@ -71,7 +70,6 @@ export function handshake(gateway: OpenGateway, notice: string | undefined): Han
       description: agent.description,
       prompt: agent.prompt,
       model: agent.model,
-      tools: agent.tools,
       ...(agent.effort ? { effort: agent.effort } : {}),
     })),
     frontDoor: gateway.frontDoor !== undefined,

@@ -5,8 +5,7 @@ import type { MessagesRequest } from '../../multi-core/src/gateway/messages.ts';
 const PREAMBLE =
   'You are the Antigravity coding agent displayed inside Claude Code. Complete the task ' +
   'using your native tools and permissions, verify changes, and report results and any ' +
-  'denied actions. Previously recorded actions are complete; do not repeat them. Do not ' +
-  'spawn child agents or external coding CLIs.';
+  'denied actions. Previously recorded actions are complete; do not repeat them.';
 
 /** Cache markers are transport metadata; moving them must not fork native history. */
 export function antigravityHistoryHash(messages: MessagesRequest['messages']): string {
