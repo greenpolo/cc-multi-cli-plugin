@@ -350,21 +350,19 @@ export function antigravityToolDecision(
     }
     // agy sends a call's arguments as `args` (agy 1.5.18); older builds used `parameters`.
     const parameters = toolArguments(call);
-    const excluded = excludedByPolicy(call.name, parameters, denied, allowed);
-    if (
-      excluded ||
-      targetsProtectedPath(
-        { name: call.name, parameters },
-        {
-          protectedRoots: options.protectedRoots ?? antigravityProtectedRoots(),
-          // agy runs the hook from its config folder; relative paths belong to the workspace.
-          cwd: hookCwd(input),
-        },
-      )
-    ) {
+    if (excludedByPolicy(call.name, parameters, denied, allowed)) {
       return {
         decision: 'deny',
         reason: 'Claude session policy excludes this native Antigravity tool.',
+      };
+    }
+    const protectedRoots = options.protectedRoots ?? antigravityProtectedRoots();
+    // agy runs the hook from its config folder; relative paths belong to the workspace.
+    const target = { protectedRoots, cwd: hookCwd(input) };
+    if (targetsProtectedPath({ name: call.name, parameters }, target)) {
+      return {
+        decision: 'deny',
+        reason: `Writes to agy's config folder (${protectedRoots.join(', ')}) are refused: Multi's permission hook lives there.`,
       };
     }
     return undefined;
