@@ -1,30 +1,184 @@
-import type { MessagesRequest } from '../../multi-core/src/gateway/messages.ts';
+import { createHash } from 'node:crypto';
+import type { MessagesRequest, RequestMessage } from '../../multi-core/src/gateway/messages.ts';
 import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import type { ReviewInput } from '../../multi-core/src/gateway/verdicts.ts';
 
-const requestBudget = 768 * 1024;
-const actionBudget = 128 * 1024;
-const messageBudget = 64 * 1024;
-const policyBudget = 32 * 1024;
+// The Codex CLI's auto-review sends a compact transcript, not the whole session,
+// and keeps one reviewer thread per session so a later review adds only what is
+// new. These budgets keep one review near the Codex size: a few thousand tokens
+// once the thread exists, and about 25k tokens when it starts.
+const entryBudget = { message: 8 * 1024, tool: 4 * 1024 };
+const transcriptBudget = { message: 40 * 1024, tool: 40 * 1024 };
+const recentEntryLimit = 40;
+const actionBudget = 16 * 1024;
+const policyBudget = 16 * 1024;
+const systemBudget = 8 * 1024;
+const rootBudget = { message: 16 * 1024, tool: 8 * 1024 };
+
+/** One transcript line the reviewer reads: who said or did what, never hidden reasoning. */
+interface Entry {
+  role: string;
+  kind: 'message' | 'tool';
+  text: unknown;
+}
+
+interface Transcript {
+  entries: Entry[];
+  omitted_entries?: number;
+}
+
+/** What one review sends: the context new to the thread, then the action to judge. */
+export interface ReviewEvidence {
+  reviewCwd: string;
+  /** Transcript the thread has not seen yet, or the thread's opening context. */
+  context: string;
+  action: string;
+  /** Fingerprint of every transcript entry this review accounts for. */
+  seen: ThreadMark;
+  /** True when `context` extends the thread rather than opening a new one. */
+  continued: boolean;
+}
+
+/** The part of a reviewer thread that a later review in the same session reuses. */
+export interface ThreadMark {
+  count: number;
+  hash: string;
+}
 
 /** Bound cost without refusing long sessions; omissions are explicit evidence gaps. */
-export function reviewEvidence(cwd: string, context: ReviewInput) {
+export function reviewEvidence(
+  cwd: string,
+  context: ReviewInput,
+  thread?: ThreadMark,
+): ReviewEvidence {
   if (context.worker && !context.rootRequest) {
     throw new Error('Worker review is missing root authorization context');
   }
   const reviewCwd = context.cwd ?? cwd;
-  const perRequest = context.worker ? requestBudget / 2 : requestBudget;
-  const evidence = JSON.stringify({
+  const entries = transcriptEntries(context.request.messages ?? []);
+  const seen = { count: entries.length, hash: fingerprint(entries) };
+  const action = JSON.stringify({
     planned_action: boundedValue({ [context.tool.name]: context.tool.input }, actionBudget),
     user_policy: boundedValue(userPolicy(context.request), policyBudget),
-    original_request: requestEvidence(context.request, perRequest),
+  });
+  if (thread && continues(entries, thread)) {
+    const delta = recent(entries.slice(thread.count), transcriptBudget);
+    return {
+      reviewCwd,
+      context: JSON.stringify({ transcript_delta: delta }),
+      action,
+      seen,
+      continued: true,
+    };
+  }
+  const opening = {
+    model: context.request.model?.slice(0, 256),
+    system: boundedValue(context.request.system, systemBudget, true),
+    transcript: recent(entries, transcriptBudget),
     root_request:
       context.worker && context.rootRequest
-        ? requestEvidence(context.rootRequest, perRequest)
+        ? recent(transcriptEntries(context.rootRequest.messages ?? []), rootBudget)
         : undefined,
     cwd: reviewCwd.slice(0, 4096),
-  });
-  return { reviewCwd, evidence };
+  };
+  return { reviewCwd, context: JSON.stringify(opening), action, seen, continued: false };
+}
+
+/** True when the thread's transcript is still the start of this request's transcript. */
+function continues(entries: Entry[], thread: ThreadMark): boolean {
+  return (
+    entries.length >= thread.count && fingerprint(entries.slice(0, thread.count)) === thread.hash
+  );
+}
+
+function fingerprint(entries: Entry[]): string {
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+}
+
+/** User and assistant text, tool calls and tool output; thinking and cache markers dropped. */
+function transcriptEntries(messages: RequestMessage[]): Entry[] {
+  const entries: Entry[] = [];
+  for (const message of messages) {
+    const role = String(message.role).slice(0, 64);
+    const blocks =
+      typeof message.content === 'string'
+        ? [{ type: 'text', text: message.content }]
+        : message.content;
+    for (const block of Array.isArray(blocks) ? blocks : []) {
+      const entry = blockEntry(role, block);
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+  }
+  return entries;
+}
+
+function blockEntry(role: string, block: unknown): Entry | undefined {
+  if (!isRecord(block)) {
+    return undefined;
+  }
+  switch (block.type) {
+    case 'text':
+      return typeof block.text === 'string' && block.text.trim()
+        ? { role, kind: 'message', text: boundedValue(block.text, entryBudget.message) }
+        : undefined;
+    case 'tool_use':
+      return {
+        role,
+        kind: 'tool',
+        text: boundedValue({ tool_use: block.name, input: block.input }, entryBudget.tool),
+      };
+    case 'tool_result':
+      return {
+        role,
+        kind: 'tool',
+        text: boundedValue(
+          {
+            tool_result: toolOutput(block.content),
+            is_error: block.is_error === true || undefined,
+          },
+          entryBudget.tool,
+        ),
+      };
+    case 'image':
+    case 'document':
+      return { role, kind: 'message', text: `[${block.type} omitted]` };
+    default:
+      return undefined;
+  }
+}
+
+function toolOutput(content: unknown): unknown {
+  if (!Array.isArray(content)) {
+    return content;
+  }
+  return content.map((part: unknown) =>
+    isRecord(part) && part.type === 'text' ? part.text : `[${String(isRecord(part) && part.type)}]`,
+  );
+}
+
+/**
+ * The newest entries within the message and tool budgets, plus the first user
+ * message, which usually states the task. Omissions are counted, never hidden.
+ */
+function recent(entries: Entry[], budget: { message: number; tool: number }): Transcript {
+  const kept: Entry[] = [];
+  const remaining = { ...budget };
+  for (let index = entries.length - 1; index >= 0 && kept.length < recentEntryLimit; index--) {
+    const entry = entries[index];
+    const size = bytes(entry);
+    if (size > remaining[entry.kind]) {
+      break;
+    }
+    remaining[entry.kind] -= size;
+    kept.push(entry);
+  }
+  kept.reverse();
+  const first = entries.find((entry) => entry.role === 'user' && entry.kind === 'message');
+  const withTask = first && !kept.includes(first) ? [first, ...kept] : kept;
+  const omitted = entries.length - withTask.length;
+  return omitted > 0 ? { entries: withTask, omitted_entries: omitted } : { entries: withTask };
 }
 
 /** The human's auto-mode and permission rules, as Claude Code reports them with the request. */
@@ -38,31 +192,6 @@ function userPolicy(request: MessagesRequest) {
   }
   const { auto_mode, rules, trusted_directories } = context;
   return { auto_mode, rules, trusted_directories };
-}
-
-function requestEvidence(request: MessagesRequest, budget: number) {
-  // Schemas and wire settings add cost, not authorization. Preserve roles and history.
-  const system = boundedValue(request.system, 16 * 1024, true);
-  const model = request.model?.slice(0, 256);
-  const messages: unknown[] = [];
-  let remaining = budget - bytes({ system, model, messages }) - 128;
-  const history = request.messages ?? [];
-  for (let index = history.length - 1; index >= 0 && remaining >= 512; index--) {
-    const message = history[index];
-    const role = message.role.slice(0, 64);
-    const content = boundedValue(message.content, Math.min(messageBudget, remaining - 128));
-    const candidate = { role, content };
-    remaining -= bytes(candidate) + 1;
-    messages.push(candidate);
-  }
-  return {
-    model,
-    system,
-    messages: messages.reverse(),
-    ...(messages.length === history.length
-      ? {}
-      : { omitted_messages: history.length - messages.length }),
-  };
 }
 
 function bytes(value: unknown): number {

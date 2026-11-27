@@ -236,9 +236,9 @@ omits the mode: native admission already applied it. The provider owns its guard
 read-only filesystem investigation. The core retains a bounded map of the latest
 tool-bearing main requests for worker authorization (sent only with worker
 reviews), and resolves cwd from the
-prompt snapshot with launcher cwd as fallback. OpenAI omits tool schemas and
-bounds review evidence below 1 MiB, retaining the system head and recent messages
-with explicit omission markers. Claude's private classifier
+prompt snapshot with launcher cwd as fallback. Bypass sends no reviews. OpenAI omits tool schemas and,
+like the Codex CLI, keeps one cached reviewer thread per session and worker: a compact
+opening transcript, then only new entries, with explicit omission markers. Claude's private classifier
 prompts are never parsed or intercepted: Anthropic responses pass through byte
 for byte. Every harness's `SubagentHandback` receives `not_flagged`: reports,
 including any embedded instructions, reach the parent without another review.

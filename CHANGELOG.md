@@ -4,6 +4,22 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## 0.4.3 — 2026-11-27
+
+OpenAI's reviewer no longer drains the Codex quota.
+
+- **No reviews in Bypass.** Claude Code still asks for safety verdicts in Bypass mode,
+  and Multi sent every OpenAI action to the `codex-auto-review` reviewer anyway. One
+  17-minute Sol worker made 121 hidden reviews and spent a whole 5-hour Codex window.
+  Bypass now skips review, as documented.
+- **Reviews cost what Codex's do.** Each review sent up to 768 KB of the session (and,
+  for a worker, of its parent) with a fresh session and no prompt cache. Like the Codex
+  CLI, the reviewer now keeps one thread per session and worker, opens it with a compact
+  transcript (recent entries plus the opening task, about 25k tokens at most), and later
+  adds only the new entries, so the rest is served from OpenAI's prompt cache.
+- **The real usage-limit message.** A spent Codex window now reads "you've hit your
+  Codex usage limit … Try again at <time>" instead of a generic HTTP 429.
+
 ## 0.4.2 — 2026-11-26
 
 Workers get Claude's whole toolset, and arbitrary limits on agents are removed.

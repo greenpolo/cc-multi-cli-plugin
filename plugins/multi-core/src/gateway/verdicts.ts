@@ -9,6 +9,8 @@ export interface ReviewInput {
   rootRequest?: MessagesRequest;
   worker?: boolean;
   cwd?: string;
+  /** The session and worker a review belongs to, so a reviewer can keep one thread for it. */
+  thread?: string;
   planMode: boolean;
 }
 export type Reviewer = (input: ReviewInput, signal: AbortSignal) => Promise<ReviewVerdict>;
@@ -88,7 +90,7 @@ export async function verdictsFor(
   policy: AutoReviewPolicy,
   reviewer: AccountReviewer | undefined,
   signal: AbortSignal,
-  context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker'> = {},
+  context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker' | 'thread'> = {},
   onReview: (tool: string, verdict: ReviewVerdict) => void = () => {},
 ): Promise<SafeguardResults | undefined> {
   if (request.safeguards === undefined) {
@@ -132,12 +134,16 @@ async function toolVerdict(
   reviewer: AccountReviewer | undefined,
   request: MessagesRequest,
   signal: AbortSignal,
-  context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker'>,
+  context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker' | 'thread'>,
   onReview: (tool: string, verdict: ReviewVerdict) => void,
 ): Promise<ToolVerdict> {
   // A harness reply carries only rows for finished native actions and the hand-back;
   // the harness applied the prompt-boundary mode itself, so nothing is left to judge.
   if (harnessProvider(request.model) || readOnly.has(tool.name) || controls.has(tool.name)) {
+    return allowed;
+  }
+  // Bypass is unreviewed: an account review there would spend plan quota for nothing.
+  if (mode === 'bypassPermissions') {
     return allowed;
   }
   // An unknown or missing mode runs as Auto, as it does everywhere else in the gateway.

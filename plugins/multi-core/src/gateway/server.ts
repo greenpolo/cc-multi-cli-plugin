@@ -229,6 +229,7 @@ export function createNativeGateway({
         rootRequest: exchange.agentId ? rootRequests.get(exchange.identity.session) : undefined,
         cwd,
         worker: Boolean(exchange.agentId),
+        thread: JSON.stringify([exchange.identity.session, exchange.agentId ?? 'main']),
       },
       (tool, verdict) =>
         onEvent({

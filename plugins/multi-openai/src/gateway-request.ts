@@ -5,6 +5,7 @@ import type {
   ProviderRequestInput,
 } from '../../multi-core/src/gateway/provider-request.ts';
 import { ProviderAuthError } from '../../multi-core/src/gateway/provider-request.ts';
+import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import {
   fromResponses,
   OPENAI_SIGNATURE_PREFIX,
@@ -23,6 +24,47 @@ const MESSAGES_PATHS = ['/v1/messages', '/v1/messages/count_tokens'];
 export const openaiSignaturePrefixes: readonly string[] = [OPENAI_SIGNATURE_PREFIX];
 
 const openaiAuthHelp = ' Renew the Codex login.';
+
+/**
+ * OpenAI's own words for a refused request. A spent plan window says when it
+ * resets, as the Codex CLI does, so Claude Code does not show a generic rate limit.
+ */
+function explainOpenAIFailure(status: number, body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const error = isRecord(parsed) && isRecord(parsed.error) ? parsed.error : undefined;
+  if (!error) {
+    return undefined;
+  }
+  if (error.type === 'usage_limit_reached' || (status === 429 && 'resets_at' in error)) {
+    const plan = typeof error.plan_type === 'string' ? ` on the ${error.plan_type} plan` : '';
+    return `OpenAI: you've hit your Codex usage limit${plan}.${resetsAt(error)}`;
+  }
+  return typeof error.message === 'string' && error.message.trim()
+    ? `OpenAI returned HTTP ${status}: ${error.message.replace(/\s+/g, ' ').trim().slice(0, 300)}`
+    : undefined;
+}
+
+function resetsAt(error: Record<string, unknown>): string {
+  let seconds: number | undefined;
+  if (typeof error.resets_at === 'number') {
+    seconds = error.resets_at;
+  } else if (typeof error.resets_in_seconds === 'number') {
+    seconds = Date.now() / 1000 + error.resets_in_seconds;
+  }
+  if (seconds === undefined || !Number.isFinite(seconds)) {
+    return '';
+  }
+  const when = new Date(seconds * 1000).toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  return ` Try again at ${when}.`;
+}
 
 /** The Responses request for one Claude request to a native `multi/openai/` model. */
 export function prepareOpenAIRequest(
@@ -75,6 +117,7 @@ export function prepareOpenAIRequest(
       effort: request.reasoning.effort,
     }),
     failureEvent: (status) => ({ route: 'openai', status }),
+    explainFailure: explainOpenAIFailure,
     async send(signal: AbortSignal, fetchImpl: GatewayFetch) {
       toolNames = originalToolNames(body);
       const headers = {
