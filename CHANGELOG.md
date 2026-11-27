@@ -35,6 +35,12 @@ Fewer wasted tokens and no leftover refusals, from an audit of everything Multi 
   the outer session's proxy setting and sent its OpenAI and other provider traffic
   through the outer, possibly older, gateway. The launch now starts from the user's own
   environment, as a nested `claude` already did.
+- **Antigravity and Grok no longer open a session with a status line.** Every
+  Antigravity or Grok main turn and worker began with "[Antigravity] Claude Code rules
+  take precedence; agy's own MCP servers and agents are available.",
+  which Claude never prints. A run now says something only where it differs from
+  Claude: Plan's limits, a Claude mode or rule the CLI cannot carry, or (Grok) every
+  MCP call turned off by a Claude MCP deny rule.
 
 ## 0.4.3 — 2026-11-27
 
