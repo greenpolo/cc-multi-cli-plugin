@@ -4,6 +4,14 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## Unreleased
+
+- **A `claude-multi` started inside another Multi session uses its own gateway.** Run
+  from an agent's shell or a Remote Control shell, the new session's gateway inherited
+  the outer session's proxy setting and sent its OpenAI and other provider traffic
+  through the outer, possibly older, gateway. The launch now starts from the user's own
+  environment, as a nested `claude` already did.
+
 ## 0.4.3 — 2026-11-27
 
 Multi's own safety reviewer is removed; it drained the Codex quota.

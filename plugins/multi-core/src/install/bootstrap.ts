@@ -36,13 +36,17 @@ async function dispatch(state: Installation, args: string[], management: boolean
   if (manifest.name !== 'multi-core') {
     throw new Error('Installed core manifest does not identify multi-core');
   }
+  // A launch from inside another Multi session (an agent's or Remote Control's shell)
+  // starts from the user's own environment. Otherwise the new gateway would inherit the
+  // outer session's HTTPS_PROXY and send its provider traffic through the outer gateway.
+  const own = withoutGateway(process.env);
   const env = withLoopbackNoProxy({
-    ...process.env,
-    ...(state.models !== undefined && process.env.MULTI_MODELS === undefined
+    ...own,
+    ...(state.models !== undefined && own.MULTI_MODELS === undefined
       ? { MULTI_MODELS: state.models }
       : {}),
     // Node reads this at startup only, so the launcher process has to be started with it.
-    ...(needsEnvProxy(process.env) ? { NODE_USE_ENV_PROXY: '1' } : {}),
+    ...(needsEnvProxy(own) ? { NODE_USE_ENV_PROXY: '1' } : {}),
     MULTI_REAL_CLAUDE: state.claude,
     MULTI_ENABLED_PROVIDERS: providers.join(','),
     MULTI_ANTIGRAVITY: providers.includes('antigravity') ? '1' : '0',
