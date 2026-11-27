@@ -122,7 +122,8 @@ export interface AntigravityPolicy {
    */
   allowed?: string[];
   plan: boolean;
-  notice: string;
+  /** Said only where the run differs from Claude's own behaviour. */
+  notice?: string;
 }
 
 function isMcpRule(rule: string): boolean {
@@ -146,7 +147,9 @@ export function antigravityPermissionPolicy(context: PermissionContext): Antigra
       }
     }
   }
-  const notice = [policyNotice(plan), native.notice, context.notice].filter(Boolean).join(' ');
+  const notice =
+    [plan ? PLAN_NOTICE : undefined, native.notice, context.notice].filter(Boolean).join(' ') ||
+    undefined;
   if (plan) {
     // Plan is an allowlist: a tool agy announces later, or one no Claude tool maps to, is denied.
     const readOnly = PLAN_READ_ONLY.filter((tool) => !denied.has(tool));
@@ -174,12 +177,7 @@ export function antigravityCompactionDenyList(): string[] {
   return [...new Set([...Object.values(TOOL_MAP).flat(), ...UNMAPPED_TOOLS])];
 }
 
-function policyNotice(plan: boolean): string {
-  if (plan) {
-    return 'Plan: only native read, search and web lookup tools run.';
-  }
-  return "Claude Code rules take precedence; agy's own MCP servers and agents are available. No reviewer.";
-}
+const PLAN_NOTICE = 'Plan: only native read, search and web lookup tools run.';
 
 function toolList(serialized: string): string[] {
   const tools: unknown = JSON.parse(serialized);

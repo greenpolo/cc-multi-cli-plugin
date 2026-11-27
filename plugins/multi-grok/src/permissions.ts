@@ -131,7 +131,8 @@ export interface GrokPolicy {
   deny: string[];
   /** Native names that must never appear in an announced toolset. */
   forbidden: string[];
-  notice: string;
+  /** Said only where the run differs from Claude's own behaviour. */
+  notice?: string;
 }
 
 /** Grok Build has Claude's four native modes; any other Claude mode runs as Auto. */
@@ -187,7 +188,7 @@ function denyRules(granted: ReadonlySet<string>, mcp: boolean): string[] {
 function policy(
   mode: GrokPermissionMode,
   granted: ReadonlySet<string>,
-  notice: string,
+  notice: string | undefined,
   options: { mcp?: boolean; bounded?: boolean } = {},
 ): GrokPolicy {
   const mcp = options.mcp ?? false;
@@ -209,13 +210,10 @@ export function grokPermissionPolicy(context: PermissionContext): GrokPolicy {
   const mode = grokMode(context.permissionMode);
   const plan = mode === 'plan';
   const mcp = mcpAllowed(context, plan);
-  const notice = [
-    policyNotice(mode, mcp),
-    nativeMode(context.permissionMode).notice,
-    context.notice,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const notice =
+    [policyNotice(mode, context), nativeMode(context.permissionMode).notice, context.notice]
+      .filter(Boolean)
+      .join(' ') || undefined;
   const bounded = plan || nativeRules(context).allowed !== undefined;
   return policy(mode, grantedTools(context, plan), notice, { mcp, bounded });
 }
@@ -225,11 +223,11 @@ export function grokCompactionPolicy(): GrokPolicy {
   return policy('plan', new Set(ALWAYS_GRANTED), 'Compaction summary; native tools disabled.');
 }
 
-function policyNotice(mode: GrokPermissionMode, mcp: boolean): string {
+/** Grok cannot deny one MCP server, so a Claude MCP deny rule turns off all of its MCP calls. */
+function policyNotice(mode: GrokPermissionMode, context: PermissionContext): string | undefined {
   if (mode === 'plan') {
     return 'Plan: native shell, edits and delegation are blocked.';
   }
-  return mcp
-    ? "Claude Code rules take precedence; Grok's own MCP servers and agents are available. No reviewer."
-    : 'Claude Code rules take precedence; MCP execution is denied by a Claude rule. No reviewer.';
+  const mcpDenied = [...nativeRules(context).denied].some((rule) => rule.startsWith('mcp__'));
+  return mcpDenied ? 'All MCP calls are off because a Claude rule denies MCP.' : undefined;
 }

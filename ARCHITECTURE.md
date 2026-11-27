@@ -204,8 +204,8 @@ Plan stays read-only and Bypass stays unreviewed; every other mode runs as Auto.
 `gateway/harness-settings.ts` reads what carries over from Claude's settings: bare
 tool denials and tool lists. Ask rules, sandbox settings and argument-specific deny
 rules have no native form, so they are skipped and named in a one-line notice at the
-start of the run. A provider without a reviewer runs Auto unreviewed and says so;
-Plan refuses its actions. See [docs/permissions.md](docs/permissions.md).
+start of the run. A provider without a reviewer runs Auto unreviewed, without a
+notice, since nothing else differs from Claude; Plan refuses its actions. See [docs/permissions.md](docs/permissions.md).
 
 Native harness actions do not enter Claude's PreToolUse or PermissionRequest
 admission path. Their worker admission loads the selected settings and managed

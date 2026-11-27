@@ -4,6 +4,15 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## Unreleased
+
+- **Antigravity and Grok no longer open a session with a status line.** Every
+  Antigravity or Grok main turn and worker began with "[Antigravity] Claude Code rules
+  take precedence; agy's own MCP servers and agents are available. No reviewer.",
+  which Claude never prints. A run now says something only where it differs from
+  Claude: Plan's limits, a Claude mode or rule the CLI cannot carry, or (Grok) every
+  MCP call turned off by a Claude MCP deny rule.
+
 ## 0.4.2 — 2026-11-26
 
 Workers get Claude's whole toolset, and arbitrary limits on agents are removed.

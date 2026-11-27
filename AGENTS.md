@@ -60,7 +60,9 @@ changes to those boundaries need corresponding implementation and verification.
   cannot enforce: Plan stays read-only, Bypass stays unreviewed, any other mode runs as
   Auto, and what was skipped is named in a one-line notice.
 - Fail explicitly on unknown models or ambiguous ownership.
-- A provider without a reviewer runs auto mode unreviewed and says so; plan mode still refuses actions.
+- A provider without a reviewer runs auto mode unreviewed; plan mode still refuses actions.
+- A native run opens with a notice only where it differs from Claude (Plan limits, a mode
+  or rule it cannot carry); a run that behaves as Claude would says nothing.
 - Never replay external tool events as executable Claude tools.
 - Native state is never rewound, and uncertain actions are never rerun blindly.
 - A native CLI keeps its own MCP servers, subagents and tools; none is hard-blocked. Outside Plan they follow Claude's deny rules and explicit tool lists. Claude's plugins are never copied into a CLI. Grok verifies the toolset the CLI announces.
