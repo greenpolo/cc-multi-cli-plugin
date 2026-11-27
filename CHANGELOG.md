@@ -4,6 +4,33 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## Unreleased
+
+GPT now runs through the official Codex CLI, like Antigravity and Grok run through theirs.
+
+- **OpenAI is a Codex harness.** Each GPT turn, as the main model or an `OpenAI` worker,
+  runs in `codex app-server`, continuing that session's own Codex thread. Codex runs its
+  own tools, prompts, prompt caching and compaction, and only the new part of the
+  conversation is sent each turn, so GPT spends quota as it does in Codex itself. Codex's
+  messages stream into Claude Code, and its commands, patches, MCP calls and web searches
+  appear as rows.
+- **GPT as the main model uses Codex's tools.** It no longer uses Claude Code's tools,
+  skills, plugins, hooks or Agent tool, as with an Antigravity or Grok model. Esc-Esc
+  rewind does not undo Codex's edits.
+- **Permissions map onto Codex.** Plan runs Codex's read-only sandbox with its MCP servers
+  off; any other mode runs with full access and no approvals, as Claude's Bypass. Claude
+  removing Edit and Write, WebSearch, or an MCP server or tool turns the same off in Codex.
+  Codex's own reviewer never runs.
+- **Models come from Codex.** The `/model` rows are what Codex lists, so a new Codex
+  release brings its models without a Multi update. `OpenAI` workers now take the
+  session's `/effort`, checked against what the model supports.
+- **Codex owns the login.** Multi no longer reads or refreshes Codex's `auth.json`;
+  `/multi-openai:login` runs `codex login`.
+- **Removed:** the direct OpenAI request path (Responses translation, the Claude Code
+  compatibility note, cache keys) and the live tests that exercised it (compaction,
+  instructions, cache, Auto mode, permissions, model gateway). `npm run test:live:codex`
+  replaces them.
+
 ## 0.4.4 — 2026-11-27
 
 Fewer wasted tokens and no leftover refusals, from an audit of everything Multi adds.

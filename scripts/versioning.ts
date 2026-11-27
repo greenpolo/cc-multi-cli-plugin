@@ -159,8 +159,8 @@ interface TextSlot {
 const textSlots: TextSlot[] = [
   // The client version Multi reports to the Codex app-server.
   {
-    file: 'plugins/multi-openai/src/usage.ts',
-    pattern: /(name: 'cc_multi_usage', version: ')([^']*)(')/g,
+    file: 'plugins/multi-openai/src/app-server.ts',
+    pattern: /(title: 'Claude Code Multi', version: ')([^']*)(')/g,
   },
 ];
 

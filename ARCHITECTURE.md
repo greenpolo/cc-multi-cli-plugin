@@ -40,9 +40,9 @@ Claude Code session (/model, workers, prompts)
                   |
              Node gateway
         /          |           \
-   OpenAI       Zen       Cursor / Antigravity / Grok
- direct API   direct API   SDK or real CLI
- Claude loop  Claude loop  provider loop
+        Zen        OpenAI / Cursor / Antigravity / Grok
+   direct API    Codex, SDK or real CLI
+  Claude loop    provider loop
 ```
 
 ## Desktop sessions
@@ -133,15 +133,15 @@ Session end clears identified records. Built replies normalize before emitting
 or saving content, so streams and saved replies agree. An unknown id, another
 provider's model, a Claude alias, or an effort-suffixed name (`gpt-6-luna-high`) refuses the spawn, naming the
 provider's available models. Omitting `model` runs the provider default.
-Effort is never part of a type or model name: OpenAI and Zen workers carry one
-provider-wide default effort, while Cursor, Antigravity, and Grok workers apply
+Effort is never part of a type or model name: Zen workers carry one
+provider-wide default effort, while OpenAI, Cursor, Antigravity, and Grok workers apply
 the session's `/effort`, validated by the provider.
 
 ## Execution contracts per provider
 
 | Provider | Tool execution | State ownership | Authentication |
 | --- | --- | --- | --- |
-| OpenAI | Claude Code tools and loop | Gateway and provider reasoning state | Codex login |
+| OpenAI | `codex app-server` loop | Codex threads on disk | Codex login |
 | Zen | Claude Code tools and loop | Gateway and Zen reasoning/cache state | Zen API key |
 | Cursor | Cursor SDK loop | Cursor SDK, scoped by run | Cursor SDK login |
 | Antigravity | `agy` CLI loop | Antigravity native history and cache | `agy` login |
@@ -150,12 +150,12 @@ the session's `/effort`, validated by the provider.
 Multi makes no model call of its own: no reviewer, guardian or classifier runs on
 top of a provider. Claude's permission mode and rules alone decide what runs.
 
-OpenAI and Zen are direct model integrations. Their worker hooks record prompt
+Zen is a direct model integration. Its worker hooks record prompt
 identity and let Claude Code run the tool loop. Full settings translation runs
-at Cursor, Antigravity, and Grok prompts, or when a direct-model conversation requests
+at OpenAI, Cursor, Antigravity, and Grok prompts, or when a direct-model conversation requests
 a harness worker.
 
-Cursor, Antigravity and Grok are harness integrations. Their SDK or CLI executes
+OpenAI (through the Codex CLI), Cursor, Antigravity and Grok are harness integrations. Their SDK or CLI executes
 tools, keeps native state, and applies provider authentication. Each finished native
 action becomes a display row in the harness's own reply: a tool_use block named after
 the native tool (`mcp__multi-core__run_command`) with the native parameters and a
@@ -231,11 +231,7 @@ prompts are never parsed or intercepted: Anthropic responses pass through byte
 for byte. Every harness's `SubagentHandback` receives `not_flagged`: reports,
 including any embedded instructions, reach the parent unchanged.
 
-Claude's launcher enables on-demand tool discovery for the local gateway. OpenAI
-requests use the Responses API's own client-run tool search: every deferred tool is
-declared deferred from the first request, Claude Code's `ToolSearch` answers the
-search, and a loaded tool joins the end of the conversation, so the tool list and the
-cached prompt prefix stay the same for the whole session. Zen omits deferred tool
+Claude's launcher enables on-demand tool discovery for the local gateway. Zen omits deferred tool
 schemas until Claude discovers or uses them. Tool references and loaded declarations
 survive later turns and provider switches.
 
@@ -253,9 +249,9 @@ well as in each provider's own state.
 
 `state-lock.ts` serializes native state with a portable marker-file lock that survives crashes. Durable
 run IDs support terminal-result recovery. A recoverable run resumes its native
-record; an uncertain run does not rerun actions blindly. Claude, OpenAI, and Zen
+record; an uncertain run does not rerun actions blindly. Claude and Zen
 conversations use Claude Code's compaction without Multi's harness checks;
-Cursor, Antigravity and Grok compaction remains provider-owned: the summary turn runs
+OpenAI, Cursor, Antigravity and Grok compaction remains provider-owned: the summary turn runs
 without native tools, and Multi prepares no summary ahead of time. Follow-ups forward the
 newest turn after the last assistant response. If outer history no longer contains
 the saved response, the harness emits a notice and continues on its native record;

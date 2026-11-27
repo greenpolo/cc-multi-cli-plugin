@@ -1,56 +1,69 @@
 # OpenAI
 
-OpenAI models provide direct Responses requests while Claude Code runs the tool loop.
+GPT models run through the official Codex CLI, the way Antigravity and Grok run through
+theirs. Each turn starts `codex app-server` (the same interface the Codex IDE extension
+and desktop app use), continues the session's Codex thread, and streams Codex's answer
+and actions back into Claude Code. Codex runs its own tools, prompts, caching and
+compaction, so GPT behaves and spends quota as it does in Codex itself.
 
 ## Setup
 
-1. Install the core and OpenAI plugins. See [docs/installation.md](installation.md).
-2. Run `/multi-openai:login`.
-3. Complete the official Codex ChatGPT login in your browser.
-4. Relaunch the session so the model picker and workers load.
+1. Install the Codex CLI (`npm install -g @openai/codex`) and the core and OpenAI
+   plugins. See [docs/installation.md](installation.md).
+2. Run `/multi-openai:login`, which runs `codex login`, or run `codex login` yourself.
+3. Relaunch the session so the model picker and workers load.
 
-Codex stores the ChatGPT login in its `auth.json`. Credential renewal is CLI-owned. The gateway asks Codex to renew an expiring login and retries one HTTP authentication rejection. Run `codex login` when renewal fails.
+Codex owns the login, where it stores it, and its renewal. Multi never reads the
+credentials. Run `codex login` when Codex reports that the login expired.
 
 ## Models and effort
 
-Use `/model multi/openai/<model-id>` or choose a row in `/model`. Use `/effort <value>` for the main session.
+The `/model` rows are the models Codex itself lists (`model/list`), with Codex's default
+first: today `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-terra`, `gpt-6.1-sol`, `gpt-6-astra`,
+`gpt-6-sol`, `gpt-6-luna` and older ones. A new Codex release brings its new models with
+no Multi update. Use `/model multi/openai/<model-id>` or choose a row.
 
-Models: `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6.1-terra`,
-`gpt-6-luna`.
+`/effort` applies, checked against what the model supports in Codex; `auto` leaves
+Codex's own default.
 
 ## Workers
 
-The Agent tool's `OpenAI` type runs any of these: pass `model: <id>`
-(for example `model: gpt-6-luna`) to pick one, or omit `model` to run the
-default, `gpt-6.2-sol`. An unknown id, another provider's model, or an
-effort-suffixed name such as `gpt-6-luna-high` refuses the spawn, naming the
-available OpenAI models. `OpenAI` runs one provider-wide medium effort;
-effort is never part of the model name, and the session's `/effort` does not
-change it. Workers appear as native subagent entries with model activity,
-elapsed time, progress, and completion status. Cancelling the Claude request
-aborts the OpenAI request and worker activity.
+The Agent tool's `OpenAI` type runs any of these models: pass `model: <id>` (for example
+`model: gpt-6-luna`), or omit it to run Codex's default model. Workers apply the session's
+`/effort`, as Cursor, Antigravity and Grok workers do. Each worker and each main session
+keeps its own Codex thread, stored by Codex under its home (`~/.codex`), so a later turn
+sends only what is new.
 
-## Instruction profile
+## What changes when GPT is the main model
 
-OpenAI requests append a short Claude Code compatibility note from
-`plugins/multi-openai/src/instructions.md`. It identifies the host's tools,
-permission and compaction boundaries without adding personal preferences or
-planning, delegation, or writing-style defaults. Claude's existing instructions
-stay intact. The note applies to OpenAI inference and token counting, not other
-providers.
+Codex runs the turn, so GPT uses Codex's own shell, patch, web search, MCP servers,
+plugins, skills and subagents, and reads the repository's `AGENTS.md` itself. It does not
+use Claude Code's tools, skills, plugins, hooks or Agent tool. Codex's actions appear as
+rows under Codex's own names (`shell`, `apply_patch`, `mcp_tool`, ...). Esc-Esc rewind does
+not undo Codex's edits; Multi never rewinds native state.
 
-`npm run test:live:openai-instructions` checks it with at most three paid requests.
+## Permissions
 
-## Prompt caching and continuation
+Codex never asks for approval in a Multi run and runs no reviewer.
 
-The gateway sends an opaque cache key scoped by Claude session, worker, and model. A recognized session keeps the key stable across gateway restarts; an unrecognized session gets gateway-local affinity. This is a routing hint and does not guarantee cache hits.
+| Claude mode or rule | Codex run |
+| --- | --- |
+| Plan | Read-only sandbox, Codex MCP servers off |
+| Any other mode | Full access, as Claude's Bypass |
+| Edit and Write both removed | Read-only sandbox |
+| WebSearch removed | Codex web search off |
+| `mcp__server` denied | That Codex MCP server off, when Codex has one by that name |
+| `mcp__server__tool` denied | That tool off on that Codex server |
+| A tool list naming no MCP tool | Every Codex MCP server off |
 
-Deferred tools use OpenAI's own tool search, run by Claude Code's `ToolSearch`. The tool list is the same on every request of a session, so loading a tool does not make OpenAI reread the conversation uncached.
+Codex has no separate switch for its shell, or for only one of Edit and Write; the run
+says so in a one-line notice and goes ahead. See [docs/permissions.md](permissions.md).
 
-On continuation, visible conversation context is forwarded to OpenAI. Provider-owned reasoning state stays with OpenAI and is excluded when switching providers. OpenAI requests use Claude Code's tool loop, so Claude tool history remains part of the request context.
+## Usage
 
-## Limits
+The usage pane reads Codex's quota windows from the same app-server
+(`account/rateLimits/read`). Per-turn tokens come from Codex's own counts, cached input
+included. A spent window fails the turn with Codex's own message.
 
-The gateway rejects unsupported content, media, schemas, tool choices, provider-hosted tools, and arbitrary model or effort IDs. OpenAI document input supports base64 PDFs and plain text; URL documents and provider file IDs fail. Token counts are local estimates. OpenAI requests have no implicit gateway deadline, while client cancellation and explicit time limits apply.
-
-Multi adds no reviewer: an OpenAI tool use runs under Claude's mode and rules alone, with no extra model call, and Plan refuses actions other than reads and web lookups. A spent Codex window is reported with OpenAI's own usage-limit message and reset time. See [docs/permissions.md](permissions.md) and [ARCHITECTURE.md](../ARCHITECTURE.md).
+`npm run test:live:codex` checks a write, a resumed read, a Plan turn and a free replay
+with three small turns on `gpt-6-luna`.

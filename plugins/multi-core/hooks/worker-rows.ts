@@ -1,7 +1,7 @@
 import type { AgentInfo, Register } from 'claude-code';
 import { atom, read } from 'claude-code';
 import { brandOfType, workerModel } from './brand.ts';
-import { isHarnessModel, isProviderWorker } from './provider.ts';
+import { isHarnessModel, isProviderWorker, PROVIDERS } from './provider.ts';
 
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
@@ -134,7 +134,7 @@ export const register = (on: Parameters<Register>[0]) => {
       nameWidth,
       step: running ? (await read($, workerSteps))[agent.id] : undefined,
       isHarness:
-        typeof model === 'string' ? isHarnessModel(model) : !['openai', 'zen'].includes(brand.key),
+        typeof model === 'string' ? isHarnessModel(model) : PROVIDERS[brand.key]?.harness === true,
       now: await $.clock.now(),
     });
     return next({ ...event, props: { ...agent, body } });

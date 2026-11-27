@@ -1,12 +1,5 @@
-import { spawn } from 'node:child_process';
-import path from 'node:path';
-import { createInterface } from 'node:readline';
-import {
-  executableInvocation,
-  resolveExecutable,
-} from '../../multi-core/src/gateway/executable.ts';
-import { terminateProcessTree } from '../../multi-core/src/gateway/process-tree.ts';
 import { isRecord } from '../../multi-core/src/gateway/record.ts';
+import { queryCodex } from './app-server.ts';
 
 interface CodexQuotaWindow {
   label: string;
@@ -18,106 +11,24 @@ export interface CodexQuota {
   windows: CodexQuotaWindow[];
   credits?: { balance?: string; unlimited: boolean };
 }
-export interface CodexUsageOptions {
-  platform?: NodeJS.Platform;
-  env?: NodeJS.ProcessEnv;
-  executable?: string;
-  signal?: AbortSignal;
-}
 const unavailable = () =>
   new Error('Codex usage is unavailable. Check the Codex login and connection.');
 
 /** Read the native account view without starting a model or changing account settings. */
 export async function readCodexUsage(
-  authFile: string,
-  options: CodexUsageOptions = {},
+  options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
 ): Promise<CodexQuota> {
   options.signal?.throwIfAborted();
-  if (path.basename(authFile) !== 'auth.json') {
-    throw unavailable();
-  }
-  const platform = options.platform ?? process.platform;
-  const environment = { ...process.env, ...options.env, CODEX_HOME: path.dirname(authFile) };
-  const invocation = executableInvocation(
-    resolveExecutable('codex', {
-      platform,
-      env: environment,
-      configuredPath: options.executable,
-    }),
-    ['app-server', '-c', 'cli_auth_credentials_store=file'],
-    platform,
-    environment,
-  );
-  const child = spawn(invocation.command, invocation.args, {
-    env: environment,
-    stdio: ['pipe', 'pipe', 'ignore'],
-    detached: platform !== 'win32',
-    windowsHide: true,
-    ...invocation.options,
-  });
-  const lines = createInterface({ input: child.stdout });
-  const stop = () => {
-    lines.close();
-    if (child.pid) {
-      terminateProcessTree(child.pid, { platform, signal: 'SIGKILL' });
-    }
-  };
-  child.on('error', stop);
-  child.stdin.on('error', stop);
-  let bytes = 0;
-  child.stdout.on('data', (chunk: Buffer) => {
-    bytes += chunk.length;
-    if (bytes > 1024 * 1024) {
-      stop();
-    }
-  });
-  options.signal?.addEventListener('abort', stop, { once: true });
-  const timer = setTimeout(stop, 6000);
-  const send = (value: unknown) => child.stdin.write(`${JSON.stringify(value)}\n`);
-  send({
-    id: 1,
-    method: 'initialize',
-    params: { clientInfo: { name: 'cc_multi_usage', version: '0.4.4' } },
-  });
   try {
-    return await quotaResponse(lines, send, () => {
-      if (bytes > 1024 * 1024 || options.signal?.aborted) {
-        throw unavailable();
-      }
+    const [limits] = await queryCodex([{ method: 'account/rateLimits/read' }], {
+      env: options.env,
+      signal: options.signal,
+      timeoutMs: 6000,
     });
+    return normalizeCodexUsage(limits);
   } catch {
     throw unavailable();
-  } finally {
-    clearTimeout(timer);
-    options.signal?.removeEventListener('abort', stop);
-    child.stdin.destroy();
-    stop();
   }
-}
-
-async function quotaResponse(
-  lines: AsyncIterable<string>,
-  send: (value: unknown) => unknown,
-  check: () => void,
-) {
-  let initialized = false;
-  for await (const line of lines) {
-    check();
-    const message: unknown = JSON.parse(line);
-    if (!isRecord(message)) {
-      throw unavailable();
-    }
-    if (message.id === 1 && !initialized && isRecord(message.result)) {
-      initialized = true;
-      send({ method: 'initialized' });
-      send({ id: 2, method: 'account/rateLimits/read' });
-    } else if (message.id === 2 && initialized) {
-      return normalizeCodexUsage(message.result);
-    } else if (message.error) {
-      throw unavailable();
-    }
-  }
-  throw unavailable();
 }
 
 /** The multi-bucket response is authoritative; never count its legacy alias twice. */

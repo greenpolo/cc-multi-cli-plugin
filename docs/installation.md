@@ -68,7 +68,7 @@ that name; re-run with `--command claude-multi` to restore the default. Setting
 `MULTI_MODELS` in the environment overrides the saved model selection for one
 launch. Model IDs are listed in each provider's documentation.
 
-By default the picker shows all six OpenAI models, three Cursor rows, five Zen
+By default the picker shows the models Codex lists, three Cursor rows, five Zen
 models, and the models `agy` and `grok` advertise. To add one model to that, run
 `/multi-core:setup --models +multi/zen/glm-5.2`; `--cursor-models`, `--zen-models`,
 `--antigravity-models` and `--grok-models` print the IDs.
