@@ -1,25 +1,7 @@
-import type { MessagesRequest, MessagesResponse, ResponseContentBlock } from './messages.ts';
-import { type AutoReviewPolicy, harnessProvider } from './provider.ts';
+import type { MessagesRequest, MessagesResponse } from './messages.ts';
+import { harnessProvider } from './provider.ts';
 import { isRecord } from './record.ts';
 
-export type ReviewVerdict = { model: string; outcome: 'allow' | 'deny'; reason?: string };
-export interface ReviewInput {
-  tool: Extract<ResponseContentBlock, { type: 'tool_use' }>;
-  request: MessagesRequest;
-  rootRequest?: MessagesRequest;
-  worker?: boolean;
-  cwd?: string;
-  /** The session and worker a review belongs to, so a reviewer can keep one thread for it. */
-  thread?: string;
-  planMode: boolean;
-}
-export type Reviewer = (input: ReviewInput, signal: AbortSignal) => Promise<ReviewVerdict>;
-/** A provider's account reviewer: how refusals name it, and the model its events report. */
-export interface AccountReviewer {
-  review: Reviewer;
-  label: string;
-  model: string;
-}
 type ToolVerdict =
   | { type: 'evaluated'; outcome: 'not_flagged' }
   | { type: 'evaluated'; outcome: 'flagged'; explanation: string };
@@ -77,48 +59,22 @@ const blocked = (explanation: string): ToolVerdict => ({
   explanation,
 });
 
-/** Explanations are prose: Claude interprets a trailing bracket as a rule name. */
-function prose(value: string): string {
-  return (
-    value.replace(/[[\]]/g, '').trim().slice(0, 500) || 'The action was refused by the reviewer.'
-  );
-}
-
-export async function verdictsFor(
+/**
+ * Claude Code asks for a verdict on each tool use when its request carries
+ * `safeguards`. Multi makes no model call for it: Claude's own mode and rules decide.
+ * Plan refuses actions; every other mode lets them run.
+ */
+export function verdictsFor(
   request: MessagesRequest,
   reply: MessagesResponse,
-  policy: AutoReviewPolicy,
-  reviewer: AccountReviewer | undefined,
-  signal: AbortSignal,
-  context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker' | 'thread'> = {},
-  onReview: (tool: string, verdict: ReviewVerdict) => void = () => {},
-): Promise<SafeguardResults | undefined> {
+): SafeguardResults | undefined {
   if (request.safeguards === undefined) {
     return undefined;
   }
-  const mode = dangerousToolMode(request.safeguards);
-  const tools = reply.content.filter((block) => block.type === 'tool_use');
-  const entries: Array<[string, ToolVerdict]> = [];
-  // Four independent workers bound concurrent subscription requests per reply.
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(4, tools.length) }, async () => {
-      while (next < tools.length) {
-        const tool = tools[next++];
-        const verdict = await toolVerdict(
-          tool,
-          mode,
-          policy,
-          reviewer,
-          request,
-          signal,
-          context,
-          onReview,
-        );
-        entries.push([tool.id, verdict]);
-      }
-    }),
-  );
+  const plan = dangerousToolMode(request.safeguards) === 'plan';
+  const entries = reply.content
+    .filter((block) => block.type === 'tool_use')
+    .map((tool) => [tool.id, toolVerdict(tool.name, plan, request.model)] as const);
   return [
     {
       type: 'dangerous_tool_use',
@@ -127,68 +83,15 @@ export async function verdictsFor(
   ];
 }
 
-async function toolVerdict(
-  tool: ReviewInput['tool'],
-  mode: string,
-  policy: AutoReviewPolicy,
-  reviewer: AccountReviewer | undefined,
-  request: MessagesRequest,
-  signal: AbortSignal,
-  context: Pick<ReviewInput, 'rootRequest' | 'cwd' | 'worker' | 'thread'>,
-  onReview: (tool: string, verdict: ReviewVerdict) => void,
-): Promise<ToolVerdict> {
+function toolVerdict(name: string, plan: boolean, model: unknown): ToolVerdict {
   // A harness reply carries only rows for finished native actions and the hand-back;
   // the harness applied the prompt-boundary mode itself, so nothing is left to judge.
-  if (harnessProvider(request.model) || readOnly.has(tool.name) || controls.has(tool.name)) {
+  if (!plan || harnessProvider(model) || readOnly.has(name) || controls.has(name)) {
     return allowed;
   }
-  // Bypass is unreviewed: an account review there would spend plan quota for nothing.
-  if (mode === 'bypassPermissions') {
-    return allowed;
-  }
-  // An unknown or missing mode runs as Auto, as it does everywhere else in the gateway.
-  if (mode === 'plan' && writes.has(tool.name)) {
+  if (writes.has(name)) {
     return blocked('Plan mode does not permit file changes.');
   }
-  if (policy.review !== 'reviewer' || !reviewer) {
-    // Claude's own Plan lets web lookups run, so they do here too.
-    return mode === 'plan' && !planLookups.has(tool.name)
-      ? blocked('Plan mode: actions without a reviewer are refused.')
-      : allowed;
-  }
-  try {
-    const deadline = AbortSignal.any([signal, AbortSignal.timeout(60000)]);
-    const verdict = await boundedReview(
-      reviewer.review,
-      { tool, request, ...context, planMode: mode === 'plan' },
-      deadline,
-    );
-    onReview(tool.name, verdict);
-    return verdict.outcome === 'allow'
-      ? allowed
-      : blocked(prose(verdict.reason ?? `The ${reviewer.label} reviewer refused this action.`));
-  } catch {
-    onReview(tool.name, { model: reviewer.model, outcome: 'deny' });
-    return blocked(
-      `The ${reviewer.label} reviewer could not complete its review. The action was refused.`,
-    );
-  }
-}
-
-function boundedReview(
-  reviewer: Reviewer,
-  input: ReviewInput,
-  signal: AbortSignal,
-): Promise<ReviewVerdict> {
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(new Error('Review deadline exceeded'));
-    signal.addEventListener('abort', abort, { once: true });
-    Promise.resolve()
-      .then(() => {
-        signal.throwIfAborted();
-        return reviewer(input, signal);
-      })
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener('abort', abort));
-  });
+  // Claude's own Plan lets web lookups run, so they do here too.
+  return planLookups.has(name) ? allowed : blocked('Plan mode does not permit actions.');
 }

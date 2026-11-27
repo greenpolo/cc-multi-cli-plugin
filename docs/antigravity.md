@@ -93,8 +93,8 @@ billing are shown by receipts, not written into the text. Claude and OpenAI pare
 workers.
 
 Every run selects its native workspace explicitly with `--add-dir`; subprocess
-cwd alone does not select it. Every Claude mode except Plan uses the native CLI
-without a reviewer, while the hook enforces explicit Claude restrictions. Plan
+cwd alone does not select it. Every Claude mode except Plan uses the native CLI,
+while the hook enforces explicit Claude restrictions. Plan
 also passes `--mode plan`, which only steers agy's model: with permissions
 skipped it still runs shell and write tools. The hook therefore allows only
 native read, search, and web lookup tools in Plan and denies every other tool,

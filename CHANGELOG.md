@@ -6,17 +6,17 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 
 ## 0.4.3 — 2026-11-27
 
-OpenAI's reviewer no longer drains the Codex quota.
+Multi's own safety reviewer is removed; it drained the Codex quota.
 
-- **No reviews in Bypass.** Claude Code still asks for safety verdicts in Bypass mode,
-  and Multi sent every OpenAI action to the `codex-auto-review` reviewer anyway. One
+- **No reviewer, guardian or classifier of Multi's own.** Every OpenAI action outside
+  the read-only list was sent to OpenAI's `codex-auto-review` model with up to 768 KB
+  of the session, uncached, and Claude Code asks for verdicts even in Bypass. One
   17-minute Sol worker made 121 hidden reviews and spent a whole 5-hour Codex window.
-  Bypass now skips review, as documented.
-- **Reviews cost what Codex's do.** Each review sent up to 768 KB of the session (and,
-  for a worker, of its parent) with a fresh session and no prompt cache. Like the Codex
-  CLI, the reviewer now keeps one thread per session and worker, opens it with a compact
-  transcript (recent entries plus the opening task, about 25k tokens at most), and later
-  adds only the new entries, so the rest is served from OpenAI's prompt cache.
+  The OpenAI reviewer, its guardian policy, the review status line and the worker
+  context it kept in memory are gone. Cursor's own SDK action reviewer, which Multi
+  turned on outside Bypass, is now off too. Claude's permission mode and rules alone
+  decide what runs: Plan refuses direct-model actions other than reads and web lookups,
+  and every other mode lets them run. `npm run test:live:reviewer` is removed.
 - **The real usage-limit message.** A spent Codex window now reads "you've hit your
   Codex usage limit … Try again at <time>" instead of a generic HTTP 429.
 

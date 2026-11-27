@@ -30,7 +30,3 @@ implementation from that project is included.
 The Cursor integration depends on the official @cursor/sdk package (Anysphere).
 That dependency has its own LICENSE.md and Cursor terms; this repository's
 Apache 2.0 license does not relicense the SDK. No SDK implementation is vendored.
-
-The automatic reviewer includes OpenAI Codex Guardian policy assets under
-plugins/multi-openai/src/guardian/, from https://github.com/openai/codex,
-licensed under Apache 2.0. Their upstream LICENSE and NOTICE are included there.

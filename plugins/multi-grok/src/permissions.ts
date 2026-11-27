@@ -230,6 +230,6 @@ function policyNotice(mode: GrokPermissionMode, mcp: boolean): string {
     return 'Plan: native shell, edits and delegation are blocked.';
   }
   return mcp
-    ? "Claude Code rules take precedence; Grok's own MCP servers and agents are available. No reviewer."
-    : 'Claude Code rules take precedence; MCP execution is denied by a Claude rule. No reviewer.';
+    ? "Claude Code rules take precedence; Grok's own MCP servers and agents are available."
+    : 'Claude Code rules take precedence; MCP execution is denied by a Claude rule.';
 }

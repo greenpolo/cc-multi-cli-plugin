@@ -1,5 +1,5 @@
 // The provider table. Each provider folder (`plugins/multi-<name>/`) describes itself in a
-// `provider.json` manifest; core reads those and names no provider. Every routing, review,
+// `provider.json` manifest; core reads those and names no provider. Every routing,
 // signal and execution decision derives from `providerOf`, the one reader of a model ID's
 // `multi/<provider>/` prefix.
 
@@ -7,8 +7,6 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isRecord } from './record.ts';
-
-export type AutoReviewPolicy = { review: 'reviewer' | 'harness' | 'none'; statement: string };
 
 /** What a provider states about itself, without running any of its code. */
 export interface ProviderManifest {
@@ -29,8 +27,6 @@ export interface ProviderManifest {
   endpoint?: string;
   /** What a request is told when the provider is not connected in this session. */
   unavailable?: string;
-  /** Auto-mode review; `missing` is the statement when a `reviewer` could not be found. */
-  review: { mode: AutoReviewPolicy['review']; statement: string; missing?: string };
   usage: { name: string; url?: string; unavailable: string[] };
 }
 
@@ -39,7 +35,6 @@ function strings(value: unknown): value is string[] {
 }
 
 function parseManifest(value: unknown, file: string): ProviderManifest {
-  const review = isRecord(value) ? value.review : undefined;
   const usage = isRecord(value) ? value.usage : undefined;
   if (
     !isRecord(value) ||
@@ -49,9 +44,6 @@ function parseManifest(value: unknown, file: string): ProviderManifest {
     (value.kind !== 'direct' && value.kind !== 'harness') ||
     typeof value.order !== 'number' ||
     typeof value.runs !== 'string' ||
-    !isRecord(review) ||
-    !['reviewer', 'harness', 'none'].includes(String(review.mode)) ||
-    typeof review.statement !== 'string' ||
     !isRecord(usage) ||
     typeof usage.name !== 'string' ||
     !strings(usage.unavailable)
@@ -155,15 +147,4 @@ export function harnessProvider(model: unknown): string | undefined {
 /** Claude's context tag is display metadata, never part of a native model ID. */
 export function nativeSpelling(model: string | undefined): string | undefined {
   return model?.replace(/\[1m\]$/i, '');
-}
-
-/** The provider's Auto-mode review as this session can run it. */
-export function autoReviewPolicy(provider: string, reviewerAvailable: boolean): AutoReviewPolicy {
-  const review = providerManifest(provider)?.review;
-  if (!review) {
-    return { review: 'none', statement: 'no auto mode: actions run unreviewed' };
-  }
-  return review.mode === 'reviewer' && !reviewerAvailable
-    ? { review: 'none', statement: review.missing ?? review.statement }
-    : { review: review.mode, statement: review.statement };
 }

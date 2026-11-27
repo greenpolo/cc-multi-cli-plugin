@@ -82,8 +82,7 @@ session or inside the Grok worker's transcript; refusals show as errored rows. N
 names in an announced toolset are registered for later runs. Rows are never
 replayed as executable Claude tools.
 The transcript keeps streamed text and one closing summary of action counts,
-changed files, and failed or refused actions. There is no Grok reviewer, and
-Multi never borrows another provider's.
+changed files, and failed or refused actions. Multi adds no reviewer.
 
 ### Your MCP servers
 

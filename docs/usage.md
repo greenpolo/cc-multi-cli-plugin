@@ -45,8 +45,7 @@ earlier context already received by the agent is not removed. The preference is
 session-only and is cleared when the session ends.
 
 Runtime totals cover requests observed by this gateway process; restarting the
-launcher starts a new in-memory view. Claude subscription passthrough and reviewer
-inference are not included in these totals.
+launcher starts a new in-memory view. Claude subscription passthrough is not included in these totals.
 
 ## Saving receipts
 

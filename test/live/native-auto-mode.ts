@@ -1,4 +1,6 @@
 // Opt-in: real Claude classifier plus provider inference; only temporary canary writes.
+// Claude's own classifier judges Claude's actions. Multi adds no reviewer: an OpenAI
+// action in Auto runs without any extra model call, so both canaries run there.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -189,8 +191,8 @@ try {
     const denied = await readFile(path.join(cwd, 'AUTO_MODE_DENY_CANARY.txt'), 'utf8').catch(
       () => null,
     );
-    // Server verdicts decide every Bash call: Anthropic's for Claude, the gateway's for
-    // OpenAI. A local classifier request for a Bash call means a billed fallback.
+    // Server verdicts decide every Bash call: Anthropic's for Claude, the gateway's
+    // reviewer-free verdict for OpenAI. A local classifier request means a billed fallback.
     const localBashReviews = [...debug.matchAll(/classifier_request_started reqId=\S+ tool=Bash /g)]
       .length;
     const classifications = ['ALLOW', 'DENY'].map((kind) => {
@@ -229,6 +231,8 @@ try {
       passed: false,
     };
     report.cases.push(entry);
+    // Only Claude's own model is judged by Claude's classifier.
+    const reviewed = item.name === 'sonnet';
     try {
       assert.equal(timedOut, false, 'Timed out');
       assert.equal(code, 0, `${diagnostics}\n${output}`);
@@ -253,23 +257,11 @@ try {
         const classified = classifications.find((c) => c.kind === kind);
         assert.equal(
           classified?.decision,
-          kind === 'ALLOW' ? 'allow' : 'deny',
-          `Missing auto-mode verdict for ${kind}`,
+          kind === 'ALLOW' || !reviewed ? 'allow' : 'deny',
+          `Wrong auto-mode verdict for ${kind}`,
         );
-        if (item.name !== 'sonnet') {
-          assert(
-            traces.some(
-              (trace) =>
-                trace.route === 'review' &&
-                trace.tool === 'Bash' &&
-                trace.model === 'codex-auto-review' &&
-                trace.outcome === (kind === 'ALLOW' ? 'allow' : 'deny') &&
-                Boolean(trace.agentId) === item.worker,
-            ),
-            `Missing inline OpenAI ${kind} review for the originating ${item.worker ? 'worker' : 'main loop'}`,
-          );
-        }
       }
+      assert(!traces.some((trace) => trace.route === 'review'), 'The gateway made a review call');
       assert.equal(localBashReviews, 0, 'A Bash call fell back to a billed local classifier');
       assert(
         !debug.includes('classifies locally for the rest of this session') &&
@@ -277,17 +269,23 @@ try {
         'Server checks were turned off for the session',
       );
       assert.equal(allowed, 'ALLOW\n', 'Allowed canary did not execute');
-      assert.equal(denied, null, 'Denied canary executed');
-      const deniedCall = calls.find((c) => c.input.command === command('DENY'));
-      assert(deniedCall, 'Missing denied canary request');
-      assert(
-        deniedResults.some(
-          (r) =>
-            r.tool_use_id === deniedCall.id &&
-            /denied by (?:the Claude Code )?auto mode classifier/i.test(JSON.stringify(r.content)),
-        ),
-        'Missing actual classifier denial for the canary',
-      );
+      if (reviewed) {
+        assert.equal(denied, null, 'Denied canary executed');
+        const deniedCall = calls.find((c) => c.input.command === command('DENY'));
+        assert(deniedCall, 'Missing denied canary request');
+        assert(
+          deniedResults.some(
+            (r) =>
+              r.tool_use_id === deniedCall.id &&
+              /denied by (?:the Claude Code )?auto mode classifier/i.test(
+                JSON.stringify(r.content),
+              ),
+          ),
+          'Missing actual classifier denial for the canary',
+        );
+      } else {
+        assert.equal(denied, 'DENY\n', 'An unreviewed OpenAI action was refused');
+      }
       if (item.name === 'sonnet' || item.worker) {
         assert(
           traces.some((t) => t.route === 'anthropic' && t.status === 200),
