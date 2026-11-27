@@ -1,9 +1,11 @@
 {
   "name": "openai",
   "label": "OpenAI",
-  "kind": "direct",
+  "kind": "harness",
   "order": 10,
-  "runs": "Claude Code's tools",
+  "runs": "native Codex CLI",
+  "endpoint": "codex",
+  "unavailable": "OpenAI is unavailable. Install the Codex CLI, run codex login, and relaunch.",
   "usage": {
     "name": "OpenAI / Codex",
     "url": "https://chatgpt.com/codex/settings/usage",

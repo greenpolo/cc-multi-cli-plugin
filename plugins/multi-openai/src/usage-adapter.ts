@@ -2,8 +2,8 @@ import type { ProviderUsageReader } from '../../multi-core/src/gateway/provider-
 import { type CodexQuota, readCodexUsage } from './usage.ts';
 
 /** Provider-owned account usage reader injected into the core Mods dashboard. */
-export function openAIUsageReader(authFile: string): ProviderUsageReader {
-  return async () => codexQuotaView(await readCodexUsage(authFile));
+export function codexUsageReader(env?: NodeJS.ProcessEnv): ProviderUsageReader {
+  return async () => codexQuotaView(await readCodexUsage({ env }));
 }
 
 function codexQuotaView(quota: CodexQuota) {

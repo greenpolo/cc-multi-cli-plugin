@@ -28,9 +28,9 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-core/src/gateway/verdicts.ts`, `provider.ts` | Core verdict contract (Plan checks, no model calls) and the provider table. `server.ts` alone finalises served replies and terminal events. |
 | `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, and the nested-`claude` environment restore. |
 | `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. `provider.ts` is the hooks' own provider table, checked against the manifests by `npm run check:providers`. `desktop.ts` reads the handshake of the gateway the mod starts in a desktop app session. |
-| `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, notices, and failure classifier (`harness-failure.ts`) shared by Cursor, Antigravity, and Grok; the CLI harness base (`harness-cli.ts`), process runner, and text prompt preparation shared by Antigravity and Grok. |
+| `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, notices, and failure classifier (`harness-failure.ts`) shared by Cursor, Antigravity, and Grok; the CLI harness base (`harness-cli.ts`), process runner, and text prompt preparation shared by OpenAI (Codex), Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
-| `plugins/multi-openai/src/` | Codex authentication, models, request construction (`gateway-request.ts`), and instructions. |
+| `plugins/multi-openai/src/` | GPT through the Codex CLI: the `codex app-server` client (`app-server.ts`), harness, models, permissions, progress rows, and quota. |
 | `plugins/multi-cursor/src/` | Cursor SDK harness, permissions, progress, requests, models, and workspaces. |
 | `plugins/multi-zen/src/` | Zen API-key authentication, catalogs, request construction (`gateway-request.ts`), and translations. |
 | `plugins/multi-antigravity/src/` | `agy` CLI harness, models, hooks, requests, and permissions. |
@@ -91,12 +91,9 @@ the provider is signed in. For Claude Mods hook or surface changes, also run
 
 | Command | Check | Login needed |
 | --- | --- | --- |
-| `npm run test:live:compaction` | Claude/OpenAI compaction and resume | Claude and Codex login |
 | `npm run test:live:zen` | Zen tools, cache, and resume | Zen API key |
 | `npm run test:live:cursor` | Cursor SDK tools, continuation, and disk resume | Cursor SDK login |
-| `npm run test:live:openai-instructions` | Requested planning/delegation and Plan restrictions (three-request budget) | Codex login |
-| `npm run test:live:auto-mode` | Native Auto mode | Provider login under test |
-| `npm run test:live:permissions` | Native permissions | Claude and provider login |
+| `npm run test:live:codex` | Codex app-server harness: write, resume, Plan, replay (three small turns) | Codex login |
 | `npm run test:live:antigravity` | Antigravity CLI harness | `agy` login |
 | `npm run test:live:grok` | Grok Build CLI harness | Grok Build login |
 | `npm run test:live:front-door` | Gateway as Claude Code's proxy (Remote Control path) and an OpenAI worker | Claude and Codex login |

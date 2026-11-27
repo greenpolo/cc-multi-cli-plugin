@@ -54,7 +54,7 @@ restricts nothing there and is ignored.
 
 | Provider or action | What enforces the permission |
 | --- | --- |
-| OpenAI direct models | Claude Code's own tools run the tool loop, the same set a Claude subagent gets: built-ins, MCP servers, web search and fetch, skills. Claude's rules apply; Plan refuses actions other than reads and web lookups. |
+| OpenAI through Codex | Codex runs without approvals or a reviewer: Plan is its read-only sandbox with its MCP servers off, any other mode full access. Claude's Edit/Write, WebSearch and MCP restrictions map onto Codex's sandbox and config. See [docs/openai.md](openai.md). |
 | Zen direct models | Claude Code runs and authorizes the tools. Plan refuses actions other than reads and web lookups. |
 | Cursor native harness | Cursor receives the prompt-boundary mode and capability restrictions; its own action reviewer stays off. See [docs/cursor.md](cursor.md). |
 | Antigravity native harness | A namespaced global pre-tool hook enforces Claude's denials while the native CLI runs. See [docs/antigravity.md](antigravity.md). |

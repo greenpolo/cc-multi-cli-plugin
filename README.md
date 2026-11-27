@@ -24,7 +24,7 @@ Multi brings external models and coding harnesses into one Claude Code session t
 
 - **Choose your model in place.** Switch through `/model` and select supported reasoning effort with `/effort`.
 - **Delegate to provider workers.** Run a provider's own model from the Agent tool (`OpenAI`, `Cursor`, `Zen`, `Antigravity`, `Grok`); native actions appear as tool rows under the harness's own tool names.
-- **Keep native execution.** OpenAI and Zen use Claude Code's tools; Cursor, Antigravity and Grok run their own SDK or CLI tools.
+- **Keep native execution.** Zen uses Claude Code's tools; OpenAI (through the Codex CLI), Cursor, Antigravity and Grok run their own CLI or SDK tools.
 - **Carry your session forward.** Resume saved sessions, and keep Remote Control when signed in to claude.ai.
 - **Terminal or desktop.** Works in `claude-multi` and in the Claude desktop app's Code tab.
 - **Stay in control.** Claude's permission mode and explicit tool restrictions govern provider dispatch.
@@ -87,7 +87,7 @@ launching to append JSONL receipts. See [usage and receipts](docs/usage.md).
 <details>
 <summary>Where do tools run?</summary>
 
-OpenAI and Zen use Claude Code's tool execution loop. Cursor uses its official SDK, and Antigravity and Grok use their real CLIs. Native harness actions are displayed in the session and are never replayed as executable Claude tool calls. See [architecture](ARCHITECTURE.md) and [permissions](docs/permissions.md) for the boundaries.
+Zen uses Claude Code's tool execution loop. OpenAI runs through the Codex CLI, Cursor uses its official SDK, and Antigravity and Grok use their real CLIs. Native harness actions are displayed in the session and are never replayed as executable Claude tool calls. See [architecture](ARCHITECTURE.md) and [permissions](docs/permissions.md) for the boundaries.
 
 </details>
 

@@ -11,7 +11,7 @@ their own data handling and privacy policies.
 | Provider | Endpoint or runtime | Data sent |
 | --- | --- | --- |
 | Anthropic | `https://api.anthropic.com` through Claude's configured connection | Claude Messages requests, conversation context, tools, and attachments. |
-| OpenAI | Codex app-server and `https://chatgpt.com/backend-api/codex` | Selected conversation, instructions, tools, and attachments; Codex handles authentication. |
+| OpenAI | The Codex CLI (`codex app-server`), which sends to OpenAI itself | The new part of the conversation as one text prompt; Codex handles authentication and its own requests. |
 | Zen | `https://opencode.ai/zen/v1/` | Selected conversation, instructions, tools, and attachments. |
 | Cursor | Official Cursor SDK | Selected conversation, workspace context, tools, and tool results through the SDK's native run. |
 | Antigravity | Official `agy` CLI | Selected conversation, workspace context, tools, and tool results through the CLI's native run. |
@@ -29,7 +29,7 @@ provider's policies.
 
 | Item | Path |
 | --- | --- |
-| Codex authentication | Codex's `auth.json`: `$CODEX_HOME/auth.json`, or `~/.codex/auth.json`. |
+| Codex run state | The `multi-harness` directory under `~/.codex`. It contains session and response records for continuation and recovery. Codex's own threads stay under `$CODEX_HOME` (default `~/.codex`); Multi never reads Codex's credentials. |
 | Cursor SDK authentication and state | Cursor-owned files, including `~/.cursor/sdk/auth.json`; Multi run state is `~/.cursor/multi-harness/` on Unix and `$LOCALAPPDATA/.cursor/multi-harness/` on Windows. |
 | Zen authentication | `$OPENCODE_AUTH_FILE`, or `$XDG_DATA_HOME/opencode/auth.json` (default `~/.local/share/opencode/auth.json`) on Unix and `%LOCALAPPDATA%/opencode/auth.json` on Windows. |
 | Antigravity hook and settings | `~/.gemini/config/hooks.json` and `~/.gemini/antigravity-cli/settings.json` on Unix; `%LOCALAPPDATA%/gemini/config/hooks.json` and `%LOCALAPPDATA%/gemini/antigravity-cli/settings.json` on Windows. |

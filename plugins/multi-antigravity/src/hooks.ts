@@ -119,7 +119,7 @@ export async function ensureAntigravityHooks(
   }
 }
 
-export function hookCommand(file: URL, platform: NodeJS.Platform = process.platform): string {
+function hookCommand(file: URL, platform: NodeJS.Platform = process.platform): string {
   return [process.execPath, fileURLToPath(file)]
     .map((value) => {
       if (platform !== 'win32') {

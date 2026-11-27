@@ -4,7 +4,7 @@
  * outside those manifests; `npm run check:providers` fails when the two disagree.
  */
 export const PROVIDERS: Readonly<Record<string, { label: string; harness: boolean }>> = {
-  openai: { label: 'OpenAI', harness: false },
+  openai: { label: 'OpenAI', harness: true },
   cursor: { label: 'Cursor', harness: true },
   antigravity: { label: 'Antigravity', harness: true },
   grok: { label: 'Grok', harness: true },

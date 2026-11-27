@@ -9,12 +9,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:live:compaction": "node test/live/native-compaction.ts",
     "test:live:zen": "node test/live/native-zen.ts",
     "test:live:cursor": "node test/live/native-cursor-harness.ts",
-    "test:live:openai-instructions": "node test/live/native-openai-instructions.ts",
-    "test:live:auto-mode": "node test/live/native-auto-mode.ts",
-    "test:live:permissions": "node test/live/native-permissions.ts",
+    "test:live:codex": "node test/live/native-codex.ts",
     "test:live:antigravity": "node test/live/native-antigravity.ts",
     "test:live:grok": "node test/live/native-grok.ts",
     "test:live:front-door": "node test/live/native-front-door.ts",

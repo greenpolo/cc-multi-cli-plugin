@@ -142,6 +142,12 @@ type NativeCliSpec<P extends NativeParser, E, R> = {
   maxOutputBytes?: number;
   /** Prompt delivered on stdin instead of as an argument. */
   stdin?: string;
+  /**
+   * A conversation on stdin instead of one prompt: called once the process is spawned with a
+   * writer for one line at a time, and `end` to close stdin once the provider is done. A
+   * line written after the run stopped is dropped.
+   */
+  converse?: (io: NativeCliInput) => void;
   parser: P;
   parseLine: (
     line: string,
@@ -163,6 +169,8 @@ type NativeCliSpec<P extends NativeParser, E, R> = {
     stderr: string,
   ) => R | NativeCliError;
 };
+
+export type NativeCliInput = { write(line: string): void; end(): void };
 
 type NativeCliRun<R> = {
   result: R;
@@ -245,7 +253,7 @@ function startChild<P extends NativeParser, E, R>(spec: NativeCliSpec<P, E, R>):
     env: spec.env,
     detached: spec.platform !== 'win32',
     shell: false,
-    stdio: [spec.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    stdio: [spec.stdin === undefined && !spec.converse ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     windowsHide: true,
     ...invocation.options,
   });
@@ -276,6 +284,20 @@ function attach<P extends NativeParser, E, R>(context: RunContext<P, E, R>): voi
   }
   if (spec.stdin !== undefined && !spec.parser.failure) {
     child.stdin?.end(spec.stdin);
+  }
+  if (spec.converse && !spec.parser.failure) {
+    const open = () => {
+      const stdin = child.stdin;
+      return stdin && !stdin.destroyed && !stdin.writableEnded ? stdin : undefined;
+    };
+    spec.converse({
+      write: (line) => {
+        open()?.write(`${line}\n`);
+      },
+      end: () => {
+        open()?.end();
+      },
+    });
   }
 }
 
