@@ -8,7 +8,6 @@ import type { NativeHarness } from './native-harness.ts';
 import { type ProviderManifest, providerDirectory, providerManifests } from './provider.ts';
 import type { PreparedRequest, ProviderRequestInput } from './provider-request.ts';
 import type { ProviderUsageReader } from './provider-usage.ts';
-import type { AccountReviewer } from './verdicts.ts';
 
 /** One `/model` row a provider offers. */
 interface PickerRow {
@@ -46,8 +45,6 @@ export interface ConnectedProvider {
   prepare?(input: ProviderRequestInput, model: string): PreparedRequest;
   /** `harness` providers: extra judgement of Claude's tool rules; throws to refuse. */
   checkRules?: (rules: string[] | undefined) => void;
-  /** The account reviewer for Auto mode, when the manifest declares one and it was found. */
-  reviewer?: AccountReviewer;
   usage?: ProviderUsageReader;
   /** Billed usage per native agent, for the usage pane; `scope` says what it covers. */
   billed?: { scope: string; read(session: string): Promise<unknown> };

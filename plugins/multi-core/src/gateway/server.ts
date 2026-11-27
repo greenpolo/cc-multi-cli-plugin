@@ -10,7 +10,6 @@ import {
   parseAnthropicBase,
   STRIPPED_RESPONSE_HEADERS,
 } from './anthropic.ts';
-import { setBounded } from './bounded.ts';
 import {
   DisplayRows,
   FollowUpUnavailable,
@@ -42,13 +41,7 @@ import { ModSessionKeys } from './mod-keys.ts';
 import { handleModRoute } from './mod-routes.ts';
 import type { PermissionContext, PermissionModes } from './mode-hook.ts';
 import type { NativeHarness } from './native-harness.ts';
-import {
-  autoReviewPolicy,
-  harnessProvider,
-  isHarnessProvider,
-  providerManifest,
-  providerOf,
-} from './provider.ts';
+import { harnessProvider, isHarnessProvider, providerManifest, providerOf } from './provider.ts';
 import type { ConnectedProvider } from './provider-adapter.ts';
 import type { PreparedRequest } from './provider-request.ts';
 import { UpstreamFailure } from './provider-request.ts';
@@ -95,7 +88,7 @@ import {
 
 /** What the gateway reports to `onEvent`; routing only, never credentials or bodies. */
 export interface GatewayEvent {
-  /** `anthropic`, `review`, a provider's name, or a provider's own request route. */
+  /** `anthropic`, a provider's name, or a provider's own request route. */
   route: string;
   model?: string;
   agentId?: string | null;
@@ -130,7 +123,7 @@ export interface GatewayOptions {
   fetchImpl?: GatewayFetch;
   onEvent?: (event: GatewayEvent) => void;
   timeoutMs?: number;
-  /** The providers connected in this session, by name: what runs, reviews and meters each. */
+  /** The providers connected in this session, by name: what runs and meters each. */
   providers?: Readonly<Record<string, GatewayProvider>>;
   /** Reasoning-signature prefixes providers write; they mean nothing to Anthropic and are stripped. */
   signaturePrefixes?: readonly string[];
@@ -147,7 +140,7 @@ export interface GatewayOptions {
 /** What the gateway uses of a connected provider. */
 type GatewayProvider = Pick<
   ConnectedProvider,
-  'harness' | 'displayTools' | 'prepare' | 'reviewer' | 'usage' | 'billed'
+  'harness' | 'displayTools' | 'prepare' | 'usage' | 'billed'
 > & { harness?: NativeHarness };
 
 export function createNativeGateway({
@@ -201,7 +194,6 @@ export function createNativeGateway({
       displayRows.announce(displayTools);
     }
   }
-  const rootRequests = new Map<string, MessagesRequest>();
 
   async function serveReply(exchange: ProviderRequest, reply: MessagesResponse) {
     for (const block of reply.content) {
@@ -211,35 +203,7 @@ export function createNativeGateway({
     if (provider === undefined) {
       throw new Error('Cannot finalise an upstream reply');
     }
-    const reviewer = providers[provider]?.reviewer;
-    const policy = autoReviewPolicy(provider, Boolean(reviewer));
-    let cwd: string | undefined;
-    try {
-      cwd = permissionModes?.resolve(exchange.identity.session, exchange.agentId).cwd;
-    } catch {
-      /* Launcher cwd is the reviewer's fallback. */
-    }
-    const safeguard_results = await verdictsFor(
-      exchange.body,
-      reply,
-      policy,
-      reviewer,
-      exchange.signal,
-      {
-        rootRequest: exchange.agentId ? rootRequests.get(exchange.identity.session) : undefined,
-        cwd,
-        worker: Boolean(exchange.agentId),
-      },
-      (tool, verdict) =>
-        onEvent({
-          route: 'review',
-          tool,
-          model: verdict.model,
-          outcome: verdict.outcome,
-          agentId: exchange.agentId,
-          session: exchange.identity.session,
-        }),
-    );
+    const safeguard_results = verdictsFor(exchange.body, reply);
     const served = {
       ...reply,
       ...(safeguard_results === undefined ? {} : { safeguard_results }),
@@ -476,7 +440,7 @@ export function createNativeGateway({
       await answerFollowUp(exchange, followUp, external, deliverHandback);
       return;
     }
-    await dispatch(exchange, exchange.identity, external);
+    await dispatch(exchange, external);
   }
   /**
    * The deferred answer the rows' own reply holds, for the scope and provider that
@@ -678,18 +642,7 @@ export function createNativeGateway({
       res.destroy();
     }
   }
-  async function dispatch(
-    exchange: ProviderRequest,
-    metadata: ReturnType<typeof requestIdentity>,
-    external: string | null,
-  ) {
-    if (
-      !exchange.agentId &&
-      exchange.body.tools?.length &&
-      exchange.url.pathname === '/v1/messages'
-    ) {
-      setBounded(rootRequests, metadata.session, exchange.body, 128, 'insertion');
-    }
+  async function dispatch(exchange: ProviderRequest, external: string | null) {
     if (!external && blockAnthropic) {
       throw new BadRequest('Anthropic is not signed in. Select an external model.');
     }
@@ -772,16 +725,7 @@ export function createNativeGateway({
     return handleModRoute(req, res, url, parsed, {
       bridge: modBridge,
       workerModels,
-      forgetReviewContext: (session) => {
-        rootRequests.delete(session);
-        workerModels.forgetSession(session);
-      },
-      reviewStatement: (model) => {
-        const provider = providerOf(model);
-        return provider === undefined
-          ? undefined
-          : autoReviewPolicy(provider, Boolean(providers[provider]?.reviewer)).statement;
-      },
+      forgetSession: (session) => workerModels.forgetSession(session),
       permissionModes,
       compactions,
       receipts,

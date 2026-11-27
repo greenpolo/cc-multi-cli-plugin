@@ -135,9 +135,9 @@ export interface GrokPolicy {
   notice?: string;
 }
 
-/** Grok Build has Claude's four native modes; any other Claude mode runs as Auto. */
+/** Grok Build runs Plan as Plan and every other Claude mode as Bypass. */
 function grokMode(mode: PermissionContext['permissionMode']): GrokPermissionMode {
-  return mode === 'acceptEdits' ? mode : nativeMode(mode).mode;
+  return nativeMode(mode).mode;
 }
 
 /** MCP runs outside Plan unless Claude denies some of it or a tool list names none of it. */

@@ -11,7 +11,7 @@ their own data handling and privacy policies.
 | Provider | Endpoint or runtime | Data sent |
 | --- | --- | --- |
 | Anthropic | `https://api.anthropic.com` through Claude's configured connection | Claude Messages requests, conversation context, tools, and attachments. |
-| OpenAI | Codex app-server and `https://chatgpt.com/backend-api/codex` | Selected conversation, instructions, tools, and attachments; Codex handles authentication and review. |
+| OpenAI | Codex app-server and `https://chatgpt.com/backend-api/codex` | Selected conversation, instructions, tools, and attachments; Codex handles authentication. |
 | Zen | `https://opencode.ai/zen/v1/` | Selected conversation, instructions, tools, and attachments. |
 | Cursor | Official Cursor SDK | Selected conversation, workspace context, tools, and tool results through the SDK's native run. |
 | Antigravity | Official `agy` CLI | Selected conversation, workspace context, tools, and tool results through the CLI's native run. |
@@ -19,7 +19,7 @@ their own data handling and privacy policies.
 
 Native tools can read workspace files, run commands, and contact services allowed
 by the effective provider and Claude permissions. Inference follows the selected
-provider route; automatic review follows the originating provider's review path.
+provider route. Multi sends no conversation anywhere for review.
 Opening the usage pane or enabling quota advice can also query other enabled
 providers' account interfaces without inference. These account lookups do not send
 the conversation to those providers. Provider retention and billing follow the
@@ -49,7 +49,7 @@ and execution state in provider-controlled locations.
 - Multi never creates a Claude token pool or forwards Claude credentials to another provider.
 - Antigravity and Grok CLIs authenticate their own inference. Grok's usage reader loads its native auth file to check key/refresh-token presence and access-token expiry; it does not forward those credentials or return them in usage data. Multi stores no provider credentials in its installation directory and removes `XAI_API_KEY` from Grok runs to select account login.
 - Multi never sends telemetry to the plugin author.
-- Multi never runs a separate reviewer for Zen, Antigravity, or Grok.
+- Multi runs no reviewer, guardian or classifier model for any provider.
 
 ## Removing data
 

@@ -34,8 +34,7 @@ and do not register a separate `Cursor` model.
 
 ## Execution
 
-Cursor's SDK owns native tools, its system prompt, conversation state, and native
-review. Each finished SDK tool call is a row under Cursor's tool type (`shell`,
+Cursor's SDK owns native tools, its system prompt, and conversation state. Each finished SDK tool call is a row under Cursor's tool type (`shell`,
 `read`, `edit`, `grep`, ...) with its native arguments and output (stdout/stderr and
 exit code, file content, diff), in the `/model` Cursor session or inside the Cursor
 worker's transcript. The transcript also keeps streamed text, context-compaction
@@ -53,14 +52,13 @@ policy checks. Cancellation reaches the native SDK run.
 
 | Claude mode | Cursor behavior |
 | --- | --- |
-| Auto | Native agent mode with SDK Auto review requested. The SDK may proceed without classifier review when its classifier is unavailable. |
 | Plan | Native plan mode with read, grep, glob, and directory-listing tools. Shell and edit capabilities are excluded. |
-| Bypass | Native agent mode with Auto review disabled. Explicit tool restrictions and SDK sandbox settings still apply. |
+| Any other mode | Native agent mode, run as Bypass: the SDK's own Auto review stays off. Explicit tool restrictions and SDK sandbox settings still apply. |
 
 Modes apply at prompt boundaries. Worker modes inherit from the parent and the
 worker type's definition. Settings, plugin policies, tool lists, and managed
 policy are admitted per operating system; see [docs/permissions.md](permissions.md).
-Any other Claude mode runs as Auto. Ask rules, sandbox settings and argument-specific
+Ask rules, sandbox settings and argument-specific
 deny rules have no SDK form and are skipped with a one-line notice. The SDK runs with
 isolated settings, so a `.cursor/permissions.json` is not loaded. SDK events provide native action observations for Claude
 Mods display; Claude's classic tool hooks do not enforce native SDK tool calls.
@@ -100,8 +98,7 @@ process preserves the native SDK conversation and never rewinds it.
 
 ## Limits
 
-The SDK's native Auto fallback is accepted when its classifier is unavailable;
-completion does not prove that review occurred. Cursor-native child spawning is
+Cursor-native child spawning is
 disabled. The SDK exposes no public force-compaction or threshold control, manual
 approval transport, arbitrary Claude-native tool cards, strict forced tool choice,
 stop strings, PDF attachments, or per-response generation caps. Cursor turn

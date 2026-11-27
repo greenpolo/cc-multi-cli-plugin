@@ -15,7 +15,7 @@ Claude Code function-hook UI and extensibility rules live in
 
 | Path | Responsibility |
 | --- | --- |
-| `plugins/multi-<name>/provider.json` | A provider's manifest: name, label, kind (`direct` or `harness`), order, review and usage text. Core reads these and names no provider. |
+| `plugins/multi-<name>/provider.json` | A provider's manifest: name, label, kind (`direct` or `harness`), order, and usage text. Core reads these and names no provider. |
 | `plugins/multi-<name>/src/adapter.ts` | A provider's adapter: sign-in, models, runtime, launcher flags, and account verb, loaded by core through `gateway/provider-adapter.ts`. |
 | `plugins/multi-core/src/launcher.ts`, `serve.ts`, `launch/` | Launches the gateway and Claude Code (`launcher.ts`), or the gateway alone for a desktop app session the mod serves (`serve.ts`). `launch/` holds the shared gateway start (`gateway.ts`), the provider connection (`providers.ts`), the `/model` picker (`picker.ts`), worker types (`workers.ts`), the Claude executable probes (`claude.ts`), the session environment (`environment.ts`), the desktop handshake and picker rows (`desktop.ts`), and the installed front-door certificate (`certificate.ts`). |
 | `plugins/multi-core/src/gateway/server.ts`, `request.ts`, `reply.ts`, `anthropic.ts` | Routes requests and manages sessions; request admission and identity; replies and failures; Anthropic passthrough headers and paths. |
@@ -25,12 +25,12 @@ Claude Code function-hook UI and extensibility rules live in
 | `plugins/multi-core/src/gateway/executable.ts`, `process-tree.ts` | Resolves executables and manages child processes. |
 | `plugins/multi-core/src/gateway/atomic-write.ts`, `state-lock.ts` | Protects files and serializes native state. |
 | `plugins/multi-core/src/gateway/harness-settings.ts`, `mode-hook.ts`, `agent-definitions.ts`, `worker-catalog.ts` | Reads what a native run takes from Claude's settings (`readHarnessSettings`, `mergePermissions`, `nativeMode`, `nativeRules`), keeps one permission record per session, and resolves the Agent tool's `model` against each provider's worker catalog. |
-| `plugins/multi-core/src/gateway/verdicts.ts`, `provider.ts` | Core verdict contract, Reviewer interface, and provider auto-review policy. `server.ts` alone finalises served replies and terminal events. |
+| `plugins/multi-core/src/gateway/verdicts.ts`, `provider.ts` | Core verdict contract (Plan checks, no model calls) and the provider table. `server.ts` alone finalises served replies and terminal events. |
 | `plugins/multi-core/src/gateway/mod-*.ts`, `display-rows.ts`, `nested-env.ts` | Claude Mods control-plane routes, per-session mod key (`mod-keys.ts`), compaction, policy, native action display rows, and the nested-`claude` environment restore. |
 | `plugins/multi-core/hooks/` | Claude Mods function hooks; `gateway.ts` is the single gateway client, state lives in `$.state`, timing in `$.clock`. `provider.ts` is the hooks' own provider table, checked against the manifests by `npm run check:providers`. `desktop.ts` reads the handshake of the gateway the mod starts in a desktop app session. |
 | `plugins/multi-core/src/gateway/harness-*.ts` | Session store, exchange registry, response builder, completion, notices, and failure classifier (`harness-failure.ts`) shared by Cursor, Antigravity, and Grok; the CLI harness base (`harness-cli.ts`), process runner, and text prompt preparation shared by Antigravity and Grok. |
 | `plugins/multi-core/src/account.ts`, `setup.ts`, `install/` | Accounts, bootstrap, plugin discovery, and installation. |
-| `plugins/multi-openai/src/` | Codex authentication, models, request construction (`gateway-request.ts`), instructions, and reviewer. |
+| `plugins/multi-openai/src/` | Codex authentication, models, request construction (`gateway-request.ts`), and instructions. |
 | `plugins/multi-cursor/src/` | Cursor SDK harness, permissions, progress, requests, models, and workspaces. |
 | `plugins/multi-zen/src/` | Zen API-key authentication, catalogs, request construction (`gateway-request.ts`), and translations. |
 | `plugins/multi-antigravity/src/` | `agy` CLI harness, models, hooks, requests, and permissions. |
@@ -55,12 +55,12 @@ changes. Provider limitations are not permanent bans on requested new features;
 changes to those boundaries need corresponding implementation and verification.
 
 - Claude's permission mode controls every provider at prompt boundaries.
-- Each provider owns its login, reviewer, execution state, and credentials.
+- Each provider owns its login, execution state, and credentials.
 - Never refuse a native run over its permission mode or a Claude setting the harness
-  cannot enforce: Plan stays read-only, Bypass stays unreviewed, any other mode runs as
-  Auto, and what was skipped is named in a one-line notice.
+  cannot enforce: Plan stays read-only, any other mode runs as
+  Bypass, and what was skipped is named in a one-line notice.
 - Fail explicitly on unknown models or ambiguous ownership.
-- A provider without a reviewer runs auto mode unreviewed; plan mode still refuses actions.
+- Multi adds no model calls of its own: no reviewer, guardian or classifier on top of a provider. Claude's mode and rules decide; plan mode refuses direct-model actions.
 - A native run opens with a notice only where it differs from Claude (Plan limits, a mode
   or rule it cannot carry); a run that behaves as Claude would says nothing.
 - Never replay external tool events as executable Claude tools.
@@ -96,7 +96,6 @@ the provider is signed in. For Claude Mods hook or surface changes, also run
 | `npm run test:live:cursor` | Cursor SDK tools, continuation, and disk resume | Cursor SDK login |
 | `npm run test:live:openai-instructions` | Requested planning/delegation and Plan restrictions (three-request budget) | Codex login |
 | `npm run test:live:auto-mode` | Native Auto mode | Provider login under test |
-| `npm run test:live:reviewer` | OpenAI reviewer allow/deny and inspection | Codex login |
 | `npm run test:live:permissions` | Native permissions | Claude and provider login |
 | `npm run test:live:antigravity` | Antigravity CLI harness | `agy` login |
 | `npm run test:live:grok` | Grok Build CLI harness | Grok Build login |
