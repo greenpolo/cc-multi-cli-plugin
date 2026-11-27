@@ -58,7 +58,7 @@ changes to those boundaries need corresponding implementation and verification.
 - Each provider owns its login, execution state, and credentials.
 - Never refuse a native run over its permission mode or a Claude setting the harness
   cannot enforce: Plan stays read-only, any other mode runs as
-  Auto, and what was skipped is named in a one-line notice.
+  Bypass, and what was skipped is named in a one-line notice.
 - Fail explicitly on unknown models or ambiguous ownership.
 - Multi adds no model calls of its own: no reviewer, guardian or classifier on top of a provider. Claude's mode and rules decide; plan mode refuses direct-model actions.
 - Never replay external tool events as executable Claude tools.

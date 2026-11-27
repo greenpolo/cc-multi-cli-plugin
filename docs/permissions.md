@@ -10,9 +10,7 @@ models retain Claude's permission checks. Native harnesses run under every mode:
 | Claude mode | Native run |
 | --- | --- |
 | Plan | Read-only: shell and edit capabilities are removed. |
-| Bypass | Explicit tool restrictions still apply. |
-| Auto, acceptEdits | The provider's Auto (Grok keeps its own acceptEdits). |
-| Default, dontAsk, anything else | Runs as Auto, and the run opens with a one-line notice saying so. |
+| Any other mode | Runs as Bypass: the CLI asks no approval and runs no reviewer. Claude's explicit tool restrictions still apply. |
 
 Multi runs no reviewer of its own and turns none on: no extra model judges an
 action. Outside Plan, actions run unless a Claude rule stops them.
@@ -33,7 +31,7 @@ into it, and never hard-blocks the CLI's own. Those tools follow Claude's mode:
 
 | Claude mode | The CLI's own tools |
 | --- | --- |
-| Bypass, Auto | Run, unless a Claude rule denies them. MCP calls are matched against Claude's MCP deny rules (`mcp__server`, `mcp__server__*`, `mcp__server__tool`) where the CLI names the server and tool. |
+| Any other mode | Run, unless a Claude rule denies them. MCP calls are matched against Claude's MCP deny rules (`mcp__server`, `mcp__server__*`, `mcp__server__tool`) where the CLI names the server and tool. |
 | Plan | Left out: only read, search and web lookup run. |
 
 An explicit tool list (an agent type's `tools`, or `--tools`) admits only the tools it

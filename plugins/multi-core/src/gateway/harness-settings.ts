@@ -119,19 +119,12 @@ export function nativeRules(context: Pick<PermissionContext, 'tools' | 'disallow
 
 /** The mode a native run uses for a Claude mode: only Plan and Bypass differ from Auto. */
 export function nativeMode(mode: string | undefined): {
-  mode: 'auto' | 'plan' | 'bypassPermissions';
+  mode: 'plan' | 'bypassPermissions';
   notice?: string;
 } {
-  if (mode === 'plan' || mode === 'bypassPermissions' || mode === 'auto') {
-    return { mode };
-  }
-  if (mode === 'acceptEdits') {
-    return { mode: 'auto' };
-  }
-  return {
-    mode: 'auto',
-    notice: `Claude's ${mode ?? 'current'} mode has no native equivalent; this run uses Auto.`,
-  };
+  // Outside Plan every native run is Bypass: the CLI runs no approval or reviewer of its
+  // own, and Claude's explicit tool restrictions are the only limits.
+  return { mode: mode === 'plan' ? 'plan' : 'bypassPermissions' };
 }
 
 /** The managed policy is read once: it cannot change under a session, and reading it runs commands. */

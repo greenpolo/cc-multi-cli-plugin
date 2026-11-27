@@ -199,7 +199,7 @@ A worker adds its agent type's own tool rules and inherits the rest; a worker th
 hooks did not announce inherits the session's record.
 
 No native run is refused over its mode or over a setting its harness cannot enforce.
-Plan stays read-only; every other mode runs as Auto.
+Plan stays read-only; every other mode runs as Bypass.
 `gateway/harness-settings.ts` reads what carries over from Claude's settings: bare
 tool denials and tool lists. Ask rules, sandbox settings and argument-specific deny
 rules have no native form, so they are skipped and named in a one-line notice at the

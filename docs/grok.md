@@ -51,11 +51,8 @@ installed.
 
 | Claude mode | Grok run |
 | --- | --- |
-| Auto | `--permission-mode auto` plus the rules below |
-| acceptEdits | `--permission-mode acceptEdits` |
 | Plan | `--permission-mode plan`, plus `Bash`, `Edit` and `Write` denied and the matching tools removed |
-| Bypass | `--permission-mode bypassPermissions`, explicit restrictions retained |
-| Default, dontAsk | `--permission-mode auto`, with a one-line notice |
+| Any other mode | `--permission-mode bypassPermissions` plus the rules below |
 
 With no Claude rule and outside Plan, the run passes no `--tools`, so Grok keeps every
 tool it has, including ones a newer build adds. When a rule applies, restrictions are

@@ -99,7 +99,7 @@ also passes `--mode plan`, which only steers agy's model: with permissions
 skipped it still runs shell and write tools. The hook therefore allows only
 native read, search, and web lookup tools in Plan and denies every other tool,
 including ones newer agy releases add. Compaction turns allow no tools. Any
-other Claude mode runs as Auto, and Claude rules with no native form are skipped
+other Claude mode runs as Bypass, and Claude rules with no native form are skipped
 with a one-line notice; see [permissions](permissions.md).
 
 The hook command uses a POSIX shell guard on Linux, macOS, and other Unix hosts.

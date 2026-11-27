@@ -17,6 +17,10 @@ Multi's own safety reviewer is removed; it drained the Codex quota.
   turned on outside Bypass, is now off too. Claude's permission mode and rules alone
   decide what runs: Plan refuses direct-model actions other than reads and web lookups,
   and every other mode lets them run. `npm run test:live:reviewer` is removed.
+- **Native CLIs run as Bypass outside Plan.** Cursor, Antigravity and Grok runs in
+  Auto, acceptEdits, Default or any other mode now use the CLI's Bypass, so no CLI
+  asks for approval or runs its own reviewer. Plan stays read-only, and Claude's
+  explicit tool restrictions still apply.
 - **The real usage-limit message.** A spent Codex window now reads "you've hit your
   Codex usage limit … Try again at <time>" instead of a generic HTTP 429.
 

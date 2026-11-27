@@ -52,14 +52,13 @@ policy checks. Cancellation reaches the native SDK run.
 
 | Claude mode | Cursor behavior |
 | --- | --- |
-| Auto | Native agent mode. The SDK's own Auto review stays off: Claude's rules decide. |
 | Plan | Native plan mode with read, grep, glob, and directory-listing tools. Shell and edit capabilities are excluded. |
-| Bypass | Native agent mode. Explicit tool restrictions and SDK sandbox settings still apply. |
+| Any other mode | Native agent mode, run as Bypass: the SDK's own Auto review stays off. Explicit tool restrictions and SDK sandbox settings still apply. |
 
 Modes apply at prompt boundaries. Worker modes inherit from the parent and the
 worker type's definition. Settings, plugin policies, tool lists, and managed
 policy are admitted per operating system; see [docs/permissions.md](permissions.md).
-Any other Claude mode runs as Auto. Ask rules, sandbox settings and argument-specific
+Ask rules, sandbox settings and argument-specific
 deny rules have no SDK form and are skipped with a one-line notice. The SDK runs with
 isolated settings, so a `.cursor/permissions.json` is not loaded. SDK events provide native action observations for Claude
 Mods display; Claude's classic tool hooks do not enforce native SDK tool calls.
