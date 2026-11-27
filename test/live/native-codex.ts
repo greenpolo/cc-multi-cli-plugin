@@ -70,8 +70,31 @@ const scope = `live/${randomUUID()}`;
 const runs: { resume?: string; sandbox: string; thread?: string }[] = [];
 const items: string[] = [];
 
+/** The answer as the person reads it: text after an action row arrives as a follow-up. */
 function text(response: MessagesResponse): string {
-  return response.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
+  const streamed = response.content
+    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+    .join('');
+  return streamed + (response.multi_followup ?? '');
+}
+
+/**
+ * What the whole turn used, every model call summed. `usage` itself carries only the last
+ * call, because Claude Code reads it as the context window's fill.
+ */
+function consumed(response: MessagesResponse) {
+  const usage = response.multi_usage;
+  const input = usage?.consumed_input_tokens ?? 0;
+  const cached = usage?.consumed_cache_read_tokens ?? 0;
+  return {
+    calls: usage?.model_calls,
+    uncachedInput: input,
+    cachedInput: cached,
+    output: usage?.consumed_output_tokens,
+    reasoning: usage?.reasoning_tokens,
+    total: usage?.total_tokens,
+    cachedShare: input + cached ? `${Math.round((cached / (input + cached)) * 100)}%` : 'n/a',
+  };
 }
 
 const run = async (options: CodexRunOptions) => {
@@ -109,7 +132,15 @@ async function turn(
     context,
   );
   console.log(
-    JSON.stringify({ response: text(response).slice(0, 300), usage: response.usage }, null, 1),
+    JSON.stringify(
+      {
+        ...(response.multi_usage?.replayed ? { replayed: true } : {}),
+        response: text(response).slice(0, 600),
+        turn: consumed(response),
+      },
+      null,
+      1,
+    ),
   );
   return response;
 }
@@ -133,19 +164,14 @@ async function substantialTask() {
   );
   assert.equal(runs[1]?.resume, runs[0]?.thread, 'The follow-up must resume the Codex thread');
   const after = await quota();
-  const share = (usage: MessagesResponse['usage']) => {
-    const cached = usage.cache_read_input_tokens ?? 0;
-    const total = usage.input_tokens + cached;
-    return total ? `${Math.round((cached / total) * 100)}%` : 'n/a';
-  };
   console.log(
     JSON.stringify(
       {
         ok: true,
         model: model?.id,
         effort,
-        task: { seconds: firstSeconds, usage: first.usage, cachedShare: share(first.usage) },
-        followUp: { usage: follow.usage, cachedShare: share(follow.usage) },
+        task: { seconds: firstSeconds, ...consumed(first) },
+        followUp: consumed(follow),
         items: Object.fromEntries(
           [...new Set(items)].map((type) => [type, items.filter((item) => item === type).length]),
         ),
