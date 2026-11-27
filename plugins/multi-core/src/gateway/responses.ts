@@ -516,34 +516,43 @@ function loadedBySearch(body: MessagesRequest): Map<string, string[]> {
 
 /**
  * The tool list for a provider with native tool search. It is the same on every request
- * of a session: a deferred tool is declared deferred from the first request, and loading
- * one adds it at the end of the conversation (`withSearchItems`) instead of changing this
- * list. The provider caches a prompt by its prefix and the tools come first, so a list
+ * of a session: loading a deferred tool adds it at the end of the conversation
+ * (`withSearchItems`) and leaves this list as it was. The provider caches a prompt by its prefix and the tools come first, so a list
  * that grew when a tool was loaded made the next request resend the whole conversation
  * uncached.
  */
 function searchableTools(body: MessagesRequest, loaded: Map<string, string[]>): ResponsesTool[] {
   const referenced = new Set([...loaded.values()].flat());
-  return (body.tools ?? [])
-    .filter((tool) => !isAnthropicAdvisorTool(tool))
-    .map((tool): ResponsesTool => {
-      const declared = inputTool(tool);
-      if (tool.name === TOOL_SEARCH && !isDeferredTool(tool)) {
-        return {
-          type: 'tool_search',
-          execution: 'client',
-          description: declared.description,
-          parameters: declared.parameters,
-        };
-      }
-      // A deferred tool the history calls without a search that loaded it (a forced
-      // choice, or a search a compaction removed) has to be callable outright.
-      const direct =
-        typeof tool.name === 'string' &&
-        !referenced.has(tool.name) &&
-        isDirectToolAvailable(body, tool.name);
-      return isDeferredTool(tool) && !direct ? { ...declared, defer_loading: true } : declared;
-    });
+  const forced = body.tool_choice?.type === 'tool' ? body.tool_choice.name : undefined;
+  return (
+    (body.tools ?? [])
+      .filter((tool) => !isAnthropicAdvisorTool(tool))
+      // Claude Code only sends a deferred tool once it is loaded. The search result that
+      // loaded it already carries its definition, so declaring it here too would change
+      // the list mid-session. A forced choice still has to name a declared tool.
+      .filter(
+        (tool) =>
+          typeof tool.name !== 'string' || !referenced.has(tool.name) || tool.name === forced,
+      )
+      .map((tool): ResponsesTool => {
+        const declared = inputTool(tool);
+        if (tool.name === TOOL_SEARCH && !isDeferredTool(tool)) {
+          return {
+            type: 'tool_search',
+            execution: 'client',
+            description: declared.description,
+            parameters: declared.parameters,
+          };
+        }
+        // A deferred tool the history calls without a search that loaded it (a forced
+        // choice, or a search a compaction removed) has to be callable outright.
+        const direct =
+          typeof tool.name === 'string' &&
+          !referenced.has(tool.name) &&
+          isDirectToolAvailable(body, tool.name);
+        return isDeferredTool(tool) && !direct ? { ...declared, defer_loading: true } : declared;
+      })
+  );
 }
 
 /** ToolSearch calls and results as the provider's own search items, carrying the loaded tools. */
@@ -582,6 +591,25 @@ function withSearchItems(
   });
 }
 
+/**
+ * Claude Code opens the system prompt with its own billing line, whose value changes on
+ * every request. It means nothing to another provider, and left in it makes every request
+ * differ from the last near the top, so the provider's prompt cache stops there.
+ */
+function withoutBillingHeader(system: unknown): unknown {
+  if (!Array.isArray(system)) {
+    return system;
+  }
+  return system.filter(
+    (block: unknown) =>
+      !(
+        isRecord(block) &&
+        typeof block.text === 'string' &&
+        block.text.startsWith('x-anthropic-billing-header:')
+      ),
+  );
+}
+
 export function toResponses(
   body: MessagesRequest,
   model: string,
@@ -612,7 +640,7 @@ export function toResponses(
   const effort = reasoningEffort(body);
   return {
     model,
-    instructions: textContent(body.system ?? ''),
+    instructions: textContent(withoutBillingHeader(body.system ?? '')),
     input,
     tools,
     ...(format

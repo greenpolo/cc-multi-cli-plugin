@@ -13,6 +13,8 @@ Fewer wasted tokens and no leftover refusals, from an audit of everything Multi 
   uncached: 18.7% of all uncached OpenAI input over ten days on the test machine.
   Requests now use OpenAI's own client-run tool search, so the tool list is the same
   on every request of a session and a loaded tool joins the end of the conversation.
+  Claude Code's billing line at the top of the system prompt, which changes on every
+  request and stopped the cache right after the tools, is no longer sent on.
 - **Antigravity and Cursor no longer receive Claude's catalogues.** Claude's lists of
   deferred tools, skills, MCP servers and agent types, which neither CLI can call,
   were about 18k tokens at the start of every new session and worker. Grok already
