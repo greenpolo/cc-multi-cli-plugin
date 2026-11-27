@@ -6,10 +6,6 @@
   "runs": "native Cursor agent",
   "endpoint": "@cursor/sdk",
   "unavailable": "Cursor SDK is not signed in. Run the launcher with --cursor-login first.",
-  "review": {
-    "mode": "harness",
-    "statement": "Cursor reviews its own actions natively and fails open"
-  },
   "usage": {
     "name": "Cursor",
     "url": "https://cursor.com/dashboard?tab=usage",

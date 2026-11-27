@@ -36,8 +36,7 @@ function method(req: IncomingMessage, expected: string) {
 export interface ModRouteContext {
   bridge: ModBridge;
   workerModels?: WorkerModels;
-  reviewStatement?: (model: string) => string | undefined;
-  forgetReviewContext?: (session: string) => void;
+  forgetSession?: (session: string) => void;
   permissionModes?: PermissionModes;
   compactions?: ModCompactions;
   receipts?: ReceiptLedger;
@@ -147,7 +146,7 @@ async function handlePostRoute(
       res.once('finish', context.stop);
       return reply(res, { accepted: true });
     case '/multi/mod/detach':
-      context.forgetReviewContext?.(sessionId);
+      context.forgetSession?.(sessionId);
       compactions?.cancel(sessionId);
       bridge.forgetSession(sessionId);
       rows?.forgetSession(sessionId);
@@ -159,10 +158,7 @@ async function handlePostRoute(
         model: text(parsed.model, 'model'),
         effort: telemetryEffort(parsed.effort),
       });
-      return reply(res, {
-        accepted: true,
-        reviewStatement: context.reviewStatement?.(String(parsed.model)),
-      });
+      return reply(res, { accepted: true });
     case '/multi/mod/session':
       return sessionRoute(res, parsed, key, bridge, permissionModes);
     case '/multi/mod/offer':

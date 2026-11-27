@@ -4,6 +4,26 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## 0.4.3 — 2026-11-27
+
+Multi's own safety reviewer is removed; it drained the Codex quota.
+
+- **No reviewer, guardian or classifier of Multi's own.** Every OpenAI action outside
+  the read-only list was sent to OpenAI's `codex-auto-review` model with up to 768 KB
+  of the session, uncached, and Claude Code asks for verdicts even in Bypass. One
+  17-minute Sol worker made 121 hidden reviews and spent a whole 5-hour Codex window.
+  The OpenAI reviewer, its guardian policy, the review status line and the worker
+  context it kept in memory are gone. Cursor's own SDK action reviewer, which Multi
+  turned on outside Bypass, is now off too. Claude's permission mode and rules alone
+  decide what runs: Plan refuses direct-model actions other than reads and web lookups,
+  and every other mode lets them run. `npm run test:live:reviewer` is removed.
+- **Native CLIs run as Bypass outside Plan.** Cursor, Antigravity and Grok runs in
+  Auto, acceptEdits, Default or any other mode now use the CLI's Bypass, so no CLI
+  asks for approval or runs its own reviewer. Plan stays read-only, and Claude's
+  explicit tool restrictions still apply.
+- **The real usage-limit message.** A spent Codex window now reads "you've hit your
+  Codex usage limit … Try again at <time>" instead of a generic HTTP 429.
+
 ## 0.4.2 — 2026-11-26
 
 Workers get Claude's whole toolset, and arbitrary limits on agents are removed.

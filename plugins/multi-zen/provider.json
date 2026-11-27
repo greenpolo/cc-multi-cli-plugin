@@ -5,10 +5,6 @@
   "order": 50,
   "runs": "Claude Code's tools",
   "unavailable": "Zen is not configured. Set OPENCODE_API_KEY or connect OpenCode Zen.",
-  "review": {
-    "mode": "none",
-    "statement": "no auto mode: actions run unreviewed"
-  },
   "usage": {
     "name": "OpenCode Zen",
     "url": "https://opencode.ai/zen",

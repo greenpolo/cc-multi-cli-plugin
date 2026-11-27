@@ -178,7 +178,7 @@ function policyNotice(plan: boolean): string {
   if (plan) {
     return 'Plan: only native read, search and web lookup tools run.';
   }
-  return "Claude Code rules take precedence; agy's own MCP servers and agents are available. No reviewer.";
+  return "Claude Code rules take precedence; agy's own MCP servers and agents are available.";
 }
 
 function toolList(serialized: string): string[] {

@@ -37,7 +37,7 @@ OpenAI requests append a short Claude Code compatibility note from
 permission and compaction boundaries without adding personal preferences or
 planning, delegation, or writing-style defaults. Claude's existing instructions
 stay intact. The note applies to OpenAI inference and token counting, not other
-providers or the independent reviewer.
+providers.
 
 `npm run test:live:openai-instructions` checks it with at most three paid requests.
 
@@ -51,4 +51,4 @@ On continuation, visible conversation context is forwarded to OpenAI. Provider-o
 
 The gateway rejects unsupported content, media, schemas, tool choices, provider-hosted tools, and arbitrary model or effort IDs. OpenAI document input supports base64 PDFs and plain text; URL documents and provider file IDs fail. Token counts are local estimates. OpenAI requests have no implicit gateway deadline, while client cancellation and explicit time limits apply.
 
-OpenAI tool uses are reviewed inline by the originating account's `codex-auto-review` reviewer on ChatGPT-plan quota. Read-only and coordination/UI tools on core's skip lists pass without a reviewer request. Each review has a 60-second budget including queue time, with at most four concurrent reviews per reply and across the process. Denial, malformed evidence, unavailable evidence, timeout or reviewer failure returns `flagged` with a plain explanation; Claude's local classifier is not used. If reviewer discovery fails at launch, OpenAI Auto runs unreviewed and says so in the status line; Plan refuses actions without a reviewer. The reviewer uses its guardian policy and the original request (plus the main request for a worker), with bounded read-only workspace inspection. Evidence stays below 1 MiB by dropping schemas, retaining the system prompt head and recent messages, and marking omissions. See [docs/permissions.md](permissions.md) and [ARCHITECTURE.md](../ARCHITECTURE.md).
+Multi adds no reviewer: an OpenAI tool use runs under Claude's mode and rules alone, with no extra model call, and Plan refuses actions other than reads and web lookups. A spent Codex window is reported with OpenAI's own usage-limit message and reset time. See [docs/permissions.md](permissions.md) and [ARCHITECTURE.md](../ARCHITECTURE.md).

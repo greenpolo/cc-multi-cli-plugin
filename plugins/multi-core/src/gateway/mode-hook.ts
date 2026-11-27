@@ -17,7 +17,7 @@ export interface PermissionContext extends WorkerPermissions {
   compaction?: string;
 }
 
-/** A mode this gateway does not know is treated as Claude's default; a native run uses Auto for it. */
+/** A mode this gateway does not know is treated as Claude's default; a native run uses Bypass for it. */
 function permissionMode(value: unknown): PermissionMode {
   return MODES.find((mode) => mode === value) ?? 'default';
 }

@@ -72,21 +72,18 @@ export function cursorPermissionPolicy(context: PermissionContext): {
   tools?: ToolName[];
   disallowedTools: ToolName[];
   identity: string;
-  autoReview: boolean;
   notice?: string;
 } {
   const native = nativeMode(context.permissionMode);
   const mode: AgentModeOption = native.mode === 'plan' ? 'plan' : 'agent';
   const { tools, disallowedTools } = cursorTools(context, mode === 'plan');
-  const autoReview = native.mode !== 'bypassPermissions';
   const notice = [native.notice, context.notice].filter(Boolean).join(' ') || undefined;
   return {
     mode,
     ...(tools ? { tools } : {}),
     disallowedTools,
-    autoReview,
     notice,
-    identity: JSON.stringify([mode, tools ?? null, disallowedTools, autoReview]),
+    identity: JSON.stringify([mode, tools ?? null, disallowedTools]),
   };
 }
 
@@ -108,9 +105,9 @@ export async function cursorNativePermissions(
       // The user's own Cursor setup loads as it would in Cursor: its MCP servers, rules,
       // hooks and plugins.
       settingSources: ['all'],
-      // This requests native review, not a fail-closed availability guarantee.
-      // The SDK documents unrestricted fallback when its classifier is unavailable.
-      autoReview: policy.autoReview,
+      // Cursor's own action reviewer is a second model call per action; Claude's mode
+      // and rules alone decide what runs, so it stays off.
+      autoReview: false,
       enableAgentRetries: false,
     },
   };
