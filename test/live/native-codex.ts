@@ -4,7 +4,7 @@
 // repeat the write. Reports each turn's tokens, cached share included.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type {
@@ -25,7 +25,7 @@ import { readCodexUsage } from '../../plugins/multi-openai/src/usage.ts';
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
   console.log(
-    'Usage: node test/live/native-codex.ts [--model ID] [--effort EFFORT]\nDefault: three small turns on gpt-6-luna plus a free replay. Requires codex login.',
+    'Usage: node test/live/native-codex.ts [--model ID] [--effort EFFORT] [--task [PROMPT]]\nDefault: three small turns on gpt-6-luna plus a free replay. --task instead runs one substantial task (and a short follow-up on the same thread) in a copy of this checkout, reporting tokens, cache share and quota before and after. Requires codex login.',
   );
   process.exit(0);
 }
@@ -41,11 +41,28 @@ const requested = option('--model') ?? 'gpt-6-luna';
 const model = models.find((candidate) => candidate.id === requested);
 assert(model, `Codex does not list ${requested}`);
 const effort = option('--effort') ?? 'low';
+const taskMode = args.includes('--task');
+const taskArgument = option('--task');
+const TASK =
+  taskArgument && !taskArgument.startsWith('--')
+    ? taskArgument
+    : 'Read every file under plugins/multi-grok/src and plugins/multi-core/src/gateway/harness-cli.ts. ' +
+      'Then write docs/grok-internals.md (about 800 words) explaining how a Grok turn runs from the ' +
+      'gateway to the CLI and back: sessions, permissions, progress rows, failures. Cite file paths ' +
+      'and function names. Finally check that every function name you cited exists, and fix any that do not.';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'native-codex-'));
 const cwd = path.join(root, 'workspace');
 const stateDirectory = path.join(root, 'state');
-await mkdir(cwd);
+if (taskMode) {
+  // A real codebase to work in, without touching this checkout.
+  await cp(process.cwd(), cwd, {
+    recursive: true,
+    filter: (source) => !/[\\/](node_modules|\.git)([\\/]|$)/.test(source),
+  });
+} else {
+  await mkdir(cwd);
+}
 const target = 'native-write-once.txt';
 const planTarget = 'plan-must-not-exist.txt';
 const nonce = randomBytes(8).toString('hex');
@@ -100,7 +117,58 @@ async function turn(
 const bypass: PermissionContext = { permissionMode: 'bypassPermissions', cwd };
 const plan: PermissionContext = { permissionMode: 'plan', cwd };
 
+async function substantialTask() {
+  const quota = async () => (await readCodexUsage().catch(() => undefined))?.windows;
+  const before = await quota();
+  const started = Date.now();
+  const first = await turn([{ role: 'user', content: TASK }], bypass);
+  const firstSeconds = Math.round((Date.now() - started) / 1000);
+  const follow = await turn(
+    [
+      { role: 'user', content: TASK },
+      { role: 'assistant', content: first.content },
+      { role: 'user', content: 'In three lines: what did you write, and what did you fix?' },
+    ],
+    bypass,
+  );
+  assert.equal(runs[1]?.resume, runs[0]?.thread, 'The follow-up must resume the Codex thread');
+  const after = await quota();
+  const share = (usage: MessagesResponse['usage']) => {
+    const cached = usage.cache_read_input_tokens ?? 0;
+    const total = usage.input_tokens + cached;
+    return total ? `${Math.round((cached / total) * 100)}%` : 'n/a';
+  };
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        model: model?.id,
+        effort,
+        task: { seconds: firstSeconds, usage: first.usage, cachedShare: share(first.usage) },
+        followUp: { usage: follow.usage, cachedShare: share(follow.usage) },
+        items: Object.fromEntries(
+          [...new Set(items)].map((type) => [type, items.filter((item) => item === type).length]),
+        ),
+        quotaBefore: before,
+        quotaAfter: after,
+      },
+      null,
+      1,
+    ),
+  );
+}
+
 try {
+  if (taskMode) {
+    await substantialTask();
+  } else {
+    await contract();
+  }
+} finally {
+  await harness.close();
+}
+
+async function contract() {
   const before = await readCodexUsage().catch(() => undefined);
   const writePrompt = `Create the file ${target} in this workspace containing exactly ${nonce}. Write it once, then stop.`;
   const first = await turn([{ role: 'user', content: writePrompt }], bypass);
@@ -141,7 +209,7 @@ try {
   console.log(
     JSON.stringify({
       ok: true,
-      model: model.id,
+      model: model?.id,
       effort,
       turns: runs.length,
       items: [...new Set(items)],
@@ -149,6 +217,4 @@ try {
       quotaAfter: after?.windows,
     }),
   );
-} finally {
-  await harness.close();
 }
