@@ -40,10 +40,6 @@ const usagePanes = atom(
   { plugin: 'multi-core', key: 'usagePanes' } as const,
   {} as Record<string, MultiCoreUsagePane>,
 );
-const advisorySessions = atom(
-  { plugin: 'multi-core', key: 'advisorySessions' } as const,
-  [] as string[],
-);
 
 const rowsClient = ($: EngineInterface): RowsClient => ({
   wire: wire($),
@@ -264,7 +260,6 @@ async function forgetSession($: EngineInterface, sessionId: string, signal: Abor
   await update($, claudeTypes, () => []);
   await update($, offeredProviders, () => []);
   await update($, displayTools, () => ({ registered: [] }));
-  await update($, advisorySessions, (held) => held.filter((id) => id !== sessionId));
   await update($, usagePanes, (held) => {
     const { [sessionId]: _closed, ...others } = held;
     return others;

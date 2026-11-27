@@ -18,6 +18,12 @@ export function antigravityHistoryHash(messages: MessagesRequest['messages']): s
  * natively, so Claude's `system` is never forwarded. Native tools stay in agy.
  */
 export function prepareAntigravityRequest(body: MessagesRequest, model = body.model ?? '') {
-  const prepared = prepareNativePrompt(body, { provider: 'Antigravity', preamble: PREAMBLE });
+  // Claude's tool, skill, MCP and agent catalogues name capabilities agy cannot call.
+  const prepared = prepareNativePrompt(body, {
+    provider: 'Antigravity',
+    preamble: PREAMBLE,
+    stripCatalogues: true,
+    dropEmptyTurns: true,
+  });
   return { ...prepared, model };
 }

@@ -13,7 +13,6 @@ export type UsagePaneProps = {
   providers: Provider[];
   receiptLines?: string[];
   error?: string;
-  quotaAdviceEnabled?: boolean;
 };
 type State = { selected: string; offset: number };
 
@@ -67,11 +66,6 @@ const view: ClientModule<UsagePaneProps, State> = (props, surface) => {
         ),
       }),
       Text({ dimColor: true, children: `Account data checked ${props.updatedAt}` }),
-      Button({
-        key: 'quota-advice',
-        label: `Quota-aware model selection: ${props.quotaAdviceEnabled ? 'On' : 'Off'}`,
-        onPress: () => surface.post({ action: 'toggle-quota-advice' }),
-      }),
       ...(props.error ? [Text({ color: 'yellow', children: props.error })] : []),
       ...lines.slice(offset, offset + height).map((line) => Text({ children: line })),
       Text({

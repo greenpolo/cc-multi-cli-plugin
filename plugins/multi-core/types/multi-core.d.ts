@@ -26,7 +26,6 @@ export type MultiCoreUsagePane = {
   }>;
   receiptLines?: string[];
   error?: string;
-  quotaAdviceEnabled?: boolean;
 };
 
 declare module 'claude-code' {
@@ -48,8 +47,6 @@ declare module 'claude-code' {
       usagePanes: Record<string, MultiCoreUsagePane>;
       /** The gateway's per-session mod key, by session id. Never logged or drawn. */
       modKeys: Record<string, string>;
-      /** Sessions whose Agent calls carry the quota advice. */
-      advisorySessions: string[];
     };
   }
 }

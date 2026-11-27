@@ -1,6 +1,11 @@
 import type { SDKUserMessage } from '@cursor/sdk';
-import { normalizeConversation, textContent } from '../../multi-core/src/gateway/conversation.ts';
+import {
+  type NormalizedConversationItem,
+  normalizeConversation,
+  textContent,
+} from '../../multi-core/src/gateway/conversation.ts';
 import { isDirectToolAvailable } from '../../multi-core/src/gateway/direct-tools.ts';
+import { withoutClaudeCatalogues } from '../../multi-core/src/gateway/harness-prompt.ts';
 import type { MessagesRequest } from '../../multi-core/src/gateway/messages.ts';
 import { isRecord } from '../../multi-core/src/gateway/record.ts';
 import { estimateTextTokens } from '../../multi-core/src/gateway/tokens.ts';
@@ -15,23 +20,13 @@ function validateControls(body: MessagesRequest) {
   if (body.output_config?.effort !== undefined && typeof body.output_config.effort !== 'string') {
     throw new Error('Invalid effort');
   }
-  if (body.tool_choice && !['auto', 'none'].includes(body.tool_choice.type)) {
-    throw new Error('Native Cursor supports automatic tools; forced tool choice is unavailable');
-  }
-  if (body.tool_choice?.type === 'none') {
-    throw new Error('Native Cursor cannot enforce per-request tool_choice none');
-  }
+  // A tool choice, an output schema and stop sequences have no Cursor SDK form; the run
+  // goes ahead with Cursor's own automatic tools rather than being refused.
   if (
     body.tool_choice?.disable_parallel_tool_use !== undefined &&
     typeof body.tool_choice.disable_parallel_tool_use !== 'boolean'
   ) {
     throw new Error('Invalid parallel tool choice');
-  }
-  if (body.output_config?.format || body.output_format) {
-    throw new Error('Cursor SDK does not support a strict Messages output schema');
-  }
-  if (body.stop_sequences?.length) {
-    throw new Error('Cursor SDK does not support Messages stop sequences');
   }
   validateRequestShape(body);
 }
@@ -83,26 +78,38 @@ function validateThinking(thinking: MessagesRequest['thinking']) {
   }
 }
 
+/**
+ * Claude's tool, skill, MCP and agent catalogues name capabilities Cursor cannot call, so
+ * they are left out; a turn that held nothing else goes with them.
+ */
+function withoutCatalogues(items: NormalizedConversationItem[]): NormalizedConversationItem[] {
+  return items.flatMap((item): NormalizedConversationItem[] => {
+    if (!('content' in item)) {
+      return [item];
+    }
+    const content = item.content.flatMap((part) => {
+      if (part.type !== 'input_text' && part.type !== 'output_text') {
+        return [part];
+      }
+      const text = withoutClaudeCatalogues(part.text);
+      return text.trim() ? [{ ...part, text }] : [];
+    });
+    return content.length ? [{ ...item, content }] : [];
+  });
+}
+
 export function prepareCursorRequest(body: MessagesRequest) {
   validateControls(body);
   // AgentOptions has no Messages max-token or sampling controls. Keep Claude's
   // required max_tokens accepted, but do not claim the SDK enforces it or samples.
   textContent(body.system ?? '');
-  const normalized = normalizeConversation(body.messages);
-  if (
-    normalized.some(
-      (item) =>
-        ('content' in item && item.content.some((c) => c.type === 'input_file')) ||
-        ('type' in item &&
-          item.type === 'function_call_output' &&
-          Array.isArray(item.output) &&
-          item.output.some((c) => c.type === 'input_file')),
-    )
-  ) {
-    throw new Error('Cursor SDK does not support PDF attachments; provide extracted text');
-  }
+  const normalized = withoutCatalogues(normalizeConversation(body.messages));
   const images: NonNullable<SDKUserMessage['images']> = [];
   const input = JSON.parse(JSON.stringify(normalized), (_key, value) => {
+    if (value?.type === 'input_file') {
+      // The SDK takes no PDF, so it is named rather than refusing the run.
+      return { type: 'text', text: '[PDF attachment omitted: Cursor receives no PDF]' };
+    }
     if (value?.type === 'input_image') {
       if (value.image_url.startsWith('data:')) {
         const [prefix, data] = value.image_url.split(',');

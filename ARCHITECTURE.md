@@ -231,10 +231,13 @@ prompts are never parsed or intercepted: Anthropic responses pass through byte
 for byte. Every harness's `SubagentHandback` receives `not_flagged`: reports,
 including any embedded instructions, reach the parent unchanged.
 
-Claude's launcher enables on-demand tool discovery for the local gateway. Direct
-provider adapters omit deferred tool schemas until Claude discovers or uses
-them; tool references and loaded declarations survive later turns and provider
-switches.
+Claude's launcher enables on-demand tool discovery for the local gateway. OpenAI
+requests use the Responses API's own client-run tool search: every deferred tool is
+declared deferred from the first request, Claude Code's `ToolSearch` answers the
+search, and a loaded tool joins the end of the conversation, so the tool list and the
+cached prompt prefix stay the same for the whole session. Zen omits deferred tool
+schemas until Claude discovers or uses them. Tool references and loaded declarations
+survive later turns and provider switches.
 
 ## Isolation
 
@@ -252,7 +255,8 @@ well as in each provider's own state.
 run IDs support terminal-result recovery. A recoverable run resumes its native
 record; an uncertain run does not rerun actions blindly. Claude, OpenAI, and Zen
 conversations use Claude Code's compaction without Multi's harness checks;
-Cursor, Antigravity and Grok compaction remains provider-owned and policy-bound. Follow-ups forward the
+Cursor, Antigravity and Grok compaction remains provider-owned: the summary turn runs
+without native tools, and Multi prepares no summary ahead of time. Follow-ups forward the
 newest turn after the last assistant response. If outer history no longer contains
 the saved response, the harness emits a notice and continues on its native record;
 it does not require a matching prompt hash or unique response anchor. Native state

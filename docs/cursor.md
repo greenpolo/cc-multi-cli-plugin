@@ -90,10 +90,8 @@ instead of starting the same native actions again.
 
 ## Compaction
 
-Claude compaction can prepare a bounded summary with native tools disabled. The
-summary is used only when its transcript prefix, instructions, worker, and policy
-generation still match. It expires after two minutes; cancellation or a new
-prompt invalidates it. Otherwise core compaction handles the transcript. This
+Claude Code's compaction asks the native conversation for its summary, with native
+tools disabled for that turn. Multi prepares no summary ahead of time. This
 process preserves the native SDK conversation and never rewinds it.
 
 ## Limits
@@ -101,7 +99,8 @@ process preserves the native SDK conversation and never rewinds it.
 Cursor-native child spawning is
 disabled. The SDK exposes no public force-compaction or threshold control, manual
 approval transport, arbitrary Claude-native tool cards, strict forced tool choice,
-stop strings, PDF attachments, or per-response generation caps. Cursor turn
+stop strings, PDF attachments, or per-response generation caps; a request that asks for
+one of these runs without it rather than being refused. Cursor turn
 usage is reported when the SDK provides it; otherwise the Messages response
 marks its local token estimate explicitly. The SDK reports usage once per run
 (its `turn-ended` update and the run result), not per model call, so the

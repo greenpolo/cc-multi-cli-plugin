@@ -36,7 +36,6 @@ import type {
   TerminalEmit,
 } from './messages.ts';
 import { ModBridge } from './mod-bridge.ts';
-import { ModCompactions } from './mod-compaction.ts';
 import { ModSessionKeys } from './mod-keys.ts';
 import { handleModRoute } from './mod-routes.ts';
 import type { PermissionContext, PermissionModes } from './mode-hook.ts';
@@ -213,37 +212,6 @@ export function createNativeGateway({
     }
     sendResult(exchange, served);
   }
-  const compactions = new ModCompactions(async (request) => {
-    const model = request.context.model;
-    const harness = harnessFor(harnessProvider(model));
-    if (!harness || !model) {
-      throw new Error('Precomputed summaries require a native harness model');
-    }
-    assertProviderEnabled(model, enabledProviders);
-    // Use a separate native record. A speculative summary never advances or rewinds
-    // the originating run and never receives native tool capabilities.
-    const result = await harness.handle(
-      {
-        model,
-        max_tokens: 3000,
-        messages: [
-          {
-            role: 'user',
-            content: `Summarize this conversation for continuation. Preserve tasks, constraints, decisions and unresolved work. Do not execute tools. Instructions: ${request.instructions ?? ''}\n${JSON.stringify(request.messages)}`,
-          },
-        ],
-      },
-      JSON.stringify([request.session, `compact-${request.id}`]),
-      request.signal,
-      undefined,
-      request.context,
-    );
-    return result.content
-      .filter((block) => block.type === 'text')
-      .map((block) => block.text)
-      .join('\n');
-  });
-
   function harnessScope({ identity, agentId }: ProviderRequest) {
     return identity.scope ?? JSON.stringify([fallbackSession, agentId ?? 'main']);
   }
@@ -727,7 +695,6 @@ export function createNativeGateway({
       workerModels,
       forgetSession: (session) => workerModels.forgetSession(session),
       permissionModes,
-      compactions,
       receipts,
       billed,
       dashboard,

@@ -154,6 +154,7 @@ update; run setup again after moving the checkout or changing the Node install.
 The CLI accepts text and native automatic tools. Images, documents, forced tool
 choices, strict output schemas, and stop sequences are unsupported. Native
 compaction is owned by `agy`; Claude compaction summaries run with all mapped
-native tools denied and preserve native history. Native counters and local prompt
+native tools denied and preserve native history. Claude's tool, skill, MCP and agent
+catalogues are left out of the prompt, since agy cannot call them. Native counters and local prompt
 estimates are reported separately.
 

@@ -34,57 +34,24 @@ export const register = (on: Parameters<Register>[0], _options: Parameters<Regis
     if (!(await isActive(wire($)))) {
       return next(event);
     }
+    if (event.trigger === 'precompute') {
+      // No summary is prepared ahead of time: that would be a model run nobody asked for.
+      return { skip: 'Multi prepares no summary ahead of compaction.' };
+    }
+    // Best effort: the gateway runs the summary turn without native tools. A gateway that
+    // does not answer never stops the compaction.
     const sessionId = await $.session.id();
     const mode = accepted(await getJson(wire($), '/multi/mod/mode', { sessionId }));
-    if (typeof mode?.generation !== 'number') {
-      return { skip: 'Multi compaction policy generation is unavailable.' };
-    }
-    const payload = {
-      sessionId,
-      agentId: event.agentId,
-      generation: mode.generation,
-      trigger: event.trigger,
-      messages: event.messages,
-      instructions: event.instructions,
-    };
-    if (event.trigger === 'precompute') {
-      await precompute($, payload);
-      return { skip: 'Multi summary preparation runs outside the hook budget.' };
-    }
-    const result = accepted(await postJson(wire($), '/multi/mod/compact/authorize', payload));
-    if (result?.messages) {
-      return { messages: result.messages };
-    }
-    if (result?.allow) {
-      return next(event);
-    }
-    // Oversized transcripts still require a separate, small tool-free authorization.
-    const fallback = accepted(
+    if (typeof mode?.generation === 'number') {
       await postJson(wire($), '/multi/mod/compact/authorize', {
         sessionId,
         agentId: event.agentId,
         generation: mode.generation,
-      }),
-    );
-    if (!fallback?.allow) {
-      return { skip: 'Multi tool-free compaction authorization was not acknowledged.' };
+      });
     }
     return next(event);
   });
 };
-
-async function precompute($: EngineInterface, payload: Record<string, unknown>) {
-  const prepared = accepted(await postJson(wire($), '/multi/mod/compact/precompute', payload));
-  if (prepared?.accepted && prepared.precomputeId) {
-    // The gateway starts the summary and answers at once, so the hook can await it.
-    await postJson(wire($), '/multi/mod/compact/run', {
-      sessionId: payload.sessionId,
-      agentId: payload.agentId,
-      generation: payload.generation,
-      precomputeId: prepared.precomputeId,
-    });
-  }
-}
 
 /** The main model is never evidence of a child's provider. */
 async function compactionModel(

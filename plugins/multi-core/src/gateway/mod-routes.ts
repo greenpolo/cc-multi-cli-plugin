@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DisplayRows } from './display-rows.ts';
 import type { ModBridge } from './mod-bridge.ts';
-import type { ModCompactions } from './mod-compaction.ts';
 import type { ModSessionKeys } from './mod-keys.ts';
 import { usageRoute } from './mod-usage.ts';
 import type { PermissionContext, PermissionModes } from './mode-hook.ts';
@@ -38,7 +37,6 @@ export interface ModRouteContext {
   workerModels?: WorkerModels;
   forgetSession?: (session: string) => void;
   permissionModes?: PermissionModes;
-  compactions?: ModCompactions;
   receipts?: ReceiptLedger;
   billed?: { scope: string; read(session: string): Promise<unknown> };
   dashboard?: ProviderUsageDashboard;
@@ -128,7 +126,7 @@ async function handlePostRoute(
   parsed: unknown,
   context: ModRouteContext,
 ) {
-  const { bridge, permissionModes, compactions, rows, keys } = context;
+  const { bridge, permissionModes, rows, keys } = context;
   method(req, 'POST');
   if (!isRecord(parsed)) {
     throw new Error('Expected an object');
@@ -147,7 +145,6 @@ async function handlePostRoute(
       return reply(res, { accepted: true });
     case '/multi/mod/detach':
       context.forgetSession?.(sessionId);
-      compactions?.cancel(sessionId);
       bridge.forgetSession(sessionId);
       rows?.forgetSession(sessionId);
       permissionModes?.forgetSession(sessionId);
@@ -338,47 +335,27 @@ function compactRoute(
   res: ServerResponse,
   route: string,
   value: Record<string, unknown>,
-  { bridge, permissionModes: modes, compactions }: ModRouteContext,
+  { bridge, permissionModes: modes }: ModRouteContext,
 ) {
   const session = text(value.sessionId, 'sessionId');
   if (route === '/multi/mod/compact/cancel') {
     const agentId = value.agentId === undefined ? undefined : text(value.agentId, 'agentId');
-    compactions?.cancelScope(session, agentId);
     // A cancelled compaction also disarms its permission boundary, the main loop's included.
     modes?.cancelModCompaction(session, agentId);
     return reply(res, { accepted: true });
   }
   const generation = optionalGeneration(value);
   const current = bridge.mode(sessionKey(session, undefined));
-  if (!modes || !compactions || !current || generation !== current.generation) {
+  if (!modes || !current || generation !== current.generation) {
     throw new Error('Compaction policy generation is unknown or stale');
   }
   const agent = value.agentId === undefined ? undefined : text(value.agentId, 'agentId');
-  const identity = { session, agent, generation: current.generation };
-  if (route === '/multi/mod/compact/run') {
-    const context = modes.resolve(session, agent);
-    return reply(res, compactions.run(identity, text(value.precomputeId, 'precomputeId'), context));
-  }
-  const input = {
-    ...identity,
-    messages: value.messages === undefined ? [] : transcript(value.messages),
-    instructions: compactInstructions(value.instructions),
-  };
-  if (route === '/multi/mod/compact/precompute') {
-    if (!input.messages.length) {
-      throw new Error('Precompute requires a transcript');
-    }
-    modes.resolve(session, agent);
-    return reply(res, compactions.prepare(input));
-  }
   if (route !== '/multi/mod/compact/authorize') {
     throw new Error('Unknown compaction route');
   }
-  const result = compactions.authorize(input);
-  if (!result.messages) {
-    authorizeBoundary(modes, session, agent);
-  }
-  return reply(res, result);
+  // The summary turn runs without native tools. Multi prepares no summary of its own.
+  authorizeBoundary(modes, session, agent);
+  return reply(res, { allow: true });
 }
 
 function authorizeBoundary(modes: PermissionModes, session: string, agent?: string) {
@@ -388,24 +365,4 @@ function authorizeBoundary(modes: PermissionModes, session: string, agent?: stri
     return;
   }
   modes.authorizeRestoredModCompaction(session);
-}
-function transcript(value: unknown): Record<string, unknown>[] {
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    value.length > 256 ||
-    value.some((item) => !isRecord(item))
-  ) {
-    throw new Error('Invalid bounded compaction transcript');
-  }
-  return value;
-}
-function compactInstructions(value: unknown) {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== 'string' || value.length > 4096) {
-    throw new Error('Invalid compaction instructions');
-  }
-  return value;
 }
