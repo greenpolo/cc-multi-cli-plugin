@@ -29,15 +29,44 @@ type ResponsesInputItem =
   | { role: 'user' | 'assistant' | 'developer'; content: ResponsesInputContent[] }
   | { type: 'function_call'; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string | ResponsesInputContent[] }
-  | { type: 'reasoning'; id?: string; encrypted_content: string; summary: unknown };
+  | { type: 'reasoning'; id?: string; encrypted_content: string; summary: unknown }
+  | {
+      type: 'tool_search_call';
+      execution: 'client';
+      call_id: string;
+      status: 'completed';
+      arguments: unknown;
+    }
+  | {
+      type: 'tool_search_output';
+      execution: 'client';
+      call_id: string;
+      status: 'completed';
+      tools: ResponsesFunctionTool[];
+    };
 
-interface ResponsesTool {
+interface ResponsesFunctionTool {
   type: 'function';
   name: string;
   description: string;
   parameters: unknown;
   strict: boolean;
+  /** Declared but kept out of the prompt until a tool search loads it. */
+  defer_loading?: true;
 }
+
+/** OpenAI's own tool search, run by the client: Claude Code's ToolSearch answers it. */
+interface ResponsesSearchTool {
+  type: 'tool_search';
+  execution: 'client';
+  description: string;
+  parameters: unknown;
+}
+
+type ResponsesTool = ResponsesFunctionTool | ResponsesSearchTool;
+
+/** Claude Code's tool that loads deferred tools. */
+const TOOL_SEARCH = 'ToolSearch';
 
 type ResponsesToolChoice = 'auto' | 'none' | 'required' | { type: 'function'; name?: string };
 
@@ -84,6 +113,23 @@ type ResponsesOutputItem = (
   | { type: 'function_call'; call_id?: string; name?: string; arguments?: string }
   | { type: 'reasoning'; encrypted_content?: string | null; summary?: unknown }
 ) & { id?: string };
+
+/**
+ * A client-run `tool_search_call` is the model calling Claude Code's ToolSearch, so it is
+ * read as that function call. Its arguments arrive whole, as an object.
+ */
+function asFunctionCall(value: unknown): unknown {
+  if (!isRecord(value) || value.type !== 'tool_search_call') {
+    return value;
+  }
+  return {
+    type: 'function_call',
+    ...(typeof value.id === 'string' ? { id: value.id } : {}),
+    ...(typeof value.call_id === 'string' ? { call_id: value.call_id } : {}),
+    name: TOOL_SEARCH,
+    ...(isRecord(value.arguments) ? { arguments: JSON.stringify(value.arguments) } : {}),
+  };
+}
 
 /** Streamed events the translation acts on. Any other `type` is ignored, exactly
  *  as an unrecognised event was before it had a name here. */
@@ -182,6 +228,23 @@ function validResponse(value: unknown): boolean {
         count(usage.input_tokens_details.cached_tokens) &&
         count(usage.input_tokens_details.cache_write_tokens)))
   );
+}
+
+/** A stream event with every client-run tool search read as its function call. */
+function withSearchCalls(value: unknown): unknown {
+  if (!isRecord(value)) {
+    return value;
+  }
+  if (value.item !== undefined) {
+    return { ...value, item: asFunctionCall(value.item) };
+  }
+  if (isRecord(value.response) && Array.isArray(value.response.output)) {
+    return {
+      ...value,
+      response: { ...value.response, output: value.response.output.map(asFunctionCall) },
+    };
+  }
+  return value;
 }
 
 /** Ignore new event types; validate every known field before narrowing JSON. */
@@ -302,7 +365,7 @@ function outputFormat(body: MessagesRequest) {
   return format;
 }
 
-function inputTool(tool: unknown): ResponsesTool {
+function inputTool(tool: unknown): ResponsesFunctionTool {
   if (!isRecord(tool)) {
     throw new Error('Invalid tool');
   }
@@ -335,7 +398,8 @@ function toolChoice(
   const name = choice?.name;
   if (
     wanted === 'tool' &&
-    (typeof name !== 'string' || !tools.some((tool) => tool.name === toolName(name)))
+    (typeof name !== 'string' ||
+      !tools.some((tool) => tool.type === 'function' && tool.name === toolName(name)))
   ) {
     throw new Error('Named tool choice must reference a declared tool');
   }
@@ -416,29 +480,167 @@ function decodeReasoning(signaturePrefix: string) {
   };
 }
 
+/** Every tool a ToolSearch result names, at any depth. */
+function toolReferences(content: unknown): string[] {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  return content.flatMap((block: unknown) => {
+    if (!isRecord(block)) {
+      return [];
+    }
+    return block.type === 'tool_reference' && typeof block.tool_name === 'string'
+      ? [block.tool_name]
+      : toolReferences(block.content);
+  });
+}
+
+/** The deferred tools each ToolSearch call loaded, by the call's wire id. */
+function loadedBySearch(body: MessagesRequest): Map<string, string[]> {
+  const loaded = new Map<string, string[]>();
+  const blocks = (body.messages ?? []).flatMap((message) =>
+    Array.isArray(message.content) ? message.content : [],
+  );
+  for (const block of blocks) {
+    if (block.type === 'tool_use' && block.name === TOOL_SEARCH && block.id) {
+      loaded.set(callId(block.id), []);
+    } else if (block.type === 'tool_result' && block.tool_use_id) {
+      const call = callId(block.tool_use_id);
+      if (loaded.has(call)) {
+        loaded.set(call, toolReferences(block.content));
+      }
+    }
+  }
+  return loaded;
+}
+
+/**
+ * The tool list for a provider with native tool search. It is the same on every request
+ * of a session: loading a deferred tool adds it at the end of the conversation
+ * (`withSearchItems`) and leaves this list as it was. The provider caches a prompt by its prefix and the tools come first, so a list
+ * that grew when a tool was loaded made the next request resend the whole conversation
+ * uncached.
+ */
+function searchableTools(body: MessagesRequest, loaded: Map<string, string[]>): ResponsesTool[] {
+  const referenced = new Set([...loaded.values()].flat());
+  const forced = body.tool_choice?.type === 'tool' ? body.tool_choice.name : undefined;
+  return (
+    (body.tools ?? [])
+      .filter((tool) => !isAnthropicAdvisorTool(tool))
+      // Claude Code only sends a deferred tool once it is loaded. The search result that
+      // loaded it already carries its definition, so declaring it here too would change
+      // the list mid-session. A forced choice still has to name a declared tool.
+      .filter(
+        (tool) =>
+          typeof tool.name !== 'string' || !referenced.has(tool.name) || tool.name === forced,
+      )
+      .map((tool): ResponsesTool => {
+        const declared = inputTool(tool);
+        if (tool.name === TOOL_SEARCH && !isDeferredTool(tool)) {
+          return {
+            type: 'tool_search',
+            execution: 'client',
+            description: declared.description,
+            parameters: declared.parameters,
+          };
+        }
+        // A deferred tool the history calls without a search that loaded it (a forced
+        // choice, or a search a compaction removed) has to be callable outright.
+        const direct =
+          typeof tool.name === 'string' &&
+          !referenced.has(tool.name) &&
+          isDirectToolAvailable(body, tool.name);
+        return isDeferredTool(tool) && !direct ? { ...declared, defer_loading: true } : declared;
+      })
+  );
+}
+
+/** ToolSearch calls and results as the provider's own search items, carrying the loaded tools. */
+function withSearchItems(
+  input: ResponsesInputItem[],
+  body: MessagesRequest,
+  loaded: Map<string, string[]>,
+): ResponsesInputItem[] {
+  const tools = new Map((body.tools ?? []).map((tool) => [tool.name, tool]));
+  return input.map((item): ResponsesInputItem => {
+    if (!('type' in item) || !('call_id' in item) || !loaded.has(item.call_id)) {
+      return item;
+    }
+    if (item.type === 'function_call') {
+      return {
+        type: 'tool_search_call',
+        execution: 'client',
+        call_id: item.call_id,
+        status: 'completed',
+        arguments: JSON.parse(item.arguments),
+      };
+    }
+    if (item.type !== 'function_call_output') {
+      return item;
+    }
+    return {
+      type: 'tool_search_output',
+      execution: 'client',
+      call_id: item.call_id,
+      status: 'completed',
+      tools: (loaded.get(item.call_id) ?? []).flatMap((name) => {
+        const tool = tools.get(name);
+        return tool && isDeferredTool(tool) ? [{ ...inputTool(tool), defer_loading: true }] : [];
+      }),
+    };
+  });
+}
+
+/**
+ * Claude Code opens the system prompt with its own billing line, whose value changes on
+ * every request. It means nothing to another provider, and left in it makes every request
+ * differ from the last near the top, so the provider's prompt cache stops there.
+ */
+function withoutBillingHeader(system: unknown): unknown {
+  if (!Array.isArray(system)) {
+    return system;
+  }
+  return system.filter(
+    (block: unknown) =>
+      !(
+        isRecord(block) &&
+        typeof block.text === 'string' &&
+        block.text.startsWith('x-anthropic-billing-header:')
+      ),
+  );
+}
+
 export function toResponses(
   body: MessagesRequest,
   model: string,
   signaturePrefix = OPENAI_SIGNATURE_PREFIX,
+  options: { toolSearch?: boolean } = {},
 ): ResponsesRequest {
   validateRequestOptions(body);
   const format = outputFormat(body);
-  const input = normalizeConversation(body.messages, decodeReasoning(signaturePrefix));
-  // Claude's tool-search flow keeps deferred schemas out of the initial model
-  // request. A loaded tool is resent without defer_loading on the next turn.
-  const tools = (body.tools ?? [])
-    .filter((tool) => !isAnthropicAdvisorTool(tool))
-    .filter(
-      (tool) =>
-        !isDeferredTool(tool) ||
-        (typeof tool.name === 'string' && isDirectToolAvailable(body, tool.name)),
-    )
-    .map(inputTool);
+  const conversation = normalizeConversation(body.messages, decodeReasoning(signaturePrefix));
+  const nativeSearch =
+    options.toolSearch === true &&
+    (body.tools ?? []).some((tool) => tool.name === TOOL_SEARCH && !isDeferredTool(tool));
+  const loaded = nativeSearch ? loadedBySearch(body) : new Map<string, string[]>();
+  const input = nativeSearch ? withSearchItems(conversation, body, loaded) : conversation;
+  // Without native tool search, Claude's flow keeps deferred schemas out of the request
+  // until they are loaded; a loaded tool is then declared like any other.
+  const tools: ResponsesTool[] = nativeSearch
+    ? searchableTools(body, loaded)
+    : (body.tools ?? [])
+        .filter((tool) => !isAnthropicAdvisorTool(tool))
+        .filter(
+          (tool) =>
+            !isDeferredTool(tool) ||
+            (typeof tool.name === 'string' && isDirectToolAvailable(body, tool.name)),
+        )
+        .map(inputTool);
   const choice = toolChoice(body.tool_choice, tools);
   const effort = reasoningEffort(body);
   return {
     model,
-    instructions: textContent(body.system ?? ''),
+    instructions: textContent(withoutBillingHeader(body.system ?? '')),
     input,
     tools,
     ...(format
@@ -995,10 +1197,11 @@ export async function fromResponses(
       if (step.done) {
         break;
       }
-      if (!isStreamEvent(step.value)) {
+      const event = withSearchCalls(step.value);
+      if (!isStreamEvent(event)) {
         continue;
       }
-      response.accept(step.value);
+      response.accept(event);
       if (response.stopPending && !deadline) {
         // The text is final, but the provider bills the whole response: keep reading to its usage.
         deadline = new Promise<'late'>((resolve) => {

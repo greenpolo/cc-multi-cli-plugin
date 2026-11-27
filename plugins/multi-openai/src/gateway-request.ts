@@ -87,7 +87,9 @@ export function prepareOpenAIRequest(
   if (!MESSAGES_PATHS.includes(pathname) || method !== 'POST') {
     throw new Error('External models require POST /v1/messages or /v1/messages/count_tokens');
   }
-  const translated = toResponses(body, model);
+  // OpenAI's own tool search keeps the tool list, and so the cached prompt, unchanged
+  // when Claude Code loads a deferred tool.
+  const translated = toResponses(body, model, OPENAI_SIGNATURE_PREFIX, { toolSearch: true });
   const request = {
     ...translated,
     instructions: openaiInstructions(translated.instructions),

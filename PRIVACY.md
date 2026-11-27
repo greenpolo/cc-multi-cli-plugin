@@ -20,7 +20,7 @@ their own data handling and privacy policies.
 Native tools can read workspace files, run commands, and contact services allowed
 by the effective provider and Claude permissions. Inference follows the selected
 provider route. Multi sends no conversation anywhere for review.
-Opening the usage pane or enabling quota advice can also query other enabled
+Opening the usage pane can also query other enabled
 providers' account interfaces without inference. These account lookups do not send
 the conversation to those providers. Provider retention and billing follow the
 provider's policies.

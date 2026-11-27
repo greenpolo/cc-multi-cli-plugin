@@ -2,16 +2,11 @@ import type { EngineInterface, Register } from 'claude-code';
 import { atom, read, update } from 'claude-code';
 import type { MultiCoreUsagePane } from '../types/multi-core.d.ts';
 import { accepted, getJson, type Wire } from './gateway.ts';
-import { quotaAdvice } from './quota-advice.ts';
 import { withBounded } from './state.ts';
 import type { UsagePaneProps } from './usage-view.ts';
 
 // State values are named where they are read: the engine's scan reads an atom's plugin and key
 // from this file's own source, not across an import.
-const advisorySessions = atom(
-  { plugin: 'multi-core', key: 'advisorySessions' } as const,
-  [] as string[],
-);
 const usagePanes = atom(
   { plugin: 'multi-core', key: 'usagePanes' } as const,
   {} as Record<string, MultiCoreUsagePane>,
@@ -35,27 +30,6 @@ const wire = ($: EngineInterface): Wire => ({
 });
 
 export const register = (on: Parameters<Register>[0], _options?: Parameters<Register>[1]) => {
-  on('classic.PreToolUse', async ($, event, next) => {
-    // `Task` is the Agent tool's legacy name.
-    const tool: string = event.tool;
-    if (tool !== 'Agent' && tool !== 'Task') {
-      return next(event);
-    }
-    const session = await $.session.id();
-    if (!(await read($, advisorySessions)).includes(session)) {
-      return next(event);
-    }
-    const snapshot = dashboard(accepted(await fetchUsage($, session)));
-    const result = await next(event);
-    // Preserve all permission decisions and tool arguments, including on lookup failure.
-    if (!(await read($, advisorySessions)).includes(session)) {
-      return result;
-    }
-    return {
-      ...result,
-      additionalContext: [...(result.additionalContext ?? []), quotaAdvice(snapshot)],
-    };
-  });
   on('command.run', { command: 'multi-usage' }, async ($, event) => {
     if (event.args.trim()) {
       return { text: 'Use /multi-usage without arguments.' };
@@ -65,15 +39,9 @@ export const register = (on: Parameters<Register>[0], _options?: Parameters<Regi
     if (!response) {
       return { text: 'Multi usage is unavailable. Launch this session with claude-multi.' };
     }
-    const quotaAdviceEnabled = (await read($, advisorySessions)).includes(session);
     // The pane draws from this state: writing it redraws an open pane without an invalidate.
     await update($, usagePanes, (held) =>
-      withBounded<MultiCoreUsagePane>(
-        held,
-        session,
-        { ...response, quotaAdviceEnabled },
-        maximumPanes,
-      ),
+      withBounded<MultiCoreUsagePane>(held, session, response, maximumPanes),
     );
     const summary = response.providers
       .map((provider) => `${provider.name}: ${provider.summary}`)
@@ -112,24 +80,13 @@ export const register = (on: Parameters<Register>[0], _options?: Parameters<Regi
       return next(event);
     }
     const action = event.data.action;
-    if (action !== 'refresh' && action !== 'receipts' && action !== 'toggle-quota-advice') {
+    if (action !== 'refresh' && action !== 'receipts') {
       return next(event);
     }
     const session = await $.session.id();
     const previous = (await read($, usagePanes))[session];
     if (!previous) {
       return next(event);
-    }
-    if (action === 'toggle-quota-advice') {
-      const enabled = !(await read($, advisorySessions)).includes(session);
-      await update($, advisorySessions, (held) =>
-        enabled ? [...held, session] : held.filter((id) => id !== session),
-      );
-      const props = { ...previous, quotaAdviceEnabled: enabled };
-      await update($, usagePanes, (held) =>
-        withBounded<MultiCoreUsagePane>(held, session, props, maximumPanes),
-      );
-      return { props };
     }
     const response =
       action === 'refresh'
@@ -188,9 +145,6 @@ function updatePane(previous: UsagePaneProps, action: string, response: unknown)
       ? {
           ...refreshed,
           ...(previous.receiptLines ? { receiptLines: previous.receiptLines } : {}),
-          ...(previous.quotaAdviceEnabled === undefined
-            ? {}
-            : { quotaAdviceEnabled: previous.quotaAdviceEnabled }),
         }
       : { ...previous, error: 'Refresh failed. Showing the previous values.' };
   }

@@ -45,6 +45,8 @@ providers.
 
 The gateway sends an opaque cache key scoped by Claude session, worker, and model. A recognized session keeps the key stable across gateway restarts; an unrecognized session gets gateway-local affinity. This is a routing hint and does not guarantee cache hits.
 
+Deferred tools use OpenAI's own tool search, run by Claude Code's `ToolSearch`. The tool list is the same on every request of a session, so loading a tool does not make OpenAI reread the conversation uncached.
+
 On continuation, visible conversation context is forwarded to OpenAI. Provider-owned reasoning state stays with OpenAI and is excluded when switching providers. OpenAI requests use Claude Code's tool loop, so Claude tool history remains part of the request context.
 
 ## Limits

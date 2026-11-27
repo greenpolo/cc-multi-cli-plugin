@@ -23,7 +23,9 @@ export function estimateInputTokens(request: ResponsesRequest): number {
   };
   const parts = (content: ResponsesInputContent[]) =>
     content.reduce((total, part) => total + partTokens(part), 0);
-  let total = text(request.instructions) + text(JSON.stringify(request.tools)) + 8;
+  // A deferred tool is declared but stays out of the prompt until a search loads it.
+  const declared = request.tools.filter((tool) => !('defer_loading' in tool));
+  let total = text(request.instructions) + text(JSON.stringify(declared)) + 8;
   for (const item of request.input) {
     total += 8;
     if ('role' in item) {
@@ -32,6 +34,8 @@ export function estimateInputTokens(request: ResponsesRequest): number {
       total += text(item.name) + text(item.arguments);
     } else if (item.type === 'function_call_output') {
       total += typeof item.output === 'string' ? text(item.output) : parts(item.output);
+    } else if (item.type === 'tool_search_call' || item.type === 'tool_search_output') {
+      total += text(JSON.stringify(item));
     }
     // Opaque reasoning is not text input; do not tokenize the ciphertext.
   }

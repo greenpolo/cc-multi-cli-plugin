@@ -4,6 +4,44 @@ Entries record changes when they were made, including superseded decisions.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for current direction and
 [README.md](README.md) for current capabilities.
 
+## 0.4.4 — 2026-11-27
+
+Fewer wasted tokens and no leftover refusals, from an audit of everything Multi adds.
+
+- **OpenAI keeps its cache when a tool is loaded.** Loading a deferred tool through
+  ToolSearch changed the tool list, and OpenAI then reread the whole conversation
+  uncached: 18.7% of all uncached OpenAI input over ten days on the test machine.
+  Requests now use OpenAI's own client-run tool search, so the tool list is the same
+  on every request of a session and a loaded tool joins the end of the conversation.
+  Claude Code's billing line at the top of the system prompt, which changes on every
+  request and stopped the cache right after the tools, is no longer sent on.
+- **Antigravity and Cursor no longer receive Claude's catalogues.** Claude's lists of
+  deferred tools, skills, MCP servers and agent types, which neither CLI can call,
+  were about 18k tokens at the start of every new session and worker. Grok already
+  had them removed.
+- **No summary prepared ahead of compaction.** For Cursor, Antigravity and Grok, Multi
+  answered Claude Code's early-summary signal with a separate native run that was
+  usually thrown away. It is gone, and a gateway that is slow to answer no longer
+  makes a compaction skip.
+- **Quota advice is removed.** The `/multi-usage` toggle that looked up every account
+  before each worker spawn and told Claude which provider to prefer is gone. The usage
+  pane itself is unchanged.
+- **Cursor refuses less.** A forced tool choice, an output schema, stop sequences or a
+  PDF no longer refuse the request: the run goes ahead without them, as Antigravity
+  and Grok runs do. "Too many concurrent Cursor agents" and "Too many concurrent
+  Cursor requests" are gone.
+- **A `claude-multi` started inside another Multi session uses its own gateway.** Run
+  from an agent's shell or a Remote Control shell, the new session's gateway inherited
+  the outer session's proxy setting and sent its OpenAI and other provider traffic
+  through the outer, possibly older, gateway. The launch now starts from the user's own
+  environment, as a nested `claude` already did.
+- **Antigravity and Grok no longer open a session with a status line.** Every
+  Antigravity or Grok main turn and worker began with "[Antigravity] Claude Code rules
+  take precedence; agy's own MCP servers and agents are available.",
+  which Claude never prints. A run now says something only where it differs from
+  Claude: Plan's limits, a Claude mode or rule the CLI cannot carry, or (Grok) every
+  MCP call turned off by a Claude MCP deny rule.
+
 ## 0.4.3 — 2026-11-27
 
 Multi's own safety reviewer is removed; it drained the Codex quota.

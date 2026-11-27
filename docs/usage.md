@@ -23,27 +23,6 @@ inference. Account results are cached for 30 seconds; Refresh requests fresh dat
 A failed provider lookup does not prevent the others from displaying. The only
 slash command is `/multi-usage`; receipts and billing live within its menu.
 
-## Quota-aware model selection
-
-The menu's **Quota-aware model selection** toggle enables an advisory hook for
-the main agent in the current session. It is off by default. When enabled, the
-agent receives current provider quota summaries from a `PreToolUse` hook on its
-`Agent`/`Task` calls, before the subagent tool executes,
-with guidance to prefer the least-used subscription among models suitable for
-the task. It can still choose another model, and explicit user model requests
-take precedence. The hook does not change worker arguments, block spawns, or wait
-for quota resets.
-
-Ordinary prompts, other tools, and nested workers do not trigger the advisory.
-The model consumes the added context on its next inference; the hook does not
-restart model selection for an already-issued spawn.
-
-The advisory uses the same cached account lookups as the menu. Unavailable quota
-is labeled unknown, and lookup failures do not stop the agent. Worker receipts
-are not included in the advisory. Disabling the toggle stops future advisories;
-earlier context already received by the agent is not removed. The preference is
-session-only and is cleared when the session ends.
-
 Runtime totals cover requests observed by this gateway process; restarting the
 launcher starts a new in-memory view. Claude subscription passthrough is not included in these totals.
 

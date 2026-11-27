@@ -405,8 +405,9 @@ export class CursorHarness {
     let exchange = this.registry.get(key);
     if (!exchange) {
       // Keep failed/finished requests too: a transport retry must never repeat native edits.
-      if (this.registry.size >= maximumExchanges && !this.registry.evictSettled()) {
-        throw new Error('Too many concurrent Cursor requests');
+      // Past the bound a finished exchange makes room; running ones are never refused.
+      if (this.registry.size >= maximumExchanges) {
+        this.registry.evictSettled();
       }
       exchange = this.startExchange(body, scope, key, permissions, observeProgress);
     }
@@ -549,7 +550,8 @@ export class CursorHarness {
           (!item.runtime.agent || !this.usageReaders.has(item.runtime.agent)),
       );
       if (!idle) {
-        throw new Error('Too many concurrent Cursor agents');
+        // Every attached agent is working: the new one runs alongside them.
+        return undefined;
       }
       this.closeAgent(idle.runtime.agent);
       idle.runtime.agent = undefined;

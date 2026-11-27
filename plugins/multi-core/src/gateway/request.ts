@@ -237,8 +237,6 @@ export function authorizeRequest(
       '/multi/mod/usage/complete',
       '/multi/mod/receipts',
       '/multi/mod/detach',
-      '/multi/mod/compact/precompute',
-      '/multi/mod/compact/run',
       '/multi/mod/compact/authorize',
       '/multi/mod/compact/cancel',
     ].includes(url.pathname) ||

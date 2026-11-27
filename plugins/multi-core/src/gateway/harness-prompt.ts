@@ -33,7 +33,7 @@ const CATALOGUES: readonly RegExp[] = [
 ];
 
 /** The forwarded prompt: catalogues out, instructions in. */
-function withoutClaudeCatalogues(text: string): string {
+export function withoutClaudeCatalogues(text: string): string {
   return text.replace(SYSTEM_REMINDER, (block) =>
     CATALOGUES.some((catalogue) => catalogue.test(block)) ? '' : block,
   );

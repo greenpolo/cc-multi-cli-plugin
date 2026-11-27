@@ -25,7 +25,6 @@ export type GatewayResponse = {
   execution?: 'claude' | 'harness';
   known?: boolean;
   model?: string;
-  precomputeId?: string;
   allow?: boolean;
   messages?: readonly SessionMessage[];
   [field: string]: unknown;

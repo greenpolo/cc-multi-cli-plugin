@@ -61,6 +61,8 @@ changes to those boundaries need corresponding implementation and verification.
   Bypass, and what was skipped is named in a one-line notice.
 - Fail explicitly on unknown models or ambiguous ownership.
 - Multi adds no model calls of its own: no reviewer, guardian or classifier on top of a provider. Claude's mode and rules decide; plan mode refuses direct-model actions.
+- A native run opens with a notice only where it differs from Claude (Plan limits, a mode
+  or rule it cannot carry); a run that behaves as Claude would says nothing.
 - Never replay external tool events as executable Claude tools.
 - Native state is never rewound, and uncertain actions are never rerun blindly.
 - A native CLI keeps its own MCP servers, subagents and tools; none is hard-blocked. Outside Plan they follow Claude's deny rules and explicit tool lists. Claude's plugins are never copied into a CLI. Grok verifies the toolset the CLI announces.

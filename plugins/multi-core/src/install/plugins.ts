@@ -34,15 +34,18 @@ export function providerSelection(value: string | undefined): string[] | undefin
 export async function installedPlugins(
   claude: string,
   settingsArgs: string[] = [],
-  options: { platform?: NodeJS.Platform } = {},
+  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {},
 ) {
   const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
   const invocation = executableInvocation(
     claude,
     [...settingsArgs, 'plugin', 'list', '--json'],
     platform,
+    env,
   );
   const { stdout } = await promisify(execFile)(invocation.command, invocation.args, {
+    env,
     timeout: 15000,
     maxBuffer: 4 * 1024 * 1024,
     encoding: 'utf8',
